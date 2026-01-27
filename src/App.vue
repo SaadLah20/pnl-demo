@@ -17,7 +17,6 @@ import HeaderDashboard from '@/components/HeaderDashboard.vue'
 .app {
   display: flex;
   height: 100vh;
-  font-family: "Inter", Arial, sans-serif;
 }
 
 .main-content {
