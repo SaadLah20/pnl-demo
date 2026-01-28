@@ -14,9 +14,12 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* IMPORTANT */
+    "composite": true,
+    "outDir": "./dist/app",
+    "module": "ESNext"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
-
-  
 }

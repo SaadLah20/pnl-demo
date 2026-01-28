@@ -1,0 +1,44 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+
+model PL {
+  id        Int      @id @default(autoincrement())
+  title     String
+  model     String
+  client    String?
+  status    String
+  createdAt DateTime @default(now())
+  variants  Variant[]
+  contracts Contract[]
+}
+
+model Variant {
+  id        Int      @id @default(autoincrement())
+  title     String
+  volume    Float
+  description String?
+  model     String
+  type      String
+  status    String
+  pl        PL       @relation(fields: [plId], references: [id])
+  plId      Int
+}
+
+model Contract {
+  id       Int    @id @default(autoincrement())
+  ref      String
+  pl       PL     @relation(fields: [plId], references: [id])
+  plId     Int
+  cab      String
+  installation String
+  transport   String
+  geniecivil  String
+  terrain     String
+}

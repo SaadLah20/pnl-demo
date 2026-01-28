@@ -1,99 +1,104 @@
 <script setup lang="ts">
-import { reactive, computed } from 'vue'
+import { reactive } from 'vue'
 
 type KpiName =
   | 'ASP'
   | 'CMP'
-  | 'MOM'
-  | 'Transport'
   | 'MOMD'
+  | 'Transport'
   | 'Production'
-  | 'Gross Profit'
-  | 'Frais Généraux'
-  | 'Ebida'
+  | 'EBIDA'
+  | 'EBIT'
   | 'Amortissement'
-  | 'Ebit'
 
-type KpiValues = { m3: number; total: number; month: number }
+type KpiValues = {
+  total: number
+  m3: number
+  month: number
+  percent: number
+}
+
 type Metrics = Record<KpiName, KpiValues>
 
-const kpis = reactive({
-  projectName: 'Autoroute ADM Guercif-Nador LOTS 2-2 et 2-3',
-  variantName:
-    'CAB neuve et terrain à la charge de LHM avec optimisations Génie civil et électricité',
+const pNl = reactive({
+  projectName: 'Autoroute ADM Guercif–Nador LOTS 2-2 et 2-3',
+  contractName: 'Contrat A',
+  variantName: 'CAB neuve – optimisations Génie civil & électricité',
   durationMonths: 24,
   client: 'Entreprise XXXX',
+  status: 'En cours',
+  volumeTotal: 42000,
   metrics: {
-    ASP: { m3: 120, total: 50000, month: 2083 },
-    CMP: { m3: 80, total: 35000, month: 1458 },
-    MOM: { m3: 30, total: 12000, month: 500 },
-    Transport: { m3: 10, total: 4000, month: 167 },
-    MOMD: { m3: 5, total: 2000, month: 83 },
-    Production: { m3: 60, total: 25000, month: 1042 },
-    'Gross Profit': { m3: 40, total: 18000, month: 750 },
-    'Frais Généraux': { m3: 20, total: 9000, month: 375 },
-    Ebida: { m3: 15, total: 6000, month: 250 },
-    Amortissement: { m3: 10, total: 4000, month: 167 },
-    Ebit: { m3: 25, total: 10000, month: 417 }
+    ASP: { total: 50000, m3: 120, month: 2083, percent: 100 },
+    CMP: { total: 35000, m3: 80, month: 1458, percent: 70 },
+    MOMD: { total: 2000, m3: 5, month: 83, percent: 4 },
+    Transport: { total: 4000, m3: 10, month: 167, percent: 8 },
+    Production: { total: 25000, m3: 60, month: 1042, percent: 50 },
+    EBIDA: { total: 6000, m3: 15, month: 250, percent: 12 },
+    EBIT: { total: 10000, m3: 25, month: 417, percent: 20 },
+    Amortissement: { total: 4000, m3: 10, month: 167, percent: 8 }
   } as Metrics
 })
 
-const volumeTotal = computed(() =>
-  Object.values(kpis.metrics).reduce((acc, val) => acc + val.m3, 0)
-)
-
-const firstRow: KpiName[] = ['ASP', 'CMP', 'MOM', 'Transport', 'MOMD', 'Production']
-const secondRow: KpiName[] = [
-  'Gross Profit',
-  'Frais Généraux',
-  'Ebida',
-  'Amortissement',
-  'Ebit'
+const kpiOrder: KpiName[] = [
+  'ASP',
+  'CMP',
+  'MOMD',
+  'Transport',
+  'Production',
+  'EBIDA',
+  'EBIT',
+  'Amortissement'
 ]
 
-const highlightKpis: KpiName[] = ['ASP', 'Ebida', 'Ebit']
+const actions = reactive([
+  { label: 'Dupliquer', icon: '📄' },
+  { label: 'Nouvelle variante', icon: '➕' },
+  { label: 'Archiver', icon: '🗄️' },
+  { label: 'Éditer', icon: '✏️' },
+  { label: 'Supprimer', icon: '🗑️' }
+])
 </script>
 
 <template>
   <header class="header-dashboard">
-    <!-- Projet & Variante -->
-    <div class="project-info">
-      <div class="project-name">{{ kpis.projectName }}</div>
-      <div class="variant-name">{{ kpis.variantName }}</div>
-      <div class="duration-client">
-        <span>Durée: {{ kpis.durationMonths }} mois</span>
-        <span>Client: {{ kpis.client }}</span>
-        <span>Volume total: {{ volumeTotal }} m³</span>
-      </div>
-    </div>
-
-    <!-- KPI en deux lignes -->
-    <div class="kpi-container">
-      <div class="kpi-row">
-        <div
-          v-for="key in firstRow"
-          :key="key"
-          :class="['kpi-card', { highlight: highlightKpis.includes(key) }]"
-        >
-          <div class="kpi-name">{{ key }}</div>
-          <div class="kpi-values">
-            <span class="value-m3">{{ kpis.metrics[key].m3 }} m³</span>
-            <span class="value-total">{{ kpis.metrics[key].total.toLocaleString('fr-FR') }} DH</span>
-            <span class="value-month">{{ kpis.metrics[key].month.toLocaleString('fr-FR') }} DH/mois</span>
+    <!-- Ligne principale: P&L, Contrat, Variante + Actions | Infos importantes -->
+    <div class="top-row">
+      <div class="left-info">
+        <div class="edit-item pnL">P&L : {{ pNl.projectName }}</div>
+        <div class="edit-item contract">Contrat : {{ pNl.contractName }}</div>
+        <div class="variant-block">
+          <div class="edit-item variant">Variante : {{ pNl.variantName }}</div>
+          <div class="actions-block">
+            <button v-for="act in actions" :key="act.label" class="action-btn">
+              {{ act.icon }} {{ act.label }}
+            </button>
           </div>
         </div>
       </div>
-      <div class="kpi-row">
-        <div
-          v-for="key in secondRow"
-          :key="key"
-          :class="['kpi-card', { highlight: highlightKpis.includes(key) }]"
-        >
-          <div class="kpi-name">{{ key }}</div>
+      <div class="right-info">
+        <span>Durée : {{ pNl.durationMonths }} mois</span>
+        <span>Volume : {{ pNl.volumeTotal.toLocaleString('fr-FR') }} m³</span>
+        <span>Client : {{ pNl.client }}</span>
+        <span>Status : {{ pNl.status }}</span>
+      </div>
+    </div>
+
+    <!-- KPI GRID -->
+    <div class="kpi-grid">
+      <div
+        v-for="key in kpiOrder"
+        :key="key"
+        class="kpi-column"
+        :class="{ highlight: ['ASP', 'EBIDA', 'EBIT'].includes(key) }"
+      >
+        <div class="kpi-title">{{ key }}</div>
+        <div class="kpi-box">
+          <div class="kpi-percent">{{ pNl.metrics[key].percent }}%</div>
           <div class="kpi-values">
-            <span class="value-m3">{{ kpis.metrics[key].m3 }} m³</span>
-            <span class="value-total">{{ kpis.metrics[key].total.toLocaleString('fr-FR') }} DH</span>
-            <span class="value-month">{{ kpis.metrics[key].month.toLocaleString('fr-FR') }} DH/mois</span>
+            <span>{{ pNl.metrics[key].total.toLocaleString('fr-FR') }} DH</span>
+            <span>{{ pNl.metrics[key].m3 }} DH/m³</span>
+            <span>{{ pNl.metrics[key].month }} DH/mois</span>
           </div>
         </div>
       </div>
@@ -103,88 +108,147 @@ const highlightKpis: KpiName[] = ['ASP', 'Ebida', 'Ebit']
 
 <style scoped>
 .header-dashboard {
-  background: #014d3f; /* fond sombre */
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-family: "Inter", Arial, sans-serif;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
-  border-radius: 6px;
   position: sticky;
   top: 0;
   z-index: 100;
-}
-
-/* Projet et variante */
-.project-info {
+  background: #12122e;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-}
-.project-name {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #ffffff;
-}
-.variant-name {
-  font-size: 0.78rem;
-  color: #ccc;
-}
-.duration-client {
-  font-size: 0.72rem;
-  color: #aaa;
-  display: flex;
   gap: 10px;
+  border-bottom: 1px solid #20414f;
+  font-family: "Inter", sans-serif;
+}
+
+/* Ligne principale */
+.top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-/* KPI container */
-.kpi-container {
+/* Bloc gauche: P&L, Contrat, Variante + actions */
+.left-info {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.kpi-row {
+.edit-item {
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Couleurs spécifiques */
+.edit-item.pnL { color: #3b82f6; } /* bleu */
+.edit-item.contract { color: #facc15; } /* jaune */
+.edit-item.variant { color: #22c55e; font-weight: 600; }
+
+/* Variante + actions */
+.variant-block {
   display: flex;
+  align-items: center;
   gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 3px 6px;
+  border-radius: 6px;
   flex-wrap: wrap;
 }
 
-.kpi-card {
-  flex: 1;
-  min-width: 100px;
-  background: #2c2c2c; /* bloc légèrement plus clair */
-  padding: 4px 6px;
-  border-radius: 6px;
+.actions-block {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  background: #1e293b;
+  border: 1px solid #3b82f6;
+  color: #cbd5f5;
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: 0.2s;
+}
+.action-btn:hover {
+  background: #3b82f6;
+  color: #fff;
+}
+
+/* Bloc droite: infos importantes */
+.right-info {
+  display: flex;
+  gap: 10px;
+  font-size: 0.72rem;
+  color: #de8511;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+/* KPI GRID */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 1200px) {
+  .kpi-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.kpi-column {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  color: #eee;
-  border: 1px solid #444;
-  font-size: 0.78rem;
+  gap: 3px;
 }
 
-.kpi-card.highlight {
-  border: 2px solid #00d084; /* vert vif */
-  background: #333; /* fond un peu plus clair pour se détacher */
-}
-
-.kpi-name {
-  font-weight: 500;
-  color: #bbb;
+.kpi-title {
+  font-size: 0.66rem;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  color: #cbd5f5;
+  text-align: center;
+}
+
+.kpi-box {
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 4px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.kpi-column.highlight .kpi-box {
+  border-color: #22c55e;
+  background: #052e1a;
+}
+
+.kpi-percent {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #22c55e;
+  line-height: 1;
 }
 
 .kpi-values span {
   display: block;
-  font-weight: 600;
-  font-size: 0.75rem;
+  font-size: 0.60rem;
+  font-weight: 500;
+  color: #e5e7eb;
+  line-height: 1.1;
 }
-
-.kpi-values .value-m3 { color:#999; }
-.kpi-values .value-total { color:#00d084; }
-.kpi-values .value-month { color:#00aaff; }
 </style>
