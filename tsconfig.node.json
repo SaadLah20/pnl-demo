@@ -17,7 +17,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
-
+"esModuleInterop": true,
+"allowSyntheticDefaultImports": true,
     "composite": true,
     "outDir": "./dist/node",
     "noEmit": true

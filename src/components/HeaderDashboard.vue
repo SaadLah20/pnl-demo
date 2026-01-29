@@ -1,74 +1,101 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { computed, onMounted } from "vue";
+import { usePnlStore } from "@/stores/pnl.store";
 
 type KpiName =
-  | 'ASP'
-  | 'CMP'
-  | 'MOMD'
-  | 'Transport'
-  | 'Production'
-  | 'EBIDA'
-  | 'EBIT'
-  | 'Amortissement'
+  | "ASP"
+  | "CMP"
+  | "MOMD"
+  | "Transport"
+  | "Production"
+  | "EBIDA"
+  | "EBIT"
+  | "Amortissement";
 
 type KpiValues = {
-  total: number
-  m3: number
-  month: number
-  percent: number
-}
+  total: number;
+  m3: number;
+  month: number;
+  percent: number;
+};
 
-type Metrics = Record<KpiName, KpiValues>
+type Metrics = Record<KpiName, KpiValues>;
 
-const pNl = reactive({
-  projectName: 'Autoroute ADM Guercif–Nador LOTS 2-2 et 2-3',
-  contractName: 'Contrat A',
-  variantName: 'CAB neuve – optimisations Génie civil & électricité',
-  durationMonths: 24,
-  client: 'Entreprise XXXX',
-  status: 'En cours',
-  volumeTotal: 42000,
-  metrics: {
-    ASP: { total: 50000, m3: 120, month: 2083, percent: 100 },
-    CMP: { total: 35000, m3: 80, month: 1458, percent: 70 },
-    MOMD: { total: 2000, m3: 5, month: 83, percent: 4 },
-    Transport: { total: 4000, m3: 10, month: 167, percent: 8 },
-    Production: { total: 25000, m3: 60, month: 1042, percent: 50 },
-    EBIDA: { total: 6000, m3: 15, month: 250, percent: 12 },
-    EBIT: { total: 10000, m3: 25, month: 417, percent: 20 },
-    Amortissement: { total: 4000, m3: 10, month: 167, percent: 8 }
-  } as Metrics
-})
+const store = usePnlStore();
+
+onMounted(() => {
+  if (store.pnls.length === 0) store.loadPnls();
+});
+
+const activePnl = computed(() => store.activePnl);
+const activeVariant = computed(() => store.activeVariant);
+
+// Cherche le contrat qui contient la variante active
+const activeContract = computed(() => {
+  const pnl = activePnl.value;
+  const vId = store.activeVariantId;
+  if (!pnl || !pnl.contracts?.length) return null;
+  if (!vId) return pnl.contracts[0];
+
+  return (
+    pnl.contracts.find((c: any) => (c.variants ?? []).some((v: any) => v.id === vId)) ??
+    pnl.contracts[0]
+  );
+});
+
+// Champs affichés dans le header
+const projectName = computed(() => activePnl.value?.title ?? "—");
+const contractName = computed(() => (activeContract.value ? `Contrat ${activeContract.value.id.slice(0, 6)}` : "—"));
+const variantName = computed(() => activeVariant.value?.title ?? "—");
+
+const durationMonths = computed(() => 0); // TODO: calcul plus tard
+const client = computed(() => activePnl.value?.client ?? "—");
+const status = computed(() => activePnl.value?.status ?? "—");
+const volumeTotal = computed(() => 0); // TODO: calcul plus tard
+
+// KPI: pour l’instant en “placeholder” (tu n’as pas encore la logique de calcul)
+const metrics = computed<Metrics>(() => ({
+  ASP: { total: 50000, m3: 120, month: 2083, percent: 100 },
+  CMP: { total: 35000, m3: 80, month: 1458, percent: 70 },
+  MOMD: { total: 2000, m3: 5, month: 83, percent: 4 },
+  Transport: { total: 4000, m3: 10, month: 167, percent: 8 },
+  Production: { total: 25000, m3: 60, month: 1042, percent: 50 },
+  EBIDA: { total: 6000, m3: 15, month: 250, percent: 12 },
+  EBIT: { total: 10000, m3: 25, month: 417, percent: 20 },
+  Amortissement: { total: 4000, m3: 10, month: 167, percent: 8 },
+}));
 
 const kpiOrder: KpiName[] = [
-  'ASP',
-  'CMP',
-  'MOMD',
-  'Transport',
-  'Production',
-  'EBIDA',
-  'EBIT',
-  'Amortissement'
-]
+  "ASP",
+  "CMP",
+  "MOMD",
+  "Transport",
+  "Production",
+  "EBIDA",
+  "EBIT",
+  "Amortissement",
+];
 
-const actions = reactive([
-  { label: 'Dupliquer', icon: '📄' },
-  { label: 'Nouvelle variante', icon: '➕' },
-  { label: 'Archiver', icon: '🗄️' },
-  { label: 'Éditer', icon: '✏️' },
-  { label: 'Supprimer', icon: '🗑️' }
-])
+const actions = [
+  { label: "Dupliquer", icon: "📄" },
+  { label: "Nouvelle variante", icon: "➕" },
+  { label: "Archiver", icon: "🗄️" },
+  { label: "Éditer", icon: "✏️" },
+  { label: "Supprimer", icon: "🗑️" },
+];
 </script>
 
 <template>
   <header class="header-dashboard">
-    <!-- Ligne principale: P&L, Contrat, Variante + Actions | Infos importantes -->
+    <!-- Ligne principale -->
     <div class="top-row">
       <div class="left-info">
-        <div class="edit-item pnL">P&L : {{ pNl.projectName }}</div>
-        <div class="edit-item contract">Contrat : {{ pNl.contractName }}</div>
+        <div class="edit-item pnL">P&L : {{ projectName }}</div>
+        <div class="edit-item contract">Contrat : {{ contractName }}</div>
+
         <div class="variant-block">
-          <div class="edit-item variant">Variante : {{ pNl.variantName }}</div>
+          <div class="edit-item variant">Variante : {{ variantName }}</div>
+
           <div class="actions-block">
             <button v-for="act in actions" :key="act.label" class="action-btn">
               {{ act.icon }} {{ act.label }}
@@ -76,11 +103,12 @@ const actions = reactive([
           </div>
         </div>
       </div>
+
       <div class="right-info">
-        <span>Durée : {{ pNl.durationMonths }} mois</span>
-        <span>Volume : {{ pNl.volumeTotal.toLocaleString('fr-FR') }} m³</span>
-        <span>Client : {{ pNl.client }}</span>
-        <span>Status : {{ pNl.status }}</span>
+        <span>Durée : {{ durationMonths }} mois</span>
+        <span>Volume : {{ volumeTotal.toLocaleString("fr-FR") }} m³</span>
+        <span>Client : {{ client }}</span>
+        <span>Status : {{ status }}</span>
       </div>
     </div>
 
@@ -94,11 +122,11 @@ const actions = reactive([
       >
         <div class="kpi-title">{{ key }}</div>
         <div class="kpi-box">
-          <div class="kpi-percent">{{ pNl.metrics[key].percent }}%</div>
+          <div class="kpi-percent">{{ metrics[key].percent }}%</div>
           <div class="kpi-values">
-            <span>{{ pNl.metrics[key].total.toLocaleString('fr-FR') }} DH</span>
-            <span>{{ pNl.metrics[key].m3 }} DH/m³</span>
-            <span>{{ pNl.metrics[key].month }} DH/mois</span>
+            <span>{{ metrics[key].total.toLocaleString("fr-FR") }} DH</span>
+            <span>{{ metrics[key].m3 }} DH/m³</span>
+            <span>{{ metrics[key].month }} DH/mois</span>
           </div>
         </div>
       </div>
@@ -120,7 +148,6 @@ const actions = reactive([
   font-family: "Inter", sans-serif;
 }
 
-/* Ligne principale */
 .top-row {
   display: flex;
   justify-content: space-between;
@@ -129,7 +156,6 @@ const actions = reactive([
   flex-wrap: wrap;
 }
 
-/* Bloc gauche: P&L, Contrat, Variante + actions */
 .left-info {
   display: flex;
   flex-direction: column;
@@ -144,12 +170,10 @@ const actions = reactive([
   text-overflow: ellipsis;
 }
 
-/* Couleurs spécifiques */
-.edit-item.pnL { color: #3b82f6; } /* bleu */
-.edit-item.contract { color: #facc15; } /* jaune */
+.edit-item.pnL { color: #3b82f6; }
+.edit-item.contract { color: #facc15; }
 .edit-item.variant { color: #22c55e; font-weight: 600; }
 
-/* Variante + actions */
 .variant-block {
   display: flex;
   align-items: center;
@@ -182,7 +206,6 @@ const actions = reactive([
   color: #fff;
 }
 
-/* Bloc droite: infos importantes */
 .right-info {
   display: flex;
   gap: 10px;
@@ -193,7 +216,6 @@ const actions = reactive([
   align-items: center;
 }
 
-/* KPI GRID */
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -201,9 +223,7 @@ const actions = reactive([
 }
 
 @media (max-width: 1200px) {
-  .kpi-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
+  .kpi-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
 .kpi-column {

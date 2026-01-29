@@ -2,6 +2,8 @@
   "name": "pnl-creator",
   "version": "0.0.0",
   "scripts": {
+    "seed": "ts-node -P tsconfig.node.json prisma/seed.ts",
+    "dev:api": "ts-node -P tsconfig.node.json src/server/index.ts",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -9,20 +11,25 @@
   "dependencies": {
     "@heroicons/vue": "^2.0.18",
     "@prisma/client": "^5.22.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "pinia": "^2.3.1",
-    "prisma": "^5.22.0",
     "vue": "^3.5.27",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^25.1.0",
     "@vitejs/plugin-vue": "^4.3.3",
     "@vue/tsconfig": "^0.8.1",
+    "nodemon": "^3.1.11",
+    "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vite": "^4.4.9"
   },
   "prisma": {
-  "seed": "ts-node -P tsconfig.node.json prisma/seed.ts"
-}
+    "seed": "ts-node -P tsconfig.node.json prisma/seed.ts"
+  }
 }
