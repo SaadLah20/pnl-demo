@@ -1,45 +1,275 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "sqlite"
   url      = "file:./dev.db"
 }
 
+/* =======================
+   ENUMS GLOBAUX
+======================= */
 
-generator client {
-  provider = "prisma-client-js"
+enum PnlModel {
+  CAB_FIXE_EXISTANT
+  CAB_FIXE_NOUVELLE
+  CAB_MOBILE_CLIENT
 }
 
-
-model PL {
-  id        Int      @id @default(autoincrement())
-  title     String
-  model     String
-  client    String?
-  status    String
-  createdAt DateTime @default(now())
-  variants  Variant[]
-  contracts Contract[]
+enum PnlStatus {
+  ENCOURS
+  PERDU
+  ADJUGE
 }
 
-model Variant {
-  id        Int      @id @default(autoincrement())
-  title     String
-  volume    Float
-  description String?
-  model     String
-  type      String
-  status    String
-  pl        PL       @relation(fields: [plId], references: [id])
-  plId      Int
+enum VariantStatus {
+  INITIALISEE
+  ENCOURS
+  ANNULEE
+  CLOTUREE
+}
+
+enum SectionCategoryEnum {
+  LOGISTIQUE_APPRO
+  FORMULES
+  COUTS_CHARGES
+  DEVIS
+}
+
+enum ChargeType {
+  LHM
+  CLIENT
+  EXISTANTE
+  PARTAGE
+  PRESTATAIRE
+}
+
+enum CabEtat {
+  NEUVE
+  DEGRADEE
+}
+
+enum CabMode {
+  ACHAT
+  LOCATION
+  PROPRE
+}
+
+enum UniteAutreCout {
+  M3
+  MOIS
+  FORFAIT
+  POURCENT_CA
+}
+
+/* =======================
+   CORE
+======================= */
+
+model Pnl {
+  id            String   @id @default(uuid())
+  title         String
+  model         PnlModel
+  client        String?
+  status        PnlStatus
+  startDate     DateTime?
+  city          String
+  region        String
+  createdAt     DateTime @default(now())
+
+  contracts     Contract[]
 }
 
 model Contract {
-  id       Int    @id @default(autoincrement())
-  ref      String
-  pl       PL     @relation(fields: [plId], references: [id])
-  plId     Int
-  cab      String
-  installation String
-  transport   String
-  geniecivil  String
-  terrain     String
+  id        String @id @default(uuid())
+  pnlId     String
+  pnl       Pnl    @relation(fields: [pnlId], references: [id])
+
+  cab               ChargeType
+  installation      ChargeType
+  genieCivil        ChargeType
+  transport         ChargeType
+  terrain           ChargeType
+  matierePremiere   ChargeType
+  maintenance       ChargeType
+  chargeuse         ChargeType
+  branchementEau    ChargeType
+  consoEau          ChargeType
+  branchementElec   ChargeType
+  consoElec         ChargeType
+
+  postes            Int
+  sundayPrice       Float
+  delayPenalty      Float
+  chillerRent       Float
+
+  variants          Variant[]
+}
+
+model Variant {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  status      VariantStatus
+
+  contractId  String
+  contract    Contract     @relation(fields: [contractId], references: [id])
+
+  /* Sections */
+  mp              SectionMatierePremiere?
+  transport       SectionTransport?
+  cab             SectionCab?
+  maintenance     SectionMaintenance?
+  coutM3          SectionCoutM3?
+  coutMensuel     SectionCoutMensuel?
+  coutOccasionnel SectionCoutOccasionnel?
+  employes        SectionEmployes?
+  autresCouts     SectionAutresCouts?
+  formules        SectionFormules?
+  majorations     SectionMajorations?
+  devis           SectionDevis?
+}
+
+/* =======================
+   SECTIONS
+======================= */
+
+model SectionMatierePremiere {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionTransport {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  type      String
+  prixMoyen Float?
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionCab {
+  id          String @id @default(uuid())
+  variantId   String @unique
+  category    SectionCategoryEnum
+  etat        CabEtat
+  mode        CabMode
+  capaciteM3  Float
+  amortMois   Float
+  variant     Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionMaintenance {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  cab       Float
+  elec      Float
+  chargeur  Float
+  generale  Float
+  bassins   Float
+  preventive Float
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionCoutM3 {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  eau       Float
+  qualite   Float
+  dechets   Float
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionCoutMensuel {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  electricite Float
+  gasoil      Float
+  location    Float
+  securite    Float
+  variant     Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionCoutOccasionnel {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  genieCivil Float
+  installation Float
+  transport Float
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionEmployes {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  responsableNb Float
+  responsableCout Float
+  centralistesNb Float
+  centralistesCout Float
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionAutresCouts {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  label     String
+  unite     UniteAutreCout
+  valeur    Float
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionFormules {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionMajorations {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+model SectionDevis {
+  id        String @id @default(uuid())
+  variantId String @unique
+  category  SectionCategoryEnum
+  surcharge Float @default(0)
+  variant   Variant @relation(fields: [variantId], references: [id])
+}
+
+/* =======================
+   REPERTOIRES GLOBAUX
+======================= */
+
+model MpCatalogue {
+  id        String @id @default(uuid())
+  categorie String
+  label     String
+  unite     String
+  prix      Float
+  fournisseur String
+  city      String
+  region    String
+  comment   String?
+}
+
+model FormuleCatalogue {
+  id        String @id @default(uuid())
+  label     String
+  resistance String
+  city      String
+  region    String
+  comment   String?
 }

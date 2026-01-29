@@ -15,10 +15,14 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@types/node": "^25.1.0",
     "@vitejs/plugin-vue": "^4.3.3",
     "@vue/tsconfig": "^0.8.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vite": "^4.4.9"
-  }
+  },
+  "prisma": {
+  "seed": "ts-node -P tsconfig.node.json prisma/seed.ts"
+}
 }
