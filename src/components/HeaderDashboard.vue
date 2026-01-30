@@ -8,7 +8,7 @@ type KpiName =
   | "MOMD"
   | "Transport"
   | "Production"
-  | "EBIDA"
+  | "EBITDA"
   | "EBIT"
   | "Amortissement";
 
@@ -30,6 +30,8 @@ onMounted(() => {
 const activePnl = computed(() => store.activePnl);
 const activeVariant = computed(() => store.activeVariant);
 
+const headerKpis = computed(() => store.activeHeaderKPIs);
+
 // Cherche le contrat qui contient la variante active
 const activeContract = computed(() => {
   const pnl = activePnl.value;
@@ -45,25 +47,48 @@ const activeContract = computed(() => {
 
 // Champs affichés dans le header
 const projectName = computed(() => activePnl.value?.title ?? "—");
-const contractName = computed(() => (activeContract.value ? `Contrat ${activeContract.value.id.slice(0, 6)}` : "—"));
+const contractName = computed(() =>
+  activeContract.value ? `Contrat ${activeContract.value.id.slice(0, 6)}` : "—"
+);
 const variantName = computed(() => activeVariant.value?.title ?? "—");
 
-const durationMonths = computed(() => 0); // TODO: calcul plus tard
+const durationMonths = computed(() => activeContract.value?.dureeMois ?? 0);
+const status = computed(() => activeVariant.value?.status ?? "—");
+const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
-const status = computed(() => activePnl.value?.status ?? "—");
-const volumeTotal = computed(() => 0); // TODO: calcul plus tard
 
-// KPI: pour l’instant en “placeholder” (tu n’as pas encore la logique de calcul)
-const metrics = computed<Metrics>(() => ({
-  ASP: { total: 50000, m3: 120, month: 2083, percent: 100 },
-  CMP: { total: 35000, m3: 80, month: 1458, percent: 70 },
-  MOMD: { total: 2000, m3: 5, month: 83, percent: 4 },
-  Transport: { total: 4000, m3: 10, month: 167, percent: 8 },
-  Production: { total: 25000, m3: 60, month: 1042, percent: 50 },
-  EBIDA: { total: 6000, m3: 15, month: 250, percent: 12 },
-  EBIT: { total: 10000, m3: 25, month: 417, percent: 20 },
-  Amortissement: { total: 4000, m3: 10, month: 167, percent: 8 },
-}));
+// KPI (placeholder propre, connecté au store)
+const metrics = computed<Metrics>(() => {
+  const k = headerKpis.value;
+
+  const vol = k?.volumeTotalM3 ?? 0;
+  const duree = durationMonths.value || 0;
+
+  const ca = k?.caTotal ?? 0;
+  const mp = k?.coutMpTotal ?? 0;
+
+  const marge = k?.margeBrute ?? 0;
+
+  const asp_m3 = k?.prixMoyenM3 ?? 0;
+  const cmp_m3 = k?.coutMpMoyenM3 ?? 0;
+  const momd_m3 = k?.momdMoyenM3 ?? 0;
+
+  const per = (x: number) => (ca > 0 ? (x / ca) * 100 : 0);
+  const month = (total: number) => (duree > 0 ? total / duree : 0);
+
+  return {
+    ASP: { total: ca, m3: asp_m3, month: month(ca), percent: 100 },
+    CMP: { total: mp, m3: cmp_m3, month: month(mp), percent: per(mp) },
+    MOMD: { total: 0, m3: momd_m3, month: 0, percent: 0 },
+
+    Transport: { total: 0, m3: 0, month: 0, percent: 0 },
+    Production: { total: 0, m3: 0, month: 0, percent: 0 },
+
+    EBITDA: { total: marge, m3: vol > 0 ? marge / vol : 0, month: month(marge), percent: per(marge) },
+    EBIT: { total: marge, m3: vol > 0 ? marge / vol : 0, month: month(marge), percent: per(marge) },
+    Amortissement: { total: 0, m3: 0, month: 0, percent: 0 },
+  };
+});
 
 const kpiOrder: KpiName[] = [
   "ASP",
@@ -71,7 +96,7 @@ const kpiOrder: KpiName[] = [
   "MOMD",
   "Transport",
   "Production",
-  "EBIDA",
+  "EBITDA",
   "EBIT",
   "Amortissement",
 ];
@@ -118,15 +143,50 @@ const actions = [
         v-for="key in kpiOrder"
         :key="key"
         class="kpi-column"
-        :class="{ highlight: ['ASP', 'EBIDA', 'EBIT'].includes(key) }"
+        :class="{ highlight: ['ASP', 'EBITDA', 'EBIT'].includes(key) }"
       >
         <div class="kpi-title">{{ key }}</div>
+
         <div class="kpi-box">
-          <div class="kpi-percent">{{ metrics[key].percent }}%</div>
+          <div class="kpi-percent">
+            {{
+              Number(metrics[key].percent || 0).toLocaleString("fr-FR", {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 2,
+              })
+            }}%
+          </div>
+
           <div class="kpi-values">
-            <span>{{ metrics[key].total.toLocaleString("fr-FR") }} DH</span>
-            <span>{{ metrics[key].m3 }} DH/m³</span>
-            <span>{{ metrics[key].month }} DH/mois</span>
+            <span>
+              {{
+                Number(metrics[key].total || 0).toLocaleString("fr-FR", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 2,
+                })
+              }}
+              DH
+            </span>
+
+            <span>
+              {{
+                Number(metrics[key].m3 || 0).toLocaleString("fr-FR", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 2,
+                })
+              }}
+              DH/m³
+            </span>
+
+            <span>
+              {{
+                Number(metrics[key].month || 0).toLocaleString("fr-FR", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 2,
+                })
+              }}
+              DH/mois
+            </span>
           </div>
         </div>
       </div>
