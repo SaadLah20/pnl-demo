@@ -8,29 +8,15 @@ datasource db {
 }
 
 // =======================
-// TYPES (ex-enums) -> String
-// =======================
-//
-// Champs concernés :
-// - Pnl.model            (ex: CAB_FIXE_EXISTANT, CAB_FIXE_NOUVELLE, CAB_MOBILE_CLIENT)
-// - Pnl.status           (ex: ENCOURS, PERDU, ADJUGE)
-// - Variant.status       (ex: INITIALISEE, ENCOURS, ANNULEE, CLOTUREE)
-// - Section*.category    (ex: LOGISTIQUE_APPRO, FORMULES, COUTS_CHARGES, DEVIS)
-// - Contract.*           (ex: LHM, CLIENT, EXISTANTE, PARTAGE, PRESTATAIRE)
-// - SectionCab.etat      (ex: NEUVE, DEGRADEE)
-// - SectionCab.mode      (ex: ACHAT, LOCATION, PROPRE)
-// - SectionAutresCouts.unite (ex: M3, MOIS, FORFAIT, POURCENT_CA)
-
-// =======================
 // CORE
 // =======================
 
 model Pnl {
   id        String    @id @default(uuid())
   title     String
-  model     String // ex: CAB_FIXE_EXISTANT | CAB_FIXE_NOUVELLE | CAB_MOBILE_CLIENT
+  model     String
   client    String?
-  status    String    @default("ENCOURS") // ex: ENCOURS | PERDU | ADJUGE
+  status    String    @default("ENCOURS")
   startDate DateTime?
   city      String
   region    String
@@ -44,7 +30,7 @@ model Contract {
   pnlId           String
   pnl             Pnl    @relation(fields: [pnlId], references: [id])
   dureeMois       Int    @default(0)
-  cab             String // ex: LHM | CLIENT | EXISTANTE | PARTAGE | PRESTATAIRE
+  cab             String
   installation    String
   genieCivil      String
   transport       String
@@ -69,12 +55,11 @@ model Variant {
   id          String  @id @default(uuid())
   title       String
   description String?
-  status      String  @default("INITIALISEE") // ex: INITIALISEE | ENCOURS | ANNULEE | CLOTUREE
+  status      String  @default("INITIALISEE")
 
   contractId String
   contract   Contract @relation(fields: [contractId], references: [id])
 
-  // Sections (1:1 optionnelles)
   mp              SectionMatierePremiere?
   transport       SectionTransport?
   cab             SectionCab?
@@ -88,7 +73,6 @@ model Variant {
   majorations     SectionMajorations?
   devis           SectionDevis?
 
-  // Liaisons "listes"
   variantMps      VariantMp[]
   variantFormules VariantFormule[]
 
@@ -111,11 +95,11 @@ model SectionMatierePremiere {
 model SectionTransport {
   id        String @id @default(uuid())
   variantId String @unique
-  category  String // ex: LOGISTIQUE_APPRO | ...
+  category  String
   type      String
   prixMoyen Float?
 
-  volumePompePct Float? // % pompé (0..100)
+  volumePompePct Float?
   prixAchatPompe Float?
   prixVentePompe Float?
 
@@ -125,9 +109,9 @@ model SectionTransport {
 model SectionCab {
   id         String  @id @default(uuid())
   variantId  String  @unique
-  category   String // ex: LOGISTIQUE_APPRO | ...
-  etat       String // ex: NEUVE | DEGRADEE
-  mode       String // ex: ACHAT | LOCATION | PROPRE
+  category   String
+  etat       String
+  mode       String
   capaciteM3 Float
   amortMois  Float
   variant    Variant @relation(fields: [variantId], references: [id])
@@ -136,7 +120,7 @@ model SectionCab {
 model SectionMaintenance {
   id         String  @id @default(uuid())
   variantId  String  @unique
-  category   String // ex: COUTS_CHARGES | ...
+  category   String
   cab        Float
   elec       Float
   chargeur   Float
@@ -207,7 +191,7 @@ model AutreCoutItem {
   variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   label  String
-  unite  String // M3 | MOIS | FORFAIT | POURCENT_CA
+  unite  String
   valeur Float
 
   @@index([variantId])
@@ -303,6 +287,9 @@ model VariantFormule {
   formuleId String
   volumeM3  Float
   momd      Float
+
+  // ✅ NEW: CMP marché override
+  cmpOverride Float?
 
   variant Variant          @relation(fields: [variantId], references: [id])
   section SectionFormules? @relation(fields: [sectionId], references: [id])

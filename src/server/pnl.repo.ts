@@ -17,7 +17,6 @@ export async function getPnls() {
               coutOccasionnel: true,
               employes: true,
 
-              // ✅ IMPORTANT
               autresCouts: {
                 include: { items: true },
               },
