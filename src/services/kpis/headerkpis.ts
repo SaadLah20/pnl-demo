@@ -1,169 +1,132 @@
 // src/services/kpis/headerkpis.ts
 import type { HeaderKPIs } from "@/types/kpis.types";
 
-type UniteAutreCout = "M3" | "MOIS" | "FORFAIT" | "POURCENT_CA" | string;
-
 function n(x: any): number {
   const v = Number(x);
   return Number.isFinite(v) ? v : 0;
 }
 
-function sumObjNumbers(obj: any, exclude: string[] = []): number {
-  if (!obj) return 0;
-  let s = 0;
-  for (const [k, v] of Object.entries(obj)) {
-    if (exclude.includes(k)) continue;
-    if (typeof v === "number") s += v;
-  }
-  return s;
+function sum(arr: any[], fn: (x: any) => number) {
+  return (arr ?? []).reduce((s, x) => s + fn(x), 0);
+}
+
+// arrondi affichage / stockage (sécurise les décimales “infinies”)
+function round2(x: number) {
+  return Math.round(x * 100) / 100;
 }
 
 export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
-  // -----------------------------
-  // INPUTS (depuis ton JSON)
-  // -----------------------------
-  const formuleLines = variant?.formules?.items ?? []; // VariantFormule[]
-  const mpLines = variant?.mp?.items ?? [];            // VariantMp[]
-  const transport = variant?.transport ?? null;
-  const cab = variant?.cab ?? null;
+  const formulesItems = variant?.formules?.items ?? [];
+  const mpItems = variant?.mp?.items ?? [];
 
-  const maintenance = variant?.maintenance ?? null;
-  const coutM3 = variant?.coutM3 ?? null;
-  const coutMensuel = variant?.coutMensuel ?? null;
-  const coutOccasionnel = variant?.coutOccasionnel ?? null;
-  const employes = variant?.employes ?? null;
+  const duree = n(dureeMois);
+  const dureeJours = duree > 0 ? Math.round(duree * 30) : null;
 
-  const autresItems = variant?.autresCouts?.items ?? []; // AutreCoutItem[]
+  // ------------------------------
+  // 1) Volume total
+  // ------------------------------
+  const volumeTotalM3 = sum(formulesItems, (f) => n(f?.volumeM3));
 
-  // -----------------------------
-  // BASE : volume total
-  // -----------------------------
-  const volumeTotalM3 = formuleLines.reduce((s: number, f: any) => s + n(f?.volumeM3), 0);
-
-  // durée (le HeaderDashboard la lit déjà depuis contract.dureeMois)
-  // ici on ne l’a pas, donc on laisse null (ou tu peux la passer en param plus tard)
-  const dureeJours: number | null = null;
-
-  // -----------------------------
-  // MP price map (override)
-  // -----------------------------
-  const mpPriceById = new Map<string, number>();
-  for (const l of mpLines) {
-    if (l?.mpId) mpPriceById.set(String(l.mpId), n(l.prix));
-  }
-
-  // -----------------------------
-  // Transport moyen (hors pompage)
-  // -----------------------------
-  const transportMoyenM3 = transport ? n(transport.prixMoyen) : 0; // peut être 0 si départ
+  // ------------------------------
+  // 2) Transport
+  // transport.prixMoyen = DH/m3 (sans pompage)
+  // ------------------------------
+  const transportMoyenM3 = n(variant?.transport?.prixMoyen);
   const transportTotal = transportMoyenM3 * volumeTotalM3;
 
-  // -----------------------------
-  // Calcul par formule: CMP, PV, CA
-  // PV = CMP + TransportMoyen + MOMD
-  // CMP(formule) = sum(qty * prixMp)
-  // -----------------------------
-  let caTotal = 0;
-  let coutMpTotal = 0;
-  let momdTotal = 0;
-
-  for (const line of formuleLines) {
-    const vol = n(line?.volumeM3);
-    if (vol <= 0) continue;
-
-    const momd = n(line?.momd);
-
-    // composition MP de la formule
-    const comp = line?.formule?.items ?? []; // formuleCatalogueItem[]
-    let cmpM3 = 0;
-    for (const it of comp) {
-      const mpId = String(it?.mpId ?? "");
-      const qty = n(it?.qty); // qty / m3
-      // prix prioritaire: variant.mp override, sinon catalogue (it.mp.prix), sinon 0
-      const prixMp =
-        mpPriceById.get(mpId) ??
-        n(it?.mp?.prix) ??
-        0;
-
-      cmpM3 += qty * prixMp;
-    }
-
-    const pvM3 = cmpM3 + transportMoyenM3 + momd;
-
-    caTotal += vol * pvM3;
-    coutMpTotal += vol * cmpM3;
-    momdTotal += vol * momd;
+  // ------------------------------
+  // 3) CMP d'une formule (DH/m3)
+  // basé sur composition formuleCatalogueItem.qty * prix MP (variantMp.prix)
+  // ------------------------------
+  function cmpFormuleM3(formule: any): number {
+    const compo = formule?.items ?? [];
+    return sum(compo, (it: any) => {
+      const mpId = it?.mpId;
+      const qty = n(it?.qty);
+      const prix = n(mpItems.find((x: any) => x.mpId === mpId)?.prix);
+      return qty * prix;
+    });
   }
 
+  // ------------------------------
+  // 4) Totaux pondérés par volumes
+  // ------------------------------
+  const coutMpTotal = sum(formulesItems, (f: any) => {
+    const vol = n(f?.volumeM3);
+    const cmp = cmpFormuleM3(f?.formule);
+    return cmp * vol;
+  });
+
+  const momdTotal = sum(formulesItems, (f: any) => n(f?.momd) * n(f?.volumeM3));
+
+  // CA total (ASP total) = Σ (PVformule * vol)
+  // PVformule = CMP + Transport + MOMD
+  const caTotal = sum(formulesItems, (f: any) => {
+    const vol = n(f?.volumeM3);
+    const momd = n(f?.momd);
+    const cmp = cmpFormuleM3(f?.formule);
+    const pv = cmp + transportMoyenM3 + momd;
+    return pv * vol;
+  });
+
+  // Moyennes /m3
   const prixMoyenM3 = volumeTotalM3 > 0 ? caTotal / volumeTotalM3 : 0;
   const coutMpMoyenM3 = volumeTotalM3 > 0 ? coutMpTotal / volumeTotalM3 : 0;
   const momdMoyenM3 = volumeTotalM3 > 0 ? momdTotal / volumeTotalM3 : 0;
 
-  // Marge brute (CA - MP)
+  // Marge brute (béton) = CA - MP
   const margeBrute = caTotal - coutMpTotal;
   const margeBrutePct = caTotal > 0 ? (margeBrute / caTotal) * 100 : null;
 
-  // -----------------------------
-  // Production (hors frais généraux)
-  // - couts au m3 * volume
-  // - couts mensuels * duréeMois (si on ne l’a pas ici, on considère 0 => production partielle)
-  // - maintenance total * duréeMois
-  // - employés * duréeMois
-  // - occasionnels (forfait)
-  // - autresCouts : M3 / MOIS / FORFAIT (POURCENT_CA => frais généraux)
-  // -----------------------------
-  // ⚠️ Ici on ne connaît pas dureeMois dans ce module (car tu n’as passé que variant).
-  // Donc:
-  // - Les postes "MOIS" ne pourront être exacts que si tu passes dureeMois en param plus tard
-  // - Pour l’instant: on met dureeMois = 0 => production mensuelle = 0
-  const dureeEnMois = 0;
+  // ------------------------------
+  // 5) Production (hors frais généraux)
+  // Production = coutM3*vol + coutMensuel*duree + maintenance*duree + employes*duree + occasionnel + autresCouts (sauf %CA)
+  // ------------------------------
+  const coutM3 = variant?.coutM3;
+  const coutMensuel = variant?.coutMensuel;
+  const maintenance = variant?.maintenance;
+  const employes = variant?.employes;
+  const coutOcc = variant?.coutOccasionnel;
+  const autresItems = variant?.autresCouts?.items ?? [];
 
   const coutM3Total =
-    (sumObjNumbers(coutM3, ["id", "variantId", "category"]) || 0) * volumeTotalM3;
+    (n(coutM3?.eau) + n(coutM3?.qualite) + n(coutM3?.dechets)) * volumeTotalM3;
 
   const coutMensuelTotal =
-    (sumObjNumbers(coutMensuel, ["id", "variantId", "category"]) || 0) * dureeMois;
+    (n(coutMensuel?.electricite) +
+      n(coutMensuel?.gasoil) +
+      n(coutMensuel?.location) +
+      n(coutMensuel?.securite)) *
+    duree;
 
-  const maintenanceMensuelle = sumObjNumbers(maintenance, ["id", "variantId", "category"]) || 0;
-  const maintenanceTotal = maintenanceMensuelle * dureeMois;
+  const maintenanceMensuel = n(maintenance?.cab) + n(maintenance?.elec) + n(maintenance?.chargeur) +
+    n(maintenance?.generale) + n(maintenance?.bassins) + n(maintenance?.preventive);
+  const maintenanceTotal = maintenanceMensuel * duree;
 
   const employesMensuel =
     n(employes?.responsableNb) * n(employes?.responsableCout) +
     n(employes?.centralistesNb) * n(employes?.centralistesCout);
-  const employesTotal = employesMensuel * dureeMois;
+  const employesTotal = employesMensuel * duree;
 
-  const coutOccasionnelTotal = sumObjNumbers(coutOccasionnel, ["id", "variantId", "category"]) || 0;
+  const coutOccasionnelTotal =
+    n(coutOcc?.genieCivil) + n(coutOcc?.installation) + n(coutOcc?.transport);
 
-  let autresM3Total = 0;
-  let autresMoisTotal = 0;
-  let autresForfaitTotal = 0;
+  // Autres coûts: on sépare %CA (frais généraux) du reste
+  const fraisGenPct =
+    n(autresItems.find((x: any) => (x?.unite ?? "").includes("POURCENT"))?.valeur);
 
-  let fraisGenerauxPct: number | null = null;
-  let fraisGenerauxTotal = 0;
+  const autresCoutsHorsPctTotal = sum(autresItems, (x: any) => {
+    const unite = String(x?.unite ?? "");
+    const val = n(x?.valeur);
 
-  for (const it of autresItems) {
-    const unite = String(it?.unite ?? "") as UniteAutreCout;
-    const val = n(it?.valeur);
+    if (unite.includes("POURCENT")) return 0; // exclu (frais généraux)
 
-    if (unite === "POURCENT_CA") {
-      // frais généraux
-      if (fraisGenerauxPct === null) fraisGenerauxPct = 0;
-      fraisGenerauxPct += val;
-      continue;
-    }
+    if (unite === "MOIS") return val * duree;
+    if (unite === "M3") return val * volumeTotalM3;
 
-    if (unite === "M3") autresM3Total += val * volumeTotalM3;
-    else if (unite === "MOIS") autresMoisTotal += val * dureeMois;
-    else if (unite === "FORFAIT") autresForfaitTotal += val;
-    else {
-      // si inconnu, on le traite comme forfait pour éviter de perdre le coût
-      autresForfaitTotal += val;
-    }
-  }
-
-  if (fraisGenerauxPct !== null) {
-    fraisGenerauxTotal = caTotal * (fraisGenerauxPct / 100);
-  }
+    // FORFAIT ou autre => total direct
+    return val;
+  });
 
   const productionTotal =
     coutM3Total +
@@ -171,66 +134,91 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
     maintenanceTotal +
     employesTotal +
     coutOccasionnelTotal +
-    autresM3Total +
-    autresMoisTotal +
-    autresForfaitTotal;
+    autresCoutsHorsPctTotal;
 
-  const productionMoyenM3 = volumeTotalM3 > 0 ? productionTotal / volumeTotalM3 : 0;
+  // ------------------------------
+  // 6) Pompage (marge de pompage)
+  // margePompage = (PVpompe - PAchatPompe) * volumePompe
+  // volumePompe = volumeTotal * (volumePompePct/100)
+  // ------------------------------
+  const volumePompePct = n(variant?.transport?.volumePompePct);
+  const prixAchatPompe = n(variant?.transport?.prixAchatPompe);
+  const prixVentePompe = n(variant?.transport?.prixVentePompe);
 
-  // -----------------------------
-  // Pompage (marge)
-  // -----------------------------
-  const volPompePct = transport ? n(transport.volumePompePct) : 0;
-  const volPompeM3 = volumeTotalM3 * (volPompePct / 100);
+  const volumePompeM3 = volumeTotalM3 * (volumePompePct / 100);
+  const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
 
-  const prixAchatPompe = transport ? n(transport.prixAchatPompe) : 0;
-  const prixVentePompe = transport ? n(transport.prixVentePompe) : 0;
+  // ------------------------------
+  // 7) Frais généraux
+  // fraisGenerauxTotal = %CA * CA
+  // ------------------------------
+  const fraisGenerauxTotal = (fraisGenPct / 100) * caTotal;
 
-  const margePompageTotal = (prixVentePompe - prixAchatPompe) * volPompeM3;
-
-  // -----------------------------
-  // EBITDA / EBIT / Amort
-  // EBITDA = MOMD total + margePompage - production - fraisGeneraux
-  // EBIT = EBITDA - amort
-  // amort = cab.amortMois * dureeMois (idem: dureeMois inconnu ici => 0)
-  // -----------------------------
-  const amortissementTotal = n(cab?.amortMois) * dureeMois;
+  // ------------------------------
+  // 8) EBITDA & EBIT
+  // EBITDA = MOMD total + margePompage - production - frais généraux
+  // EBIT = EBITDA - amortissements
+  // ------------------------------
+  const amortissementMensuel = n(variant?.cab?.amortMois); // DH/mois
+  const amortissementTotal = amortissementMensuel * duree;
 
   const ebitdaTotal = momdTotal + margePompageTotal - productionTotal - fraisGenerauxTotal;
   const ebitTotal = ebitdaTotal - amortissementTotal;
 
+  // % par rapport CA (ASP total)
+  const pct = (x: number) => (caTotal > 0 ? (x / caTotal) * 100 : 0);
+
   return {
+    // infos header
     client: null,
     status: variant?.status ?? "—",
     dureeJours,
 
-    volumeTotalM3,
+    // volumes
+    volumeTotalM3: round2(volumeTotalM3),
 
-    caTotal,
-    prixMoyenM3,
+    // ASP
+    caTotal: round2(caTotal),
+    prixMoyenM3: round2(prixMoyenM3),
 
-    coutMpTotal,
-    coutMpMoyenM3,
+    // CMP
+    coutMpTotal: round2(coutMpTotal),
+    coutMpMoyenM3: round2(coutMpMoyenM3),
 
-    momdTotal,
-    momdMoyenM3,
+    // Marge brute (optionnel / actuel)
+    margeBrute: round2(margeBrute),
+    margeBrutePct: margeBrutePct == null ? null : round2(margeBrutePct),
 
-    transportTotal,
-    transportMoyenM3,
+    // MOMD
+    momdTotal: round2(momdTotal),
+    momdMoyenM3: round2(momdMoyenM3),
 
-    productionTotal,
-    productionMoyenM3,
+    // Transport
+    transportTotal: round2(transportTotal),
+    transportMoyenM3: round2(transportMoyenM3),
 
-    fraisGenerauxTotal,
-    fraisGenerauxPct,
+    // Production
+    productionTotal: round2(productionTotal),
 
-    margePompageTotal,
+    // Frais généraux
+    fraisGenerauxPct: round2(fraisGenPct),
+    fraisGenerauxTotal: round2(fraisGenerauxTotal),
 
-    ebitdaTotal,
-    ebitTotal,
-    amortissementTotal,
+    // Pompage
+    volumePompePct: round2(volumePompePct),
+    volumePompeM3: round2(volumePompeM3),
+    margePompageTotal: round2(margePompageTotal),
 
-    margeBrute,
-    margeBrutePct,
+    // Amortissements
+    amortissementMensuel: round2(amortissementMensuel),
+    amortissementTotal: round2(amortissementTotal),
+
+    // EBITDA / EBIT
+    ebitdaTotal: round2(ebitdaTotal),
+    ebitTotal: round2(ebitTotal),
+
+    // % utiles (si ton interface les prévoit)
+    ebitdaPct: round2(pct(ebitdaTotal)),
+    ebitPct: round2(pct(ebitTotal)),
   };
 }

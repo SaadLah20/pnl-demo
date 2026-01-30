@@ -65,30 +65,66 @@ const metrics = computed<Metrics>(() => {
   const duree = durationMonths.value || 0;
 
   const ca = k?.caTotal ?? 0;
-  const mp = k?.coutMpTotal ?? 0;
-
-  const marge = k?.margeBrute ?? 0;
-
-  const asp_m3 = k?.prixMoyenM3 ?? 0;
-  const cmp_m3 = k?.coutMpMoyenM3 ?? 0;
-  const momd_m3 = k?.momdMoyenM3 ?? 0;
 
   const per = (x: number) => (ca > 0 ? (x / ca) * 100 : 0);
+  const m3 = (total: number) => (vol > 0 ? total / vol : 0);
   const month = (total: number) => (duree > 0 ? total / duree : 0);
 
+  const aspTotal = k?.caTotal ?? 0;
+  const cmpTotal = k?.coutMpTotal ?? 0;
+  const momdTotal = k?.momdTotal ?? 0;
+
+  const transportTotal = k?.transportTotal ?? 0;
+  const productionTotal = k?.productionTotal ?? 0;
+
+  const amortTotal = k?.amortissementTotal ?? 0;
+  const ebitdaTotal = k?.ebitdaTotal ?? 0;
+  const ebitTotal = k?.ebitTotal ?? 0;
+
   return {
-    ASP: { total: ca, m3: asp_m3, month: month(ca), percent: 100 },
-    CMP: { total: mp, m3: cmp_m3, month: month(mp), percent: per(mp) },
-    MOMD: { total: 0, m3: momd_m3, month: 0, percent: 0 },
+    ASP: { total: aspTotal, m3: m3(aspTotal), month: month(aspTotal), percent: 100 },
 
-    Transport: { total: 0, m3: 0, month: 0, percent: 0 },
-    Production: { total: 0, m3: 0, month: 0, percent: 0 },
+    CMP: { total: cmpTotal, m3: m3(cmpTotal), month: month(cmpTotal), percent: per(cmpTotal) },
 
-    EBITDA: { total: marge, m3: vol > 0 ? marge / vol : 0, month: month(marge), percent: per(marge) },
-    EBIT: { total: marge, m3: vol > 0 ? marge / vol : 0, month: month(marge), percent: per(marge) },
-    Amortissement: { total: 0, m3: 0, month: 0, percent: 0 },
+    MOMD: { total: momdTotal, m3: m3(momdTotal), month: month(momdTotal), percent: per(momdTotal) },
+
+    Transport: {
+      total: transportTotal,
+      m3: m3(transportTotal),
+      month: month(transportTotal),
+      percent: per(transportTotal),
+    },
+
+    Production: {
+      total: productionTotal,
+      m3: m3(productionTotal),
+      month: month(productionTotal),
+      percent: per(productionTotal),
+    },
+
+    EBITDA: {
+      total: ebitdaTotal,
+      m3: m3(ebitdaTotal),
+      month: month(ebitdaTotal),
+      percent: per(ebitdaTotal),
+    },
+
+    EBIT: {
+      total: ebitTotal,
+      m3: m3(ebitTotal),
+      month: month(ebitTotal),
+      percent: per(ebitTotal),
+    },
+
+    Amortissement: {
+      total: amortTotal,
+      m3: m3(amortTotal),
+      month: month(amortTotal),
+      percent: per(amortTotal),
+    },
   };
 });
+
 
 const kpiOrder: KpiName[] = [
   "ASP",

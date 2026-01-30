@@ -11,12 +11,16 @@ export interface HeaderKPIs {
   volumeTotalM3: number;
 
   // ASP (CA)
-  caTotal: number;          // ASP total (CA total)
-  prixMoyenM3: number;      // ASP/m3
+  caTotal: number;
+  prixMoyenM3: number;
 
-  // CMP (MP)
+  // CMP (matières premières)
   coutMpTotal: number;
   coutMpMoyenM3: number;
+
+  // Marge brute (optionnelle, utile)
+  margeBrute: number;
+  margeBrutePct: number | null;
 
   // MOMD
   momdTotal: number;
@@ -28,21 +32,25 @@ export interface HeaderKPIs {
 
   // Production (hors frais généraux)
   productionTotal: number;
-  productionMoyenM3: number;
 
-  // Frais généraux (% CA) - toujours exclus de production
+  // Frais généraux (% CA)
+  fraisGenerauxPct: number;
   fraisGenerauxTotal: number;
-  fraisGenerauxPct: number | null;
 
-  // Pompage (marge)
+  // Pompage
+  volumePompePct: number;
+  volumePompeM3: number;
   margePompageTotal: number;
 
-  // EBITDA / EBIT / Amort
-  ebitdaTotal: number;
-  ebitTotal: number;
+  // Amortissements
+  amortissementMensuel: number;
   amortissementTotal: number;
 
-  // (optionnel mais utile)
-  margeBrute: number;       // CA - MP
-  margeBrutePct: number | null;
+  // Résultats
+  ebitdaTotal: number;
+  ebitTotal: number;
+
+  // % (facultatifs mais pratiques UI)
+  ebitdaPct: number;
+  ebitPct: number;
 }
