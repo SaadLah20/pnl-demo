@@ -272,6 +272,7 @@ model VariantMp {
   mpId      String
   prix      Float
   comment   String?
+  prixOverride Float?
 
   variant Variant                 @relation(fields: [variantId], references: [id])
   section SectionMatierePremiere? @relation(fields: [sectionId], references: [id])
