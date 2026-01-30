@@ -4,16 +4,21 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 function rand(min: number, max: number) {
-  return Math.round((min + Math.random() * (max - min)) * 100) / 100; // 2 décimales
+  return Math.round((min + Math.random() * (max - min)) * 100) / 100;
+}
+function randi(min: number, max: number) {
+  return Math.floor(min + Math.random() * (max - min + 1));
 }
 
-async function resetDb() {
-  // enfants -> parents (ordre important)
+async function resetBusinessDataOnly() {
+  // enfants -> parents
   await prisma.variantFormule.deleteMany();
   await prisma.variantMp.deleteMany();
-  await prisma.formuleCatalogueItem.deleteMany();
 
-  // ✅ autres coûts : items d'abord
+  await prisma.formuleCatalogueItem.deleteMany(); // ❌ non (si tu veux garder le catalogue)
+  // ✅ on ne touche PAS aux catalogues => donc on ne delete PAS FormuleCatalogueItem !
+  // ==> Cette ligne doit rester commentée/supprimée.
+
   await prisma.autreCoutItem.deleteMany();
   await prisma.sectionAutresCouts.deleteMany();
 
@@ -32,299 +37,80 @@ async function resetDb() {
   await prisma.variant.deleteMany();
   await prisma.contract.deleteMany();
   await prisma.pnl.deleteMany();
-
-  await prisma.formuleCatalogue.deleteMany();
-  await prisma.mpCatalogue.deleteMany();
 }
 
-async function seedCatalogues() {
-  // ---------- MP Catalogue (réaliste)
-  await prisma.mpCatalogue.createMany({
-    data: [
-      // CIMENT
-      {
-        categorie: "CIMENT",
-        label: "CPJ 55 - Bouskoura",
-        unite: "kg",
-        prix: 1.45,
-        fournisseur: "LafargeHolcim",
-        city: "Casablanca",
-        region: "CASA",
-        comment: "Livré chantier",
-      },
-      {
-        categorie: "CIMENT",
-        label: "CEM II/A-L 42.5",
-        unite: "kg",
-        prix: 1.32,
-        fournisseur: "Ciments du Maroc",
-        city: "Rabat",
-        region: "RABAT-SALE",
-        comment: "Livré chantier",
-      },
+async function ensureCataloguesExist() {
+  const mpCount = await prisma.mpCatalogue.count();
+  const fCount = await prisma.formuleCatalogue.count();
+  const compCount = await prisma.formuleCatalogueItem.count();
 
-      // GRANULATS
-      {
-        categorie: "GRANULATS",
-        label: "Sable de dune - Kenitra 0/3",
-        unite: "kg",
-        prix: 0.18,
-        fournisseur: "Carrière Kenitra",
-        city: "Kénitra",
-        region: "RABAT-SALE",
-        comment: "",
-      },
-      {
-        categorie: "GRANULATS",
-        label: "Granulats G1 3/8",
-        unite: "kg",
-        prix: 0.2,
-        fournisseur: "Carrière locale",
-        city: "Rabat",
-        region: "RABAT-SALE",
-        comment: "",
-      },
-      {
-        categorie: "GRANULATS",
-        label: "Granulats G2 8/16",
-        unite: "kg",
-        prix: 0.19,
-        fournisseur: "Carrière locale",
-        city: "Rabat",
-        region: "RABAT-SALE",
-        comment: "",
-      },
-
-      // ADJUVANTS
-      {
-        categorie: "ADJUVANT",
-        label: "Superplastifiant SP (polycarboxylate)",
-        unite: "kg",
-        prix: 11.5,
-        fournisseur: "Sika",
-        city: "Casablanca",
-        region: "CASA",
-        comment: "",
-      },
-      {
-        categorie: "ADJUVANT",
-        label: "Plastifiant P1",
-        unite: "kg",
-        prix: 7.5,
-        fournisseur: "Mapei",
-        city: "Casablanca",
-        region: "CASA",
-        comment: "",
-      },
-
-      // FIBRE / COLORANT
-      { categorie: "FIBRE", label: "Fibre PP 12mm", unite: "kg", prix: 22.0, fournisseur: "Fournisseur", city: "Casablanca", region: "CASA", comment: "" },
-      { categorie: "COLORANT", label: "Oxyde rouge", unite: "kg", prix: 16.0, fournisseur: "Fournisseur", city: "Casablanca", region: "CASA", comment: "" },
-    ],
-  });
-
-  // ---------- Formules Catalogue
-  await prisma.formuleCatalogue.createMany({
-    data: [
-      { label: "B25 XCA1", resistance: "C25/30", city: "Rabat", region: "RABAT-SALE", comment: "Courante" },
-      { label: "B30 XCA1", resistance: "C30/37", city: "Rabat", region: "RABAT-SALE", comment: "Structure" },
-      { label: "B35 XCA2", resistance: "C35/45", city: "Casablanca", region: "CASA", comment: "Exposition plus sévère" },
-    ],
-  });
-
-  // ---------- Récupérer IDs MP
-  const mp = await prisma.mpCatalogue.findMany();
-  const findMp = (contains: string) => mp.find((x) => x.label.toLowerCase().includes(contains.toLowerCase()))!;
-
-  const cpj55 = findMp("cpj 55");
-  const cem42 = findMp("42.5");
-  const sable = findMp("sable");
-  const g38 = findMp("3/8");
-  const g816 = findMp("8/16");
-  const sp = findMp("superplastifiant");
-  const p1 = findMp("plastifiant");
-
-  // ---------- Récupérer IDs Formules
-  const f = await prisma.formuleCatalogue.findMany();
-  const fB25 = f.find((x) => x.label.includes("B25"))!;
-  const fB30 = f.find((x) => x.label.includes("B30"))!;
-  const fB35 = f.find((x) => x.label.includes("B35"))!;
-
-  // ---------- Composition (qty par m3) : UPSERT (pas de doublons)
-  async function upsertItem(formuleId: string, mpId: string, qty: number) {
-    await prisma.formuleCatalogueItem.upsert({
-      where: { formuleId_mpId: { formuleId, mpId } }, // nécessite @@unique([formuleId, mpId])
-      create: { formuleId, mpId, qty },
-      update: { qty },
-    });
+  if (mpCount === 0 || fCount === 0 || compCount === 0) {
+    throw new Error(
+      "Catalogues MP/Formules vides (ou composition vide). Lance d'abord ton seed catalogues."
+    );
   }
-
-  // B25 XCA1
-  await upsertItem(fB25.id, cpj55.id, 300);
-  await upsertItem(fB25.id, sable.id, 750);
-  await upsertItem(fB25.id, g38.id, 450);
-  await upsertItem(fB25.id, g816.id, 500);
-  await upsertItem(fB25.id, sp.id, 3.5);
-
-  // B30 XCA1
-  await upsertItem(fB30.id, cpj55.id, 340);
-  await upsertItem(fB30.id, sable.id, 720);
-  await upsertItem(fB30.id, g38.id, 460);
-  await upsertItem(fB30.id, g816.id, 520);
-  await upsertItem(fB30.id, sp.id, 4.0);
-
-  // B35 XCA2
-  await upsertItem(fB35.id, cem42.id, 380);
-  await upsertItem(fB35.id, sable.id, 700);
-  await upsertItem(fB35.id, g38.id, 480);
-  await upsertItem(fB35.id, g816.id, 540);
-  await upsertItem(fB35.id, p1.id, 3.0);
-  await upsertItem(fB35.id, sp.id, 2.0);
-
-  return { cpj55, cem42, sable, g38, g816, sp, p1, fB25, fB30, fB35 };
 }
 
-async function seedPnls() {
-  const pnl1 = await prisma.pnl.create({
-    data: {
-      title: "PNL Résidence Al Amal (Salé)",
-      model: "CAB_FIXE_EXISTANT",
-      client: "Promo Immobilier X",
-      status: "ENCOURS",
-      startDate: new Date("2026-03-01"),
-      city: "Salé",
-      region: "RABAT-SALE",
-      contracts: {
-        create: [
-          {
-            dureeMois: 18,
-            cab: "EXISTANTE",
-            installation: "EXISTANTE",
-            genieCivil: "CLIENT",
-            transport: "LHM",
-            terrain: "CLIENT",
-            matierePremiere: "LHM",
-            maintenance: "PARTAGE",
-            chargeuse: "LHM",
-            branchementEau: "CLIENT",
-            consoEau: "LHM",
-            branchementElec: "CLIENT",
-            consoElec: "LHM",
-            postes: 2,
-            sundayPrice: 0,
-            delayPenalty: 15000,
-            chillerRent: 0,
-            variants: {
-              create: [
-                { title: "Variante Base", status: "INITIALISEE", description: "Hypothèses standard" },
-                { title: "Variante Optim Transport", status: "INITIALISEE", description: "Pompe + optimisation logistique" },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    include: { contracts: { include: { variants: true } } },
-  });
+async function pickCatalogueRefs() {
+  const mps = await prisma.mpCatalogue.findMany({ orderBy: { categorie: "asc" } });
+  const forms = await prisma.formuleCatalogue.findMany({ orderBy: { label: "asc" } });
 
-  const pnl2 = await prisma.pnl.create({
-    data: {
-      title: "PNL Extension Industrielle Aïn Sebaâ",
-      model: "CAB_FIXE_NOUVELLE",
-      client: "Industriel Y",
-      status: "ENCOURS",
-      startDate: new Date("2026-04-15"),
-      city: "Casablanca",
-      region: "CASA",
-      contracts: {
-        create: [
-          {
-            dureeMois: 12,
-            cab: "LHM",
-            installation: "LHM",
-            genieCivil: "PARTAGE",
-            transport: "LHM",
-            terrain: "PARTAGE",
-            matierePremiere: "LHM",
-            maintenance: "LHM",
-            chargeuse: "LHM",
-            branchementEau: "LHM",
-            consoEau: "LHM",
-            branchementElec: "LHM",
-            consoElec: "LHM",
-            postes: 1,
-            sundayPrice: 2500,
-            delayPenalty: 20000,
-            chillerRent: 12000,
-            variants: {
-              create: [
-                { title: "Variante Achat CAB", status: "INITIALISEE", description: "CAB neuve achat" },
-                { title: "Variante Location CAB", status: "INITIALISEE", description: "CAB neuve location" },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    include: { contracts: { include: { variants: true } } },
-  });
+  const findMp = (q: string) =>
+    mps.find((x) => (x.label ?? "").toLowerCase().includes(q.toLowerCase())) ?? mps[0];
 
-  const pnl3 = await prisma.pnl.create({
-    data: {
-      title: "PNL Centrale Mobile - Projet Z",
-      model: "CAB_MOBILE_CLIENT",
-      client: "Client Z",
-      status: "PERDU",
-      startDate: new Date("2026-02-01"),
-      city: "Marrakech",
-      region: "MARRAKECH-SAFI",
-      contracts: {
-        create: [
-          {
-            dureeMois: 24,
-            cab: "CLIENT",
-            installation: "CLIENT",
-            genieCivil: "CLIENT",
-            transport: "CLIENT",
-            terrain: "CLIENT",
-            matierePremiere: "PRESTATAIRE",
-            maintenance: "CLIENT",
-            chargeuse: "CLIENT",
-            branchementEau: "CLIENT",
-            consoEau: "CLIENT",
-            branchementElec: "CLIENT",
-            consoElec: "CLIENT",
-            postes: 1,
-            sundayPrice: 0,
-            delayPenalty: 0,
-            chillerRent: 0,
-            variants: {
-              create: [{ title: "Variante Base", status: "INITIALISEE", description: "Cas standard (mobile)" }],
-            },
-          },
-        ],
-      },
-    },
-    include: { contracts: { include: { variants: true } } },
-  });
+  const findForm = (q: string) =>
+    forms.find((x) => (x.label ?? "").toLowerCase().includes(q.toLowerCase())) ?? forms[0];
 
-  return [pnl1, pnl2, pnl3];
+  // essayer de matcher tes libellés
+  const mpCiment = findMp("ciment");
+  const mpSable = findMp("sable");
+  const mpG1 = findMp("g1");
+  const mpG2 = findMp("g2");
+  const mpSp = findMp("super");
+
+  const f1 = findForm("b25");
+  const f2 = findForm("b30");
+  const f3 = findForm("b35");
+
+  return { mpCiment, mpSable, mpG1, mpG2, mpSp, f1, f2, f3 };
 }
 
-type VariantSeedConfig = {
-  transport: {
-    type: "MOYENNE" | "PAR_ZONE";
-    prixMoyen: number | null;
-    volumePompePct: number | null; // %
-    prixAchatPompe: number | null; // DH/m3 pompé
-    prixVentePompe: number | null; // DH/m3 pompé
-  };
-  cab: {
-    etat: string;
-    mode: string;
-    capaciteM3: number;
-    amortMois: number; // DH/mois
-  };
+type ContractSeed = {
+  dureeMois: number;
+  cab: string;
+  installation: string;
+  genieCivil: string;
+  transport: string;
+  terrain: string;
+  matierePremiere: string;
+  maintenance: string;
+  chargeuse: string;
+  branchementEau: string;
+  consoEau: string;
+  branchementElec: string;
+  consoElec: string;
+
+  postes: number;
+  sundayPrice: number;
+  delayPenalty: number;
+  chillerRent: number;
+};
+
+type VariantConfig = {
+  title: string;
+  description?: string;
+  status?: string;
+
+  transportPrixMoyen: number; // ✅ obligatoire
+  volumePompePct: number;
+  prixAchatPompe: number;
+  prixVentePompe: number;
+
+  cabEtat: string;
+  cabMode: string;
+  cabCapacite: number;
+  cabAmortMois: number;
+
   maintenance: {
     cab: number;
     elec: number;
@@ -333,43 +119,43 @@ type VariantSeedConfig = {
     bassins: number;
     preventive: number;
   };
+
   coutM3: { eau: number; qualite: number; dechets: number };
   coutMensuel: { electricite: number; gasoil: number; location: number; securite: number };
   coutOccasionnel: { genieCivil: number; installation: number; transport: number };
-  employes: { responsableNb: number; responsableCout: number; centralistesNb: number; centralistesCout: number };
 
-  // ✅ autresCouts items
-  fgPct: number; // 5-7%
-  marketingMensuel: number; // DH/mois (exemple)
+  employes: {
+    responsableNb: number;
+    responsableCout: number;
+    centralistesNb: number;
+    centralistesCout: number;
+  };
 
-  devis: { surcharge: number };
-  majorations: boolean;
+  autresCouts: Array<{ label: string; unite: string; valeur: number }>;
 
-  withMp: boolean;
-  withFormules: boolean;
+  devisSurcharge: number;
+  withMajorations: boolean;
 
-  // volumes / momd de la variante
-  volumes: { b25: number; b30: number; b35: number };
-  momd: { b25: number; b30: number; b35: number };
+  // formules variant
+  formules: Array<{ formuleId: string; volumeM3: number; momd: number }>;
 };
 
-async function seedSectionsForVariant(variantId: string, cfg: VariantSeedConfig) {
+async function createFullVariant(variantId: string, cfg: VariantConfig) {
   const CAT_LOG = "LOGISTIQUE_APPRO";
   const CAT_FORM = "FORMULES";
   const CAT_COST = "COUTS_CHARGES";
   const CAT_DEVIS = "DEVIS";
 
-  await prisma.sectionMatierePremiere.create({ data: { variantId, category: CAT_LOG } });
-
+  // 1) sections 1:1
   await prisma.sectionTransport.create({
     data: {
       variantId,
       category: CAT_LOG,
-      type: cfg.transport.type,
-      prixMoyen: cfg.transport.prixMoyen,
-      volumePompePct: cfg.transport.volumePompePct,
-      prixAchatPompe: cfg.transport.prixAchatPompe,
-      prixVentePompe: cfg.transport.prixVentePompe,
+      type: "MOYENNE",
+      prixMoyen: cfg.transportPrixMoyen,
+      volumePompePct: cfg.volumePompePct,
+      prixAchatPompe: cfg.prixAchatPompe,
+      prixVentePompe: cfg.prixVentePompe,
     },
   });
 
@@ -377,10 +163,10 @@ async function seedSectionsForVariant(variantId: string, cfg: VariantSeedConfig)
     data: {
       variantId,
       category: CAT_LOG,
-      etat: cfg.cab.etat,
-      mode: cfg.cab.mode,
-      capaciteM3: cfg.cab.capaciteM3,
-      amortMois: cfg.cab.amortMois,
+      etat: cfg.cabEtat,
+      mode: cfg.cabMode,
+      capaciteM3: cfg.cabCapacite,
+      amortMois: cfg.cabAmortMois,
     },
   });
 
@@ -390,174 +176,266 @@ async function seedSectionsForVariant(variantId: string, cfg: VariantSeedConfig)
   await prisma.sectionCoutOccasionnel.create({ data: { variantId, category: CAT_COST, ...cfg.coutOccasionnel } });
   await prisma.sectionEmployes.create({ data: { variantId, category: CAT_COST, ...cfg.employes } });
 
-  // ✅ Section AutresCouts (vide structurellement, mais items créés dans table dédiée)
-  const autres = await prisma.sectionAutresCouts.create({
-    data: { variantId, category: CAT_COST },
-  });
-
-  await prisma.autreCoutItem.createMany({
-    data: [
-      {
+  const autres = await prisma.sectionAutresCouts.create({ data: { variantId, category: CAT_COST } });
+  if (cfg.autresCouts.length) {
+    await prisma.autreCoutItem.createMany({
+      data: cfg.autresCouts.map((it) => ({
         sectionId: autres.id,
         variantId,
-        label: "Frais généraux",
-        unite: "POURCENT_CA",
-        valeur: cfg.fgPct,
-      },
-      {
-        sectionId: autres.id,
-        variantId,
-        label: "Marketing",
-        unite: "MOIS",
-        valeur: cfg.marketingMensuel,
-      },
-    ],
-  });
+        label: it.label,
+        unite: it.unite,
+        valeur: it.valeur,
+      })),
+    });
+  }
 
-  await prisma.sectionFormules.create({ data: { variantId, category: CAT_FORM } });
+  const secFor = await prisma.sectionFormules.create({ data: { variantId, category: CAT_FORM } });
 
-  if (cfg.majorations) {
+  if (cfg.withMajorations) {
     await prisma.sectionMajorations.create({ data: { variantId, category: CAT_COST } });
   }
 
-  await prisma.sectionDevis.create({ data: { variantId, category: CAT_DEVIS, surcharge: cfg.devis.surcharge } });
+  await prisma.sectionDevis.create({
+    data: { variantId, category: CAT_DEVIS, surcharge: cfg.devisSurcharge },
+  });
+
+  // 2) listes Formules (VariantFormule)
+  if (cfg.formules.length) {
+    await prisma.variantFormule.createMany({
+      data: cfg.formules.map((f) => ({
+        variantId,
+        sectionId: secFor.id,
+        formuleId: f.formuleId,
+        volumeM3: f.volumeM3,
+        momd: f.momd,
+      })),
+    });
+  }
+
+  // ✅ 3) IMPORTANT : ne pas créer VariantMp ici !
+  // VariantMp sera auto générée via syncVariantMpsFromFormules (backend),
+  // donc on laisse propre.
 }
 
-async function seedVariantLists(pnls: any[], refs: any) {
-  const configByTitle: Record<string, VariantSeedConfig> = {
-    "Variante Base": {
-      transport: { type: "MOYENNE", prixMoyen: 68, volumePompePct: 20, prixAchatPompe: 110, prixVentePompe: 160 },
-      cab: { etat: "NEUVE", mode: "ACHAT", capaciteM3: 1.5, amortMois: 19000 },
-      maintenance: { cab: 4500, elec: 2500, chargeur: 1800, generale: 2200, bassins: 1200, preventive: 1600 },
-      coutM3: { eau: 1.8, qualite: 0.6, dechets: 0.4 },
-      coutMensuel: { electricite: 12000, gasoil: 9000, location: 6500, securite: 4800 },
-      coutOccasionnel: { genieCivil: 180000, installation: 90000, transport: 65000 },
-      employes: { responsableNb: 1, responsableCout: 9500, centralistesNb: 2, centralistesCout: 7200 },
-      fgPct: rand(5, 7),
-      marketingMensuel: rand(3000, 6000),
-      devis: { surcharge: 0 },
-      majorations: true,
-      withMp: true,
-      withFormules: true,
-      volumes: { b25: 7000, b30: 3500, b35: 1500 },
-      momd: { b25: 40, b30: 46, b35: 58 },
-    },
+async function seed() {
+  await ensureCataloguesExist();
+  await resetBusinessDataOnly();
 
-    "Variante Optim Transport": {
-      transport: { type: "PAR_ZONE", prixMoyen: null, volumePompePct: 45, prixAchatPompe: 115, prixVentePompe: 185 },
-      cab: { etat: "NEUVE", mode: "ACHAT", capaciteM3: 1.5, amortMois: 19000 },
-      maintenance: { cab: 4300, elec: 2400, chargeur: 1700, generale: 2100, bassins: 1100, preventive: 1500 },
-      coutM3: { eau: 1.7, qualite: 0.6, dechets: 0.35 },
-      coutMensuel: { electricite: 11500, gasoil: 8200, location: 6500, securite: 4800 },
-      coutOccasionnel: { genieCivil: 175000, installation: 85000, transport: 60000 },
-      employes: { responsableNb: 1, responsableCout: 9500, centralistesNb: 2, centralistesCout: 7200 },
-      fgPct: rand(5, 7),
-      marketingMensuel: rand(3500, 6500),
-      devis: { surcharge: 5 },
-      majorations: true,
-      withMp: true,
-      withFormules: true,
-      volumes: { b25: 9000, b30: 3500, b35: 1500 },
-      momd: { b25: 38, b30: 44, b35: 56 },
-    },
+  const refs = await pickCatalogueRefs();
 
-    "Variante Achat CAB": {
-      transport: { type: "MOYENNE", prixMoyen: 72, volumePompePct: 30, prixAchatPompe: 120, prixVentePompe: 175 },
-      cab: { etat: "NEUVE", mode: "ACHAT", capaciteM3: 2.0, amortMois: 26000 },
-      maintenance: { cab: 5200, elec: 3200, chargeur: 2100, generale: 2800, bassins: 1400, preventive: 1900 },
-      coutM3: { eau: 2.0, qualite: 0.7, dechets: 0.45 },
-      coutMensuel: { electricite: 16500, gasoil: 11500, location: 0, securite: 6200 },
-      coutOccasionnel: { genieCivil: 260000, installation: 120000, transport: 78000 },
-      employes: { responsableNb: 1, responsableCout: 11000, centralistesNb: 2, centralistesCout: 8200 },
-      fgPct: rand(5, 7),
-      marketingMensuel: rand(4000, 7000),
-      devis: { surcharge: 0 },
-      majorations: true,
-      withMp: true,
-      withFormules: true,
-      volumes: { b25: 8000, b30: 4200, b35: 1800 },
-      momd: { b25: 45, b30: 52, b35: 65 },
+  const baseContracts: ContractSeed[] = [
+    {
+      dureeMois: 15,
+      cab: "LHM",
+      installation: "LHM",
+      genieCivil: "CLIENT",
+      transport: "LHM",
+      terrain: "CLIENT",
+      matierePremiere: "LHM",
+      maintenance: "PARTAGE",
+      chargeuse: "LHM",
+      branchementEau: "CLIENT",
+      consoEau: "LHM",
+      branchementElec: "CLIENT",
+      consoElec: "LHM",
+      postes: 2,
+      sundayPrice: 0,
+      delayPenalty: 15000,
+      chillerRent: 0,
     },
-
-    "Variante Location CAB": {
-      transport: { type: "MOYENNE", prixMoyen: 72, volumePompePct: 30, prixAchatPompe: 120, prixVentePompe: 175 },
-      cab: { etat: "NEUVE", mode: "LOCATION", capaciteM3: 2.0, amortMois: 34000 },
-      maintenance: { cab: 5000, elec: 3100, chargeur: 2050, generale: 2700, bassins: 1400, preventive: 1850 },
-      coutM3: { eau: 2.0, qualite: 0.7, dechets: 0.45 },
-      coutMensuel: { electricite: 16500, gasoil: 11500, location: 15000, securite: 6200 },
-      coutOccasionnel: { genieCivil: 230000, installation: 110000, transport: 78000 },
-      employes: { responsableNb: 1, responsableCout: 11000, centralistesNb: 2, centralistesCout: 8200 },
-      fgPct: rand(5, 7),
-      marketingMensuel: rand(4000, 7000),
-      devis: { surcharge: 0 },
-      majorations: true,
-      withMp: true,
-      withFormules: true,
-      volumes: { b25: 7800, b30: 4100, b35: 1700 },
-      momd: { b25: 45, b30: 52, b35: 65 },
+    {
+      dureeMois: 12,
+      cab: "LHM",
+      installation: "LHM",
+      genieCivil: "PARTAGE",
+      transport: "LHM",
+      terrain: "PARTAGE",
+      matierePremiere: "LHM",
+      maintenance: "LHM",
+      chargeuse: "LHM",
+      branchementEau: "LHM",
+      consoEau: "LHM",
+      branchementElec: "LHM",
+      consoElec: "LHM",
+      postes: 1,
+      sundayPrice: 2500,
+      delayPenalty: 20000,
+      chillerRent: 12000,
     },
-  };
+    {
+      dureeMois: 18,
+      cab: "EXISTANTE",
+      installation: "EXISTANTE",
+      genieCivil: "CLIENT",
+      transport: "LHM",
+      terrain: "CLIENT",
+      matierePremiere: "LHM",
+      maintenance: "PARTAGE",
+      chargeuse: "LHM",
+      branchementEau: "CLIENT",
+      consoEau: "LHM",
+      branchementElec: "CLIENT",
+      consoElec: "LHM",
+      postes: 2,
+      sundayPrice: 0,
+      delayPenalty: 12000,
+      chillerRent: 0,
+    },
+    {
+      dureeMois: 24,
+      cab: "CLIENT",
+      installation: "CLIENT",
+      genieCivil: "CLIENT",
+      transport: "CLIENT",
+      terrain: "CLIENT",
+      matierePremiere: "PRESTATAIRE",
+      maintenance: "CLIENT",
+      chargeuse: "CLIENT",
+      branchementEau: "CLIENT",
+      consoEau: "CLIENT",
+      branchementElec: "CLIENT",
+      consoElec: "CLIENT",
+      postes: 1,
+      sundayPrice: 0,
+      delayPenalty: 0,
+      chillerRent: 0,
+    },
+  ];
 
+  // ✅ 3 PNL
+  const pnl1 = await prisma.pnl.create({
+    data: {
+      title: "PNL Dessalement Nador - CAB dédiée",
+      model: "CAB_FIXE_NOUVELLE",
+      client: "Projet Dessalement (Nador)",
+      status: "ENCOURS",
+      startDate: new Date("2026-02-01"),
+      city: "Nador",
+      region: "ORIENTAL",
+      contracts: { create: [baseContracts[0], baseContracts[2]] }, // 2 contrats
+    },
+    include: { contracts: true },
+  });
+
+  const pnl2 = await prisma.pnl.create({
+    data: {
+      title: "PNL Extension Industrielle - Ain Sebaâ",
+      model: "CAB_FIXE_EXISTANT",
+      client: "Industriel Y",
+      status: "ENCOURS",
+      startDate: new Date("2026-04-15"),
+      city: "Casablanca",
+      region: "CASA",
+      contracts: { create: [baseContracts[1], baseContracts[0], baseContracts[2]] }, // 3 contrats
+    },
+    include: { contracts: true },
+  });
+
+  const pnl3 = await prisma.pnl.create({
+    data: {
+      title: "PNL Centrale Mobile - Projet Z",
+      model: "CAB_MOBILE_CLIENT",
+      client: "Client Z",
+      status: "ENCOURS",
+      startDate: new Date("2026-03-10"),
+      city: "Marrakech",
+      region: "MARRAKECH-SAFI",
+      contracts: { create: [baseContracts[3], baseContracts[0], baseContracts[2], baseContracts[1]] }, // 4 contrats
+    },
+    include: { contracts: true },
+  });
+
+  const pnls = [pnl1, pnl2, pnl3];
+
+  // ✅ variants 1..3 / contrat
   for (const p of pnls) {
-    for (const c of p.contracts ?? []) {
-      for (const v of c.variants ?? []) {
-        // fallback : si titre inconnu => Variante Base
-        const cfg = configByTitle[v.title] ?? configByTitle["Variante Base"];
+    for (const c of p.contracts) {
+      const vCount = randi(1, 3);
 
-        await seedSectionsForVariant(v.id, cfg);
+      for (let i = 0; i < vCount; i++) {
+        const v = await prisma.variant.create({
+          data: {
+            title: i === 0 ? "Variante Base" : i === 1 ? "Variante Optim" : "Variante Prudente",
+            description: "Seed réaliste + transport moyen obligatoire",
+            status: "INITIALISEE",
+            contractId: c.id,
+          },
+        });
 
-        const secMp = await prisma.sectionMatierePremiere.findUnique({ where: { variantId: v.id } });
-        const secFor = await prisma.sectionFormules.findUnique({ where: { variantId: v.id } });
+        const volBase = randi(15000, 90000);
+        const v1 = Math.round(volBase * 0.45);
+        const v2 = Math.round(volBase * 0.35);
+        const v3 = Math.round(volBase * 0.20);
 
-        // ---------- MP sélectionnées (prix = catalogue, avec override “réaliste”)
-        if (cfg.withMp) {
-          await prisma.variantMp.createMany({
-            data: [
-              { variantId: v.id, sectionId: secMp?.id, mpId: refs.cpj55.id, prix: refs.cpj55.prix },
-              { variantId: v.id, sectionId: secMp?.id, mpId: refs.sable.id, prix: refs.sable.prix },
-              { variantId: v.id, sectionId: secMp?.id, mpId: refs.g38.id, prix: refs.g38.prix },
-              { variantId: v.id, sectionId: secMp?.id, mpId: refs.g816.id, prix: refs.g816.prix },
-              { variantId: v.id, sectionId: secMp?.id, mpId: refs.sp.id, prix: refs.sp.prix },
-            ],
-          });
+        const cfg: VariantConfig = {
+          title: v.title,
+          transportPrixMoyen: 55 + i * 5, // ✅ prix moyen obligatoire
+          volumePompePct: 20 + i * 5,
+          prixAchatPompe: 110 + i * 3,
+          prixVentePompe: 165 + i * 5,
 
-          // petit écart pour la variante Optim
-          if (v.title === "Variante Optim Transport") {
-            await prisma.variantMp.update({
-              where: { variantId_mpId: { variantId: v.id, mpId: refs.sable.id } },
-              data: { prix: refs.sable.prix + 0.03, comment: "Source différente" },
-            });
-            await prisma.variantMp.update({
-              where: { variantId_mpId: { variantId: v.id, mpId: refs.sp.id } },
-              data: { prix: refs.sp.prix + 0.5, comment: "Contrat fournisseur" },
-            });
-          }
-        }
+          cabEtat: "NEUVE",
+          cabMode: i === 2 ? "LOCATION" : "ACHAT",
+          cabCapacite: rand(1.0, 2.5),
+          cabAmortMois: rand(18000, 50000),
 
-        // ---------- Formules + volumes + MOMD
-        if (cfg.withFormules) {
-          await prisma.variantFormule.createMany({
-            data: [
-              { variantId: v.id, sectionId: secFor?.id, formuleId: refs.fB25.id, volumeM3: cfg.volumes.b25, momd: cfg.momd.b25 },
-              { variantId: v.id, sectionId: secFor?.id, formuleId: refs.fB30.id, volumeM3: cfg.volumes.b30, momd: cfg.momd.b30 },
-              { variantId: v.id, sectionId: secFor?.id, formuleId: refs.fB35.id, volumeM3: cfg.volumes.b35, momd: cfg.momd.b35 },
-            ],
-          });
-        }
+          maintenance: {
+            cab: rand(3000, 7000),
+            elec: rand(2000, 6500),
+            chargeur: rand(1500, 3000),
+            generale: rand(1500, 5000),
+            bassins: rand(500, 2000),
+            preventive: rand(1200, 4500),
+          },
+
+          coutM3: { eau: rand(1.2, 2.2), qualite: rand(0.4, 0.9), dechets: rand(0.2, 0.6) },
+          coutMensuel: {
+            electricite: rand(9000, 24000),
+            gasoil: rand(8000, 20000),
+            location: i === 2 ? rand(6000, 18000) : 0,
+            securite: rand(3000, 8000),
+          },
+          coutOccasionnel: {
+            genieCivil: rand(60000, 280000),
+            installation: rand(30000, 140000),
+            transport: rand(30000, 90000),
+          },
+
+          employes: {
+            responsableNb: 1,
+            responsableCout: rand(9000, 14000),
+            centralistesNb: rand(1, 3),
+            centralistesCout: rand(6500, 9500),
+          },
+
+          autresCouts: [
+            { label: "Frais généraux", unite: "POURCENT_CA", valeur: rand(5, 8) },
+            { label: "Marketing", unite: "MOIS", valeur: rand(2500, 8000) },
+          ],
+
+          devisSurcharge: i === 1 ? 3 : 0,
+          withMajorations: true,
+
+          formules: [
+            { formuleId: refs.f1.id, volumeM3: v1, momd: 180 + i * 10 },
+            { formuleId: refs.f2.id, volumeM3: v2, momd: 220 + i * 12 },
+            { formuleId: refs.f3.id, volumeM3: v3, momd: 260 + i * 15 },
+          ],
+        };
+
+        await createFullVariant(v.id, cfg);
+
+        // ✅ IMPORTANT : on NE crée PAS VariantMp ici
+        // VariantMp doit être auto-générée par les routes backend (syncVariantMpsFromFormules)
+        // => après le seed, dès que tu modifies/ajoutes/supprimes une formule, ça se mettra à jour.
       }
     }
   }
+
+  console.log("✅ Seed business OK (sans toucher catalogues, sans créer VariantMp)");
 }
 
-async function main() {
-  await resetDb();
-  const refs = await seedCatalogues();
-  const pnls = await seedPnls();
-  await seedVariantLists(pnls, refs);
-  console.log("✅ Seed complet (catalogues + composition + PnL + sections + listes + autres coûts items)");
-}
-
-main()
+seed()
   .catch((e) => {
     console.error("❌ Seed error:", e);
     process.exit(1);

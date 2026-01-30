@@ -31,7 +31,7 @@ const route = useRoute();
    STATE
 ===================== */
 
-// Synchronisé avec la route (au lieu d'un état qui peut diverger)
+// ✅ item actif basé sur la route (pas un texte libre)
 const activeItem = ref("Mes P&L");
 
 const openSections = ref({
@@ -43,7 +43,7 @@ const openSections = ref({
   devis: true,
 });
 
-// Sélections (mock – futur: brancher sur Pinia activePnl/activeVariant si tu veux)
+// Sélections (mock)
 const selectedPL = ref("P&L – Chantier Agadir");
 const selectedContrat = ref("Contrat A");
 const selectedVariante = ref("Variante V1");
@@ -51,28 +51,40 @@ const selectedVariante = ref("Variante V1");
 /* =====================
    ROUTING
 ===================== */
-function goToPage(name: string) {
-  activeItem.value = name;
 
-  if (name === "Mes P&L") {
-    router.push({ name: "MesPnls" });
+// ✅ mapping menu -> route name
+const routeByItem: Record<string, string> = {
+  "Mes P&L": "MesPnls",
+  "Répertoire MP": "MpCatalogue",
+  "Catalogue formules": "FormulesCatalogue",
+};
+
+function goToPage(item: string) {
+  activeItem.value = item;
+
+  const rn = routeByItem[item];
+  if (rn) {
+    router.push({ name: rn });
     return;
   }
 
-  router.push({ name: "PageView", params: { name } });
+  // fallback vers PageView pour les pages génériques
+  router.push({ name: "PageView", params: { name: item } });
 }
 
-// Met à jour l’item actif si l’utilisateur navigue autrement (back/forward, refresh, etc.)
+// ✅ keep active item synced with current route
 watch(
-  () => route.fullPath,
+  () => route.name,
   () => {
-    if (route.name === "MesPnls") {
+    if (route.name === "MesPnls") activeItem.value = "Mes P&L";
+    else if (route.name === "MpCatalogue") activeItem.value = "Répertoire MP";
+    else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
+    else if (route.name === "PageView") {
+      const n = typeof route.params.name === "string" ? route.params.name : "";
+      activeItem.value = n || "Mes P&L";
+    } else {
       activeItem.value = "Mes P&L";
-      return;
     }
-    // route.name === "PageView" et route.params.name est le libellé
-    const n = typeof route.params.name === "string" ? route.params.name : "";
-    if (n) activeItem.value = n;
   },
   { immediate: true }
 );
@@ -81,7 +93,6 @@ watch(
    ICONS
 ===================== */
 const icons: Record<string, any> = {
-  // Général
   "Mes P&L": ChartBarIcon,
   "Répertoire MP": FolderIcon,
   "Catalogue formules": BookOpenIcon,
@@ -89,20 +100,16 @@ const icons: Record<string, any> = {
   "Comparateur de variantes": ArrowsRightLeftIcon,
   "Générer devis multi-variantes": DocumentPlusIcon,
 
-  // Édition
   "P&L": ClipboardDocumentIcon,
   "Contrat": DocumentPlusIcon,
   "Variante": ClipboardDocumentIcon,
 
-  // Logistique
   "Matière première": CubeIcon,
   "Transport": TruckIcon,
 
-  // Formules
   "Formules de la variante": BeakerIcon,
   "Quantité et MOMD": ScaleIcon,
 
-  // Coûts
   "CAB": BuildingLibraryIcon,
   "Maintenance": WrenchIcon,
   "Cout au m3": CubeIcon,
@@ -111,7 +118,6 @@ const icons: Record<string, any> = {
   "Couts occasionnels": CurrencyDollarIcon,
   "Autres couts": EllipsisHorizontalIcon,
 
-  // Devis
   "Majorations": PlusIcon,
   "Devis": DocumentPlusIcon,
 };
@@ -142,12 +148,10 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
 
 <template>
   <aside class="sidebar">
-    <!-- LOGO -->
     <div class="logo-section">
       <h1>PnL Creator</h1>
     </div>
 
-    <!-- PROFIL -->
     <div class="profile-section">
       <img
         class="profile-img"
@@ -160,7 +164,6 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
       </div>
     </div>
 
-    <!-- Bloc 1 : Généralités -->
     <div class="group-block general-block">
       <div class="section">
         <h2 class="section-title" @click="openSections.general = !openSections.general">
@@ -182,16 +185,13 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
       </div>
     </div>
 
-    <!-- Bloc 2 : Sélection + Édition -->
     <div class="group-block edition-block">
-      <!-- Sélecteurs (mock) -->
       <div class="selectors">
         <div class="selector">📊 {{ selectedPL }}</div>
         <div class="selector">📄 {{ selectedContrat }}</div>
         <div class="selector">🧬 {{ selectedVariante }}</div>
       </div>
 
-      <!-- Édition -->
       <div class="section">
         <h2 class="section-title" @click="openSections.edition = !openSections.edition">
           Édition <span>{{ openSections.edition ? "▾" : "▸" }}</span>
@@ -212,9 +212,7 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
       </div>
     </div>
 
-    <!-- Bloc 3 : Variante active -->
     <div class="group-block variante-block">
-      <!-- LOGISTIQUE -->
       <div class="section">
         <h2 class="section-title" @click="openSections.logistique = !openSections.logistique">
           Logistique & Approvisionnement
@@ -235,7 +233,6 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
         </nav>
       </div>
 
-      <!-- FORMULES -->
       <div class="section">
         <h2 class="section-title" @click="openSections.formules = !openSections.formules">
           Formules <span>{{ openSections.formules ? "▾" : "▸" }}</span>
@@ -255,7 +252,6 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
         </nav>
       </div>
 
-      <!-- COÛTS -->
       <div class="section">
         <h2 class="section-title" @click="openSections.couts = !openSections.couts">
           Coûts et charges <span>{{ openSections.couts ? "▾" : "▸" }}</span>
@@ -275,7 +271,6 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
         </nav>
       </div>
 
-      <!-- DEVIS -->
       <div class="section">
         <h2 class="section-title" @click="openSections.devis = !openSections.devis">
           Devis <span>{{ openSections.devis ? "▾" : "▸" }}</span>
@@ -299,123 +294,24 @@ const devisItems = computed(() => ["Majorations", "Devis"]);
 </template>
 
 <style scoped>
-.sidebar {
-  width: 280px;
-  background: #f8f9fa;
-  padding: 16px;
-  height: 100vh;
-  overflow-y: auto;
-  font-family: "Inter", sans-serif;
-  box-shadow: 2px 0 8px rgba(0,0,0,0.05);
-}
-
-.logo-section h1 {
-  background: linear-gradient(135deg,#007a33,#009ee0);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  margin-bottom: 16px;
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.profile-section {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.profile-img {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1px solid #ccc;
-}
-
-.profile-info .name {
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.profile-info .role {
-  font-size: 0.8rem;
-  color: #666;
-}
-
-.group-block {
-  margin-bottom: 16px;
-  padding: 10px;
-  border-radius: 8px;
-}
-
+/* ✅ garde ton CSS identique (je ne touche pas) */
+.sidebar { width: 280px; background: #f8f9fa; padding: 16px; height: 100vh; overflow-y: auto; font-family: "Inter", sans-serif; box-shadow: 2px 0 8px rgba(0,0,0,0.05); }
+.logo-section h1 { background: linear-gradient(135deg,#007a33,#009ee0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 16px; font-size: 1.5rem; font-weight: 700; }
+.profile-section { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.profile-img { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #ccc; }
+.profile-info .name { font-weight: 600; font-size: 0.95rem; }
+.profile-info .role { font-size: 0.8rem; color: #666; }
+.group-block { margin-bottom: 16px; padding: 10px; border-radius: 8px; }
 .general-block { background: #f1f3f5; }
 .edition-block { background: #e8f5e9; }
 .variante-block { background: #ffffff; border: 1px solid #ddd; }
-
-.selectors {
-  background: #ffffff;
-  border-radius: 8px;
-  padding: 8px;
-  margin-bottom: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.selector {
-  background: #f8f9fa;
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  cursor: pointer;
-  border: 1px solid #ddd;
-}
-
+.selectors { background: #ffffff; border-radius: 8px; padding: 8px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
+.selector { background: #f8f9fa; padding: 6px 8px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; border: 1px solid #ddd; }
 .selector:hover { background: #e0f2f1; }
-
-.section-title {
-  font-weight: 600;
-  font-size: 0.95rem;
-  cursor: pointer;
-  margin-bottom: 6px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(90deg,#007a33,#009ee0);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.nav-items {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 10px;
-}
-
-.item {
-  padding: 6px 10px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.2s;
-  font-size: 0.9rem;
-  color: #333;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.item:hover {
-  background: #e0f2f1;
-  transform: translateX(2px);
-}
-
-.item.active {
-  background: #007a33;
-  color: white;
-}
-
-.icon {
-  width: 16px;
-  height: 16px;
-}
+.section-title { font-weight: 600; font-size: 0.95rem; cursor: pointer; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(90deg,#007a33,#009ee0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.nav-items { display: flex; flex-direction: column; margin-bottom: 10px; }
+.item { padding: 6px 10px; cursor: pointer; border-radius: 6px; transition: all 0.2s; font-size: 0.9rem; color: #333; display: flex; align-items: center; gap: 8px; }
+.item:hover { background: #e0f2f1; transform: translateX(2px); }
+.item.active { background: #007a33; color: white; }
+.icon { width: 16px; height: 16px; }
 </style>

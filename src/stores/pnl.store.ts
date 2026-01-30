@@ -26,6 +26,7 @@ export const usePnlStore = defineStore("pnl", {
     activePnlId: null as string | null,
     activeVariantId: null as string | null,
 
+    // ✅ catalogues
     mpCatalogue: [] as any[],
     formulesCatalogue: [] as any[],
 
@@ -90,7 +91,7 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // load
+    // LOAD HIERARCHY
     // -------------------------
     async loadPnls() {
       this.loading = true;
@@ -127,7 +128,7 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // catalogues
+    // ✅ LOAD CATALOGUES
     // -------------------------
     async loadMpCatalogue() {
       const data = await jsonFetch("/mp-catalogue");
@@ -140,7 +141,87 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // VARIANT MP actions
+    // ✅ MP CATALOGUE CRUD
+    // -------------------------
+    async createMpCatalogue(payload: {
+      categorie: string;
+      label: string;
+      unite: string;
+      prix: number;
+      fournisseur: string;
+      city: string;
+      region: string;
+      comment?: string | null;
+    }) {
+      await jsonFetch("/mp-catalogue", { method: "POST", body: JSON.stringify(payload) });
+      await this.loadMpCatalogue();
+    },
+
+    async updateMpCatalogue(
+      id: string,
+      payload: Partial<{
+        categorie: string;
+        label: string;
+        unite: string;
+        prix: number;
+        fournisseur: string;
+        city: string;
+        region: string;
+        comment?: string | null;
+      }>
+    ) {
+      await jsonFetch(`/mp-catalogue/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      await this.loadMpCatalogue();
+    },
+
+    async deleteMpCatalogue(id: string) {
+      await jsonFetch(`/mp-catalogue/${id}`, { method: "DELETE" });
+      await this.loadMpCatalogue();
+    },
+
+    // -------------------------
+    // ✅ FORMULES CATALOGUE CRUD
+    // -------------------------
+    async createFormuleCatalogue(payload: {
+      label: string;
+      resistance: string;
+      city: string;
+      region: string;
+      comment?: string | null;
+    }) {
+      await jsonFetch("/formules-catalogue", { method: "POST", body: JSON.stringify(payload) });
+      await this.loadFormulesCatalogue();
+    },
+
+    async updateFormuleCatalogue(
+      id: string,
+      payload: Partial<{
+        label: string;
+        resistance: string;
+        city: string;
+        region: string;
+        comment?: string | null;
+      }>
+    ) {
+      await jsonFetch(`/formules-catalogue/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      await this.loadFormulesCatalogue();
+    },
+
+    async deleteFormuleCatalogue(id: string) {
+      await jsonFetch(`/formules-catalogue/${id}`, { method: "DELETE" });
+      await this.loadFormulesCatalogue();
+    },
+
+    async updateFormuleCatalogueItems(formuleId: string, items: Array<{ mpId: string; qty: number }>) {
+      await jsonFetch(`/formules-catalogue/${formuleId}/items`, {
+        method: "PUT",
+        body: JSON.stringify({ items }),
+      });
+      await this.loadFormulesCatalogue();
+    },
+
+    // -------------------------
+    // ✅ VARIANT MP
     // -------------------------
     async addMpToActiveVariant(mpId: string) {
       const variant = (this as any).activeVariant;
@@ -181,7 +262,7 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // ✅ VARIANT FORMULE actions
+    // ✅ VARIANT FORMULE
     // -------------------------
     async addFormuleToActiveVariant(formuleId: string) {
       const variant = (this as any).activeVariant;
@@ -224,58 +305,15 @@ export const usePnlStore = defineStore("pnl", {
       return res;
     },
 
-    // -------------------------
-    // CRUD PNL/CONTRACT/VARIANT
-    // -------------------------
-    async createPnl(payload: any) {
-      await jsonFetch("/pnls", { method: "POST", body: JSON.stringify(payload) });
-      await this.loadPnls();
-    },
+    // ✅ Update complet d'une variante (sections + autresCouts.items + formules.items)
+// backend: PUT /variants/:id
+async updateVariant(id: string, payload: any) {
+  await jsonFetch(`/variants/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  await this.loadPnls(); // recharge => KPIs recalculés via computeHeaderKpis
+},
 
-    async updatePnl(id: string, payload: any) {
-      await jsonFetch(`/pnls/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-      await this.loadPnls();
-    },
-
-    async deletePnl(id: string) {
-      await jsonFetch(`/pnls/${id}`, { method: "DELETE" });
-      if (this.activePnlId === id) {
-        this.activePnlId = null;
-        this.activeVariantId = null;
-      }
-      await this.loadPnls();
-    },
-
-    async createContract(payload: any) {
-      await jsonFetch("/contracts", { method: "POST", body: JSON.stringify(payload) });
-      await this.loadPnls();
-    },
-
-    async updateContract(id: string, payload: any) {
-      await jsonFetch(`/contracts/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-      await this.loadPnls();
-    },
-
-    async deleteContract(id: string) {
-      await jsonFetch(`/contracts/${id}`, { method: "DELETE" });
-      if (this.activeVariantId) this.activeVariantId = null;
-      await this.loadPnls();
-    },
-
-    async createVariant(payload: any) {
-      await jsonFetch("/variants", { method: "POST", body: JSON.stringify(payload) });
-      await this.loadPnls();
-    },
-
-    async updateVariant(id: string, payload: any) {
-      await jsonFetch(`/variants/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-      await this.loadPnls();
-    },
-
-    async deleteVariant(id: string) {
-      await jsonFetch(`/variants/${id}`, { method: "DELETE" });
-      if (this.activeVariantId === id) this.activeVariantId = null;
-      await this.loadPnls();
-    },
   },
 });
