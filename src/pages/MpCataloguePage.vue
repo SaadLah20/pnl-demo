@@ -26,16 +26,7 @@ const rows = computed<any[]>(() => store.mpCatalogue ?? []);
 /* =========================
    ENUMS + VALIDATION
 ========================= */
-const CATEGORIES = [
-  "CIMENT",
-  "GRANULATS",
-  "SABLE",
-  "ADJUVANT",
-  "EAU",
-  "FILLER",
-  "AUTRE",
-] as const;
-
+const CATEGORIES = ["CIMENT", "GRANULATS", "SABLE", "ADJUVANT", "EAU", "FILLER", "AUTRE"] as const;
 const UNITS = ["T", "KG", "L", "M3", "U"] as const;
 
 const REGIONS_MA = [
@@ -132,6 +123,14 @@ const filtered = computed<any[]>(() => {
 });
 
 /* =========================
+   FORMATTERS (PRICE)
+========================= */
+function price(v: any) {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n.toFixed(2) : "0.00";
+}
+
+/* =========================
    MODAL (create/edit)
 ========================= */
 const showModal = ref(false);
@@ -188,22 +187,10 @@ function closeModal() {
 }
 
 /* Normalisation live (compact + safe) */
-watch(
-  () => draft.value.categorie,
-  (v) => (draft.value.categorie = upperTrim(v))
-);
-watch(
-  () => draft.value.unite,
-  (v) => (draft.value.unite = upperTrim(v))
-);
-watch(
-  () => draft.value.region,
-  (v) => (draft.value.region = upperTrim(v))
-);
-watch(
-  () => draft.value.prix,
-  (v) => (draft.value.prix = clamp2(num(v)))
-);
+watch(() => draft.value.categorie, (v) => (draft.value.categorie = upperTrim(v)));
+watch(() => draft.value.unite, (v) => (draft.value.unite = upperTrim(v)));
+watch(() => draft.value.region, (v) => (draft.value.region = upperTrim(v)));
+watch(() => draft.value.prix, (v) => (draft.value.prix = clamp2(num(v))));
 
 /* =========================
    CONFIRM DELETE MODAL
@@ -246,7 +233,6 @@ async function reload() {
 async function save() {
   error.value = null;
 
-  // normalize (final)
   const d = draft.value;
   d.categorie = upperTrim(d.categorie);
   d.unite = upperTrim(d.unite);
@@ -394,7 +380,7 @@ onMounted(reload);
               <th>Catégorie</th>
               <th>Label</th>
               <th>Unité</th>
-              <th class="right">Prix</th>
+              <th class="right thPrice">Prix MP</th>
               <th>Fournisseur</th>
               <th>Ville</th>
               <th>Région</th>
@@ -408,7 +394,15 @@ onMounted(reload);
               <td>{{ r.categorie }}</td>
               <td><b>{{ r.label }}</b></td>
               <td>{{ r.unite }}</td>
-              <td class="right">{{ Number(r.prix ?? 0).toFixed(2) }}</td>
+
+              <!-- PRICE (no wrap + compact) -->
+              <td class="right">
+                <span class="priceBadge">
+                  {{ price(r.prix) }}
+                  <span class="dh">DH</span>
+                </span>
+              </td>
+
               <td>{{ r.fournisseur }}</td>
               <td>{{ r.city }}</td>
               <td>{{ r.region }}</td>
@@ -429,7 +423,7 @@ onMounted(reload);
       </div>
     </div>
 
-    <!-- MODAL CREATE/EDIT (compact + rules) -->
+    <!-- MODAL CREATE/EDIT -->
     <div v-if="showModal" class="modal">
       <div class="modalCard">
         <div class="modalHead">
@@ -553,6 +547,29 @@ onMounted(reload);
 .rowActions { display:flex; gap:6px; justify-content:flex-end; }
 .emptyRow { color:#6b7280; padding:10px; }
 
+/* PRICE (best: compact, strong, no wrap) */
+.thPrice { color:#111827; font-weight:1000; }
+.priceBadge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid #bbf7d0;
+  background:#f0fdf4;
+  color:#065f46;
+  font-weight:1000;
+  font-size:13px;
+  letter-spacing:0.2px;
+  white-space:nowrap; /* ✅ prevent wrap */
+}
+.priceBadge .dh{
+  font-size:11px;
+  font-weight:900;
+  opacity:0.85;
+}
+
 /* Filters */
 .filtersCard { padding: 10px 12px; }
 .filtersTop { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -586,12 +603,7 @@ onMounted(reload);
 .modalHead { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
 .mh { font-weight:900; color:#111827; }
 
-/* Compact form */
-.formGridCompact {
-  display:grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap:10px;
-}
+.formGridCompact { display:grid; grid-template-columns: 1.2fr 1fr; gap:10px; }
 @media (max-width: 820px) { .formGridCompact { grid-template-columns: 1fr; } }
 .span2 { grid-column: span 2; }
 @media (max-width: 820px) { .span2 { grid-column: span 1; } }

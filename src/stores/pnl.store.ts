@@ -4,6 +4,8 @@ import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
 const API = "http://localhost:3001";
 
+
+
 async function jsonFetch(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {
     headers: { "Content-Type": "application/json" },
@@ -11,12 +13,51 @@ async function jsonFetch(url: string, opts?: RequestInit) {
   });
 
   if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(txt || `API error: ${res.status}`);
+    // On essaie de lire du JSON { error, details } sinon fallback texte
+    let j: any = null;
+    let txt = "";
+
+    try {
+      j = await res.clone().json();
+    } catch {
+      // ignore
+    }
+
+    if (!j) {
+      try {
+        txt = await res.text();
+      } catch {
+        txt = "";
+      }
+    }
+
+    let msg =
+      (typeof j?.error === "string" && j.error) ||
+      (typeof txt === "string" && txt) ||
+      `API error: ${res.status}`;
+
+    // ✅ patch spécifique
+    if (j?.error === "FORMULE_IN_USE") {
+      const d = j?.details ?? {};
+      msg = `Formule utilisée dans des variantes (${Number(
+        d.usedInVariants ?? 0
+      )}). Supprime d'abord les références.`;
+    }
+
+    if (j?.error === "MP_IN_USE") {
+  const d = j?.details ?? {};
+  msg = `MP utilisée (formules: ${Number(d.usedInFormules ?? 0)}, variantes: ${Number(d.usedInVariants ?? 0)}). Supprime d'abord les références.`;
+}
+
+
+    throw new Error(msg);
   }
+
+  
 
   return res.json().catch(() => null);
 }
+
 
 type AnyObj = Record<string, any>;
 

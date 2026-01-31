@@ -1,4 +1,4 @@
-<!-- src/pages/FormulesCataloguePage.vue -->
+<!-- ✅ src/pages/FormulesCataloguePage.vue (FICHIER COMPLET) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -51,7 +51,7 @@ const filtered = computed<any[]>(() => {
 });
 
 /* =========================
-   MODALS (simple panel)
+   MODALS (create/edit)
 ========================= */
 const showFormModal = ref(false);
 const mode = ref<"create" | "edit">("create");
@@ -85,6 +85,46 @@ function openEdit(row: any) {
 
 function closeFormModal() {
   showFormModal.value = false;
+}
+
+/* =========================
+   DELETE CONFIRM MODAL
+========================= */
+const showDeleteModal = ref(false);
+const deleteId = ref<string | null>(null);
+const deleteLabel = ref<string>("");
+
+function askDelete(row: any) {
+  deleteId.value = String(row.id);
+  deleteLabel.value = String(row.label ?? "");
+  showDeleteModal.value = true;
+}
+
+function closeDeleteModal() {
+  showDeleteModal.value = false;
+  deleteId.value = null;
+  deleteLabel.value = "";
+}
+
+async function confirmDelete() {
+  if (!deleteId.value) return;
+  error.value = null;
+
+  try {
+    busy.remove = true;
+    await store.deleteFormuleCatalogue(deleteId.value);
+    await store.loadFormulesCatalogue();
+
+    if (selectedId.value === deleteId.value) {
+      selectedId.value = null;
+      itemsDraft.value = [];
+    }
+    closeDeleteModal();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    busy.remove = false;
+  }
 }
 
 /* =========================
@@ -130,12 +170,104 @@ function normalizeItems(items: ItemDraft[]): ItemDraft[] {
   return [...map.entries()].map(([mpId, qty]) => ({ mpId, qty }));
 }
 
+/* =========================
+   Σ Qty -> Volume total (L)
+========================= */
+function normKey(v: any) {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function getRhoForMp(mp: any): number | null {
+  const cat = normKey(mp?.categorie);
+
+  if (cat === "ciment") return 3.1;
+
+  if (
+    cat === "granulats" ||
+    cat === "granulat" ||
+    cat === "granulas" ||
+    cat === "granula" ||
+    cat.includes("granul")
+  )
+    return 2.65;
+
+  if (cat === "adjuvant") return 1.1;
+
+  return null;
+}
+
+function liters(v: number) {
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(v);
+}
+
 const compositionStats = computed(() => {
-  // info utile: nb MP + somme qty (kg/m3 typiquement)
   const cleaned = normalizeItems(itemsDraft.value);
   const nb = cleaned.length;
-  const sumQty = cleaned.reduce((s, x) => s + Number(x.qty ?? 0), 0);
-  return { nb, sumQty };
+
+  const mpById = new Map<string, any>();
+  for (const mp of mpOptions.value ?? []) mpById.set(String(mp.id), mp);
+
+  let mCiment = 0;
+  let vTotal = 0;
+
+  const missing: Array<{ mpId: string; label: string }> = [];
+
+  for (const it of cleaned) {
+    const mp = mpById.get(String(it.mpId));
+    const rho = getRhoForMp(mp);
+
+    if (!rho) {
+      missing.push({
+        mpId: String(it.mpId),
+        label: `${mp?.categorie ?? "—"} — ${mp?.label ?? "—"}`,
+      });
+      continue;
+    }
+
+    const m = Number(it.qty ?? 0); // kg
+    vTotal += m / rho;
+
+    if (normKey(mp?.categorie) === "ciment") {
+      mCiment += m;
+    }
+  }
+
+  const mEau = mCiment * 0.5;
+  const vEau = mEau / 1.0;
+
+  vTotal += vEau;
+  vTotal += 15;
+
+  const target = 1000;
+  const delta = vTotal - target;
+
+  const pct = target > 0 ? (vTotal / target) * 100 : 0;
+  const deficitPct = target > 0 ? ((target - vTotal) / target) * 100 : 0;
+
+  const isLow = vTotal < target * 0.97;
+  const isOk = !isLow;
+
+  const statusLabel = isLow ? `⚠️ -${liters(deficitPct)}%` : `✅ OK`;
+
+  return {
+    nb,
+    vTotal,
+    target,
+    delta,
+    mCiment,
+    mEau,
+    vEau,
+    missing,
+    pct,
+    deficitPct,
+    isLow,
+    isOk,
+    statusLabel,
+  };
 });
 
 /* =========================
@@ -145,6 +277,7 @@ async function reload() {
   busy.reload = true;
   loading.value = true;
   error.value = null;
+
   try {
     await Promise.all([store.loadFormulesCatalogue(), store.loadMpCatalogue()]);
     if (selectedId.value) {
@@ -192,7 +325,6 @@ async function saveForm() {
         comment: d.comment ?? "",
       });
       await store.loadFormulesCatalogue();
-      // resync selection
       const row = store.formulesCatalogue.find((x: any) => String(x.id) === String(id));
       if (row) selectRow(row);
       closeFormModal();
@@ -202,25 +334,6 @@ async function saveForm() {
   } finally {
     busy.create = false;
     busy.update = false;
-  }
-}
-
-async function removeFormule(id: string) {
-  error.value = null;
-  if (!confirm("Supprimer cette formule du catalogue ?")) return;
-
-  try {
-    busy.remove = true;
-    await store.deleteFormuleCatalogue(id);
-    await store.loadFormulesCatalogue();
-    if (selectedId.value === id) {
-      selectedId.value = null;
-      itemsDraft.value = [];
-    }
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    busy.remove = false;
   }
 }
 
@@ -274,9 +387,10 @@ onMounted(async () => {
     <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <div class="grid">
-      <!-- LIST -->
-      <div class="card">
+    <!-- ✅ Split view -->
+    <div class="gridFixed">
+      <!-- LEFT PANE -->
+      <div class="card pane">
         <div class="cardHead">
           <div class="h">Formules ({{ filtered.length }})</div>
           <div class="mini">
@@ -284,38 +398,40 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="list">
-          <button
-            v-for="f in filtered"
-            :key="f.id"
-            class="row"
-            :class="{ active: selectedId === String(f.id) }"
-            @click="selectRow(f)"
-          >
-            <div class="main">
-              <div class="l1">
-                <b class="lab">{{ f.label }}</b>
-                <span class="tag">{{ f.resistance || "—" }}</span>
+        <div class="paneBody">
+          <div class="list">
+            <button
+              v-for="f in filtered"
+              :key="f.id"
+              class="row"
+              :class="{ active: selectedId === String(f.id) }"
+              @click="selectRow(f)"
+            >
+              <div class="main">
+                <div class="l1">
+                  <b class="lab">{{ f.label }}</b>
+                  <span class="tag">{{ f.resistance || "—" }}</span>
+                </div>
+                <div class="l2">
+                  <span class="muted">{{ f.city || "—" }}</span>
+                  <span class="dot">•</span>
+                  <span class="muted">{{ f.region || "—" }}</span>
+                </div>
               </div>
-              <div class="l2">
-                <span class="muted">{{ f.city || "—" }}</span>
-                <span class="dot">•</span>
-                <span class="muted">{{ f.region || "—" }}</span>
+
+              <div class="rowActions" @click.stop>
+                <button class="icon" title="Edit" @click="openEdit(f)">✏️</button>
+                <button class="icon danger" title="Delete" @click="askDelete(f)">🗑️</button>
               </div>
-            </div>
+            </button>
 
-            <div class="rowActions" @click.stop>
-              <button class="icon" title="Edit" @click="openEdit(f)">✏️</button>
-              <button class="icon danger" title="Delete" @click="removeFormule(String(f.id))">🗑️</button>
-            </div>
-          </button>
-
-          <div v-if="filtered.length === 0" class="empty">Aucune formule.</div>
+            <div v-if="filtered.length === 0" class="empty">Aucune formule.</div>
+          </div>
         </div>
       </div>
 
-      <!-- DETAILS -->
-      <div class="card">
+      <!-- RIGHT PANE -->
+      <div class="card pane">
         <div class="cardHead">
           <div class="h">Détails</div>
           <div class="rowBtns">
@@ -327,77 +443,87 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="!selected" class="empty big">
-          Sélectionne une formule à gauche.
-        </div>
+        <div v-if="!selected" class="empty big">Sélectionne une formule à gauche.</div>
 
         <template v-else>
-          <div class="summary">
-            <div class="sLine">
-              <div class="sK">Formule</div>
-              <div class="sV"><b>{{ selected.label }}</b></div>
+          <div class="stickyTop">
+            <div class="stickyLine">
+              <div class="stickyTitle">
+                <b class="stickyLabel">{{ selected.label }}</b>
+                <span class="sep">•</span>
+                <span class="muted">{{ selected.resistance || "—" }}</span>
+                <span class="sep">•</span>
+                <span class="muted">{{ selected.city || "—" }} / {{ selected.region || "—" }}</span>
+              </div>
+
+              <div class="kpis">
+                <span class="pill">MP <b>{{ compositionStats.nb }}</b></span>
+                <span class="pill">V <b>{{ liters(compositionStats.vTotal) }} L</b></span>
+                <span class="pill">Δ <b>{{ liters(compositionStats.delta) }} L</b></span>
+                <span class="pill" :class="{ ok: compositionStats.isOk }">{{ compositionStats.statusLabel }}</span>
+              </div>
             </div>
-            <div class="sLine">
-              <div class="sK">Résistance</div>
-              <div class="sV">{{ selected.resistance || "—" }}</div>
+
+            <div v-if="compositionStats.isLow" class="banner error">
+              ⚠️ Volume <b>{{ liters(compositionStats.vTotal) }} L</b> &lt; cible <b>{{ compositionStats.target }} L</b>
+              (déficit <b>{{ liters(compositionStats.deficitPct) }}%</b>).
             </div>
-            <div class="sLine">
-              <div class="sK">Ville / Région</div>
-              <div class="sV">{{ selected.city || "—" }} — {{ selected.region || "—" }}</div>
+            <div v-else class="banner ok">
+              ✅ Volume OK (±3%) — <b>{{ liters(compositionStats.vTotal) }} L</b> pour cible <b>{{ compositionStats.target }} L</b>.
+            </div>
+
+            <div v-if="compositionStats.missing.length" class="banner warn">
+              MP sans ρ :
+              <span v-for="m in compositionStats.missing" :key="m.mpId" class="miniTag">{{ m.label }}</span>
+            </div>
+
+            <div class="compHeadSlim">
+              <div class="h2">Composition</div>
+              <button class="btn" @click="addItem">➕ Ajouter MP</button>
             </div>
           </div>
 
-          <div class="compHead">
-            <div class="h2">Composition</div>
-            <div class="mini">
-              <span class="pill">MP: <b>{{ compositionStats.nb }}</b></span>
-              <span class="pill">Σ Qty: <b>{{ compositionStats.sumQty }}</b></span>
+          <div class="paneBody">
+            <div class="tableWrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>MP</th>
+                    <th style="width: 160px">Qty / m³ (kg)</th>
+                    <th style="width: 70px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(it, i) in itemsDraft" :key="i">
+                    <td>
+                      <select class="input" v-model="it.mpId">
+                        <option v-for="mp in mpOptions" :key="mp.id" :value="String(mp.id)">
+                          {{ mp.categorie }} — {{ mp.label }}
+                        </option>
+                      </select>
+                    </td>
+                    <td>
+                      <input class="input right" type="number" step="0.01" v-model.number="it.qty" />
+                    </td>
+                    <td style="text-align:right">
+                      <button class="icon danger" @click="removeItem(i)" title="Supprimer">🗑️</button>
+                    </td>
+                  </tr>
+
+                  <tr v-if="itemsDraft.length === 0">
+                    <td colspan="3" class="emptyRow">Aucune MP.</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <div class="spacer"></div>
-            <button class="btn" @click="addItem">➕ Ajouter MP</button>
-          </div>
 
-          <div class="tableWrap">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>MP</th>
-                  <th style="width: 160px">Qty / m³</th>
-                  <th style="width: 70px"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(it, i) in itemsDraft" :key="i">
-                  <td>
-                    <select class="input" v-model="it.mpId">
-                      <option v-for="mp in mpOptions" :key="mp.id" :value="String(mp.id)">
-                        {{ mp.categorie }} — {{ mp.label }}
-                      </option>
-                    </select>
-                  </td>
-                  <td>
-                    <input class="input right" type="number" step="0.01" v-model.number="it.qty" />
-                  </td>
-                  <td style="text-align:right">
-                    <button class="icon danger" @click="removeItem(i)" title="Supprimer">🗑️</button>
-                  </td>
-                </tr>
-
-                <tr v-if="itemsDraft.length === 0">
-                  <td colspan="3" class="emptyRow">Aucune MP.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="note">
-            L’enregistrement remplace toute la composition côté DB.
+            <div class="note">L’enregistrement remplace toute la composition côté DB.</div>
           </div>
         </template>
       </div>
     </div>
 
-    <!-- MODAL -->
+    <!-- MODAL: create/edit -->
     <div v-if="showFormModal" class="modal">
       <div class="modalCard">
         <div class="modalHead">
@@ -436,11 +562,38 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- ✅ MODAL: delete confirm -->
+    <div v-if="showDeleteModal" class="modal">
+      <div class="modalCard" style="width:min(560px, 100%);">
+        <div class="modalHead">
+          <div class="mh">Supprimer formule</div>
+          <button class="icon" @click="closeDeleteModal">✕</button>
+        </div>
+
+        <div class="alert error" style="margin:0;">
+          Tu es sûr de vouloir supprimer :
+          <b>{{ deleteLabel || "—" }}</b> ?
+          <div class="muted" style="margin-top:6px;">
+            La composition sera supprimée aussi. Si la formule est utilisée dans une variante, la suppression sera refusée.
+          </div>
+        </div>
+
+        <div class="modalActions">
+          <button class="btn" @click="closeDeleteModal" :disabled="busy.remove">Annuler</button>
+          <button class="btn primary" @click="confirmDelete" :disabled="busy.remove">
+            {{ busy.remove ? "Suppression..." : "Supprimer" }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
+
+/* TOP */
 .top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
 .tleft { display:flex; flex-direction:column; gap:4px; }
 .title { font-size:18px; font-weight:900; color:#111827; }
@@ -448,17 +601,41 @@ onMounted(async () => {
 .tright { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .search { min-width: 280px; flex: 1; }
 
-.grid { display:grid; grid-template-columns: 360px 1fr; gap:12px; }
-@media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .search{min-width: 100%;} }
+.alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
+.alert.error { border-color:#ef4444; background:#fff5f5; }
 
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:12px; }
+
+/* Split view */
+.gridFixed{
+  display:grid;
+  grid-template-columns: 360px 1fr;
+  gap:12px;
+  height: calc(100vh - 170px);
+}
+@media (max-width: 980px) {
+  .gridFixed { grid-template-columns: 1fr; height:auto; }
+  .search { min-width: 100%; }
+}
+
+.pane{
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  min-height:0;
+}
+.paneBody{
+  overflow:auto;
+  min-height:0;
+  padding-right:4px;
+}
+
+/* Heads */
 .cardHead { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
 .h { font-weight:900; font-size:13px; color:#111827; }
 .rowBtns { display:flex; gap:8px; flex-wrap:wrap; }
 
-.alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
-.alert.error { border-color:#ef4444; background:#fff5f5; }
-
+/* Buttons & inputs */
 .btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; }
 .btn:hover { background:#f9fafb; }
 .btn.primary { background:#007a33; border-color:#007a33; color:#fff; }
@@ -471,7 +648,8 @@ onMounted(async () => {
 .input { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:12px; font-size:13px; background:#fff; }
 .right { text-align:right; }
 
-.list { display:flex; flex-direction:column; gap:8px; max-height: 68vh; overflow:auto; padding-right:4px; }
+/* List left */
+.list { display:flex; flex-direction:column; gap:8px; }
 .row { width:100%; display:flex; justify-content:space-between; gap:10px; padding:10px; border-radius:14px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; text-align:left; }
 .row:hover { background:#f9fafb; }
 .row.active { border-color: rgba(0,122,51,0.55); background: rgba(236,253,245,0.55); }
@@ -485,25 +663,98 @@ onMounted(async () => {
 
 .empty { color:#6b7280; font-size:12px; padding:10px; border:1px dashed #d1d5db; border-radius:14px; background:#fafafa; }
 .empty.big { padding:18px; }
-.pill { padding:4px 10px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; font-size:11px; color:#374151; font-weight:800; display:inline-flex; gap:6px; align-items:center; }
 
-.summary { display:grid; grid-template-columns: 140px 1fr; gap:8px 10px; padding:10px; border:1px solid #e5e7eb; border-radius:14px; background:#fcfcfd; }
-.sLine { display:contents; }
-.sK { font-size:11px; color:#6b7280; font-weight:900; }
-.sV { font-size:12px; color:#111827; font-weight:800; }
+/* Sticky header right pane */
+.stickyTop{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+}
+.stickyLine{
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  padding: 2px 0 8px;
+}
+.stickyTitle{
+  font-size:12px;
+  color:#111827;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.stickyLabel{ font-size:12px; }
+.sep{ opacity:0.5; }
+.muted{ color:#6b7280; }
 
-.compHead { margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.h2 { font-size:13px; font-weight:900; }
-.spacer { flex:1; }
+.kpis{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
 
+.pill {
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #e5e7eb;
+  background:#fafafa;
+  font-size:11px;
+  color:#374151;
+  font-weight:800;
+  display:inline-flex;
+  gap:6px;
+  align-items:center;
+}
+.pill.ok { border-color: rgba(0,122,51,0.55); background: rgba(236,253,245,0.55); color:#065f46; }
+
+/* Banners */
+.banner{
+  font-size:12px;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:8px 10px;
+  margin-top:6px;
+}
+.banner.error{ border-color:#ef4444; background:#fff5f5; }
+.banner.warn{ border-color:#f59e0b; background:#fffbeb; }
+.banner.ok{ border-color: rgba(0,122,51,0.55); background: rgba(236,253,245,0.55); color:#065f46; }
+.miniTag{
+  display:inline-flex;
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid #e5e7eb;
+  background:#fff;
+  font-size:11px;
+  margin-left:6px;
+}
+
+/* Composition header */
+.compHeadSlim{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  margin-top:10px;
+}
+.h2 { font-size:13px; font-weight:900; margin:0; }
+
+/* Table */
 .tableWrap { overflow:auto; margin-top:10px; }
 .table { width:100%; border-collapse:collapse; font-size:12px; }
 .table th, .table td { border-bottom:1px solid #e5e7eb; padding:8px; text-align:left; vertical-align:top; }
 .table th { font-size:11px; color:#6b7280; background:#fafafa; }
 .emptyRow { color:#6b7280; padding:10px; }
-
 .note { margin-top:10px; font-size:11px; color:#6b7280; }
 
+/* Modal */
 .modal { position:fixed; inset:0; background:rgba(17,24,39,0.35); display:flex; align-items:center; justify-content:center; padding:16px; z-index:100; }
 .modalCard { width:min(760px, 100%); background:#fff; border:1px solid #e5e7eb; border-radius:18px; padding:12px; }
 .modalHead { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }

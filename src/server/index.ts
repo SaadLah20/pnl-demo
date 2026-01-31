@@ -199,14 +199,30 @@ app.put("/mp-catalogue/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/mp-catalogue/:id", async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+
   try {
-    await prisma.mpCatalogue.delete({ where: { id: String(req.params.id) } });
+    // Utilisée dans une formule catalogue ?
+    const usedInFormules = await prisma.formuleCatalogueItem.count({ where: { mpId: id } });
+
+    // Utilisée dans une variante (override mp) ?
+    const usedInVariants = await prisma.variantMp.count({ where: { mpId: id } });
+
+    if (usedInFormules > 0 || usedInVariants > 0) {
+      return res.status(409).json({
+        error: "MP_IN_USE",
+        details: { usedInFormules, usedInVariants },
+      });
+    }
+
+    await prisma.mpCatalogue.delete({ where: { id } });
     res.json({ ok: true });
-  } catch (e) {
+  } catch (e: any) {
     console.error(e);
-    res.status(400).json({ error: "Bad Request" });
+    res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
+
 
 /* =========================================================
    FORMULES CATALOGUE CRUD
@@ -248,22 +264,55 @@ app.put("/formules-catalogue/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/formules-catalogue/:id", async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+
   try {
-    await prisma.formuleCatalogue.delete({ where: { id: String(req.params.id) } });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(400).json({ error: "Bad Request" });
+    // 1) Si utilisée dans une variante => refuser (sinon FK error P2003)
+    const usedInVariants = await prisma.variantFormule.count({ where: { formuleId: id } });
+
+    if (usedInVariants > 0) {
+      return res.status(409).json({
+        error: "FORMULE_IN_USE",
+        details: { usedInVariants },
+      });
+    }
+
+    // 2) Supprimer composition puis formule (transaction)
+    await prisma.$transaction(async (tx) => {
+      await tx.formuleCatalogueItem.deleteMany({ where: { formuleId: id } });
+      await tx.formuleCatalogue.delete({ where: { id } });
+    });
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error("DELETE /formules-catalogue failed", { id, e });
+
+    // Prisma codes utiles
+    if (e?.code === "P2025") {
+      return res.status(404).json({ error: "NOT_FOUND" });
+    }
+    if (e?.code === "P2003") {
+      // FK constraint => formule référencée quelque part
+      // on renvoie un code clair pour le front
+      return res.status(409).json({ error: "FORMULE_IN_USE" });
+    }
+
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
 
+
+
+
 // composition items
+// composition items + 🔥 resync variants using this formule
 app.put("/formules-catalogue/:id/items", async (req: Request, res: Response) => {
   try {
     const formuleId = String(req.params.id);
     const items = (req.body?.items ?? []) as Array<{ mpId: string; qty: number }>;
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // 1) replace composition
       await tx.formuleCatalogueItem.deleteMany({ where: { formuleId } });
 
       if (items.length) {
@@ -275,6 +324,18 @@ app.put("/formules-catalogue/:id/items", async (req: Request, res: Response) => 
           })),
         });
       }
+
+      // 2) 🔥 resync variants that use this formule
+      const links = await tx.variantFormule.findMany({
+        where: { formuleId },
+        select: { variantId: true },
+      });
+
+      const variantIds = [...new Set(links.map((x) => String(x.variantId)))];
+
+      for (const variantId of variantIds) {
+        await syncVariantMpsFromFormules(tx, variantId);
+      }
     });
 
     const updated = await prisma.formuleCatalogue.findUnique({
@@ -282,12 +343,13 @@ app.put("/formules-catalogue/:id/items", async (req: Request, res: Response) => 
       include: { items: true },
     });
 
-    res.json(updated);
-  } catch (e) {
+    res.json({ ok: true, updated });
+  } catch (e: any) {
     console.error(e);
-    res.status(400).json({ error: "Bad Request" });
+    res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
+
 
 /* =========================================================
    VARIANT MP (override prix/comment)
