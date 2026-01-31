@@ -3,78 +3,6 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-function rand(min: number, max: number) {
-  return Math.round((min + Math.random() * (max - min)) * 100) / 100;
-}
-function randi(min: number, max: number) {
-  return Math.floor(min + Math.random() * (max - min + 1));
-}
-
-async function resetBusinessDataOnly() {
-  // enfants -> parents
-  await prisma.variantFormule.deleteMany();
-  await prisma.variantMp.deleteMany();
-
-  await prisma.formuleCatalogueItem.deleteMany(); // ❌ non (si tu veux garder le catalogue)
-  // ✅ on ne touche PAS aux catalogues => donc on ne delete PAS FormuleCatalogueItem !
-  // ==> Cette ligne doit rester commentée/supprimée.
-
-  await prisma.autreCoutItem.deleteMany();
-  await prisma.sectionAutresCouts.deleteMany();
-
-  await prisma.sectionDevis.deleteMany();
-  await prisma.sectionMajorations.deleteMany();
-  await prisma.sectionFormules.deleteMany();
-  await prisma.sectionEmployes.deleteMany();
-  await prisma.sectionCoutOccasionnel.deleteMany();
-  await prisma.sectionCoutMensuel.deleteMany();
-  await prisma.sectionCoutM3.deleteMany();
-  await prisma.sectionMaintenance.deleteMany();
-  await prisma.sectionCab.deleteMany();
-  await prisma.sectionTransport.deleteMany();
-  await prisma.sectionMatierePremiere.deleteMany();
-
-  await prisma.variant.deleteMany();
-  await prisma.contract.deleteMany();
-  await prisma.pnl.deleteMany();
-}
-
-async function ensureCataloguesExist() {
-  const mpCount = await prisma.mpCatalogue.count();
-  const fCount = await prisma.formuleCatalogue.count();
-  const compCount = await prisma.formuleCatalogueItem.count();
-
-  if (mpCount === 0 || fCount === 0 || compCount === 0) {
-    throw new Error(
-      "Catalogues MP/Formules vides (ou composition vide). Lance d'abord ton seed catalogues."
-    );
-  }
-}
-
-async function pickCatalogueRefs() {
-  const mps = await prisma.mpCatalogue.findMany({ orderBy: { categorie: "asc" } });
-  const forms = await prisma.formuleCatalogue.findMany({ orderBy: { label: "asc" } });
-
-  const findMp = (q: string) =>
-    mps.find((x) => (x.label ?? "").toLowerCase().includes(q.toLowerCase())) ?? mps[0];
-
-  const findForm = (q: string) =>
-    forms.find((x) => (x.label ?? "").toLowerCase().includes(q.toLowerCase())) ?? forms[0];
-
-  // essayer de matcher tes libellés
-  const mpCiment = findMp("ciment");
-  const mpSable = findMp("sable");
-  const mpG1 = findMp("g1");
-  const mpG2 = findMp("g2");
-  const mpSp = findMp("super");
-
-  const f1 = findForm("b25");
-  const f2 = findForm("b30");
-  const f3 = findForm("b35");
-
-  return { mpCiment, mpSable, mpG1, mpG2, mpSp, f1, f2, f3 };
-}
-
 type ContractSeed = {
   dureeMois: number;
   cab: string;
@@ -101,7 +29,7 @@ type VariantConfig = {
   description?: string;
   status?: string;
 
-  transportPrixMoyen: number; // ✅ obligatoire
+  transportPrixMoyen: number;
   volumePompePct: number;
   prixAchatPompe: number;
   prixVentePompe: number;
@@ -136,9 +64,260 @@ type VariantConfig = {
   devisSurcharge: number;
   withMajorations: boolean;
 
-  // formules variant
   formules: Array<{ formuleId: string; volumeM3: number; momd: number }>;
 };
+
+async function resetAll() {
+  // enfants -> parents
+  await prisma.variantFormule.deleteMany();
+  await prisma.variantMp.deleteMany();
+
+  await prisma.autreCoutItem.deleteMany();
+  await prisma.sectionAutresCouts.deleteMany();
+
+  await prisma.sectionDevis.deleteMany();
+  await prisma.sectionMajorations.deleteMany();
+  await prisma.sectionFormules.deleteMany();
+  await prisma.sectionEmployes.deleteMany();
+  await prisma.sectionCoutOccasionnel.deleteMany();
+  await prisma.sectionCoutMensuel.deleteMany();
+  await prisma.sectionCoutM3.deleteMany();
+  await prisma.sectionMaintenance.deleteMany();
+  await prisma.sectionCab.deleteMany();
+  await prisma.sectionTransport.deleteMany();
+  await prisma.sectionMatierePremiere.deleteMany();
+
+  await prisma.variant.deleteMany();
+  await prisma.contract.deleteMany();
+  await prisma.pnl.deleteMany();
+
+  // ✅ reset catalogues aussi
+  await prisma.formuleCatalogueItem.deleteMany();
+  await prisma.formuleCatalogue.deleteMany();
+  await prisma.mpCatalogue.deleteMany();
+}
+
+async function upsertFixedCatalogues() {
+  // =========================
+  // 1) MP CATALOGUE (prix en DH/tonne)
+  // =========================
+  const city = "Nador";
+  const region = "ORIENTALE";
+
+  const mpCiment = await prisma.mpCatalogue.create({
+    data: {
+      categorie: "CIMENT",
+      label: "Ciment normal CPJ55",
+      unite: "t",
+      prix: 1280,
+      fournisseur: "LH FES",
+      city,
+      region,
+      comment: "LH FES",
+    },
+  });
+
+  const mpG1 = await prisma.mpCatalogue.create({
+    data: {
+      categorie: "GRANULAS",
+      label: "G1 – 4/10",
+      unite: "t",
+      prix: 80,
+      fournisseur: "Achghal ACHARK",
+      city,
+      region,
+      comment: "Achghal ACHARK",
+    },
+  });
+
+  const mpG2 = await prisma.mpCatalogue.create({
+    data: {
+      categorie: "GRANULAS",
+      label: "G2 – 10/20",
+      unite: "t",
+      prix: 80,
+      fournisseur: "Achghal ACHARK",
+      city,
+      region,
+      comment: "Achghal ACHARK",
+    },
+  });
+
+  const mpSableConc = await prisma.mpCatalogue.create({
+    data: {
+      categorie: "GRANULAS",
+      label: "Sable concassée – 0/5",
+      unite: "t",
+      prix: 95,
+      fournisseur: "Achghal ACHARK",
+      city,
+      region,
+      comment: "Achghal ACHARK",
+    },
+  });
+
+  const mpSableDune = await prisma.mpCatalogue.create({
+    data: {
+      categorie: "GRANULAS",
+      label: "Sable de dune",
+      unite: "t",
+      prix: 125,
+      fournisseur: "Achghal ACHARK",
+      city,
+      region,
+      comment: "Achghal ACHARK",
+    },
+  });
+
+  const mpTempo10 = await prisma.mpCatalogue.create({
+    data: {
+      categorie: "ADJUVANT",
+      label: "TEMPO 10",
+      unite: "t",
+      prix: 13000,
+      fournisseur: "SIKA",
+      city,
+      region,
+      comment: "SIKA",
+    },
+  });
+
+  const mpByLabel = {
+    "Ciment normal CPJ55": mpCiment,
+    "G1 – 4/10": mpG1,
+    "G2 – 10/20": mpG2,
+    "Sable concassée – 0/5": mpSableConc,
+    "Sable de dune": mpSableDune,
+    "TEMPO 10": mpTempo10,
+  } as const;
+
+  // =========================
+  // 2) FORMULES CATALOGUE + COMPOSITION (qty en Kg / m³)
+  // =========================
+  await prisma.formuleCatalogue.createMany({
+    data: [
+      {
+        label: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3",
+        resistance: "C40/50",
+        city,
+        region,
+        comment: "",
+      },
+      {
+        label: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3",
+        resistance: "C35/45",
+        city,
+        region,
+        comment: "",
+      },
+      {
+        label: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3",
+        resistance: "C30/37",
+        city,
+        region,
+        comment: "",
+      },
+      { label: "BSS", resistance: "BSS", city, region, comment: "" },
+      {
+        label: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3",
+        resistance: "C25/30",
+        city,
+        region,
+        comment: "",
+      },
+      { label: "GBA/DBA C30/37", resistance: "C30/37", city, region, comment: "" },
+      { label: "BPS NM EN 206 C20/25 D20 CL0.4 S3", resistance: "C20/25", city, region, comment: "" },
+      { label: "BPE Béton de remplissage", resistance: "BPE", city, region, comment: "" },
+    ],
+  });
+
+  // re-fetch ids in one shot
+  const forms = await prisma.formuleCatalogue.findMany({ orderBy: { label: "asc" } });
+  const byLabel = (label: string) => {
+    const x = forms.find((z) => z.label === label);
+    if (!x) throw new Error(`Formule catalogue introuvable: ${label}`);
+    return x;
+  };
+
+  const comp: Array<{ formuleLabel: string; mpLabel: keyof typeof mpByLabel; qtyKg: number }> = [
+    // a) C40/50
+    { formuleLabel: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3", mpLabel: "Ciment normal CPJ55", qtyKg: 400 },
+    { formuleLabel: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3", mpLabel: "G1 – 4/10", qtyKg: 458 },
+    { formuleLabel: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3", mpLabel: "G2 – 10/20", qtyKg: 552 },
+    { formuleLabel: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3", mpLabel: "Sable concassée – 0/5", qtyKg: 580 },
+    { formuleLabel: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3", mpLabel: "Sable de dune", qtyKg: 245 },
+    { formuleLabel: "BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3", mpLabel: "TEMPO 10", qtyKg: 4 },
+
+    // b) C35/45
+    { formuleLabel: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3", mpLabel: "Ciment normal CPJ55", qtyKg: 380 },
+    { formuleLabel: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3", mpLabel: "G1 – 4/10", qtyKg: 400 },
+    { formuleLabel: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3", mpLabel: "G2 – 10/20", qtyKg: 540 },
+    { formuleLabel: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3", mpLabel: "Sable concassée – 0/5", qtyKg: 730 },
+    { formuleLabel: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3", mpLabel: "Sable de dune", qtyKg: 195 },
+    { formuleLabel: "BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3", mpLabel: "TEMPO 10", qtyKg: 4.94 },
+
+    // c) C30/37 XS1
+    { formuleLabel: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3", mpLabel: "Ciment normal CPJ55", qtyKg: 350 },
+    { formuleLabel: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3", mpLabel: "G1 – 4/10", qtyKg: 468 },
+    { formuleLabel: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3", mpLabel: "G2 – 10/20", qtyKg: 564 },
+    { formuleLabel: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3", mpLabel: "Sable concassée – 0/5", qtyKg: 593 },
+    { formuleLabel: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3", mpLabel: "Sable de dune", qtyKg: 250 },
+    { formuleLabel: "BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3", mpLabel: "TEMPO 10", qtyKg: 4.2 },
+
+    // d) BSS
+    { formuleLabel: "BSS", mpLabel: "Ciment normal CPJ55", qtyKg: 300 },
+    { formuleLabel: "BSS", mpLabel: "G1 – 4/10", qtyKg: 479 },
+    { formuleLabel: "BSS", mpLabel: "G2 – 10/20", qtyKg: 558 },
+    { formuleLabel: "BSS", mpLabel: "Sable concassée – 0/5", qtyKg: 620 },
+    { formuleLabel: "BSS", mpLabel: "Sable de dune", qtyKg: 261 },
+    { formuleLabel: "BSS", mpLabel: "TEMPO 10", qtyKg: 1.5 },
+
+    // e) C25/30
+    { formuleLabel: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3", mpLabel: "Ciment normal CPJ55", qtyKg: 315 },
+    { formuleLabel: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3", mpLabel: "G1 – 4/10", qtyKg: 476 },
+    { formuleLabel: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3", mpLabel: "G2 – 10/20", qtyKg: 573 },
+    { formuleLabel: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3", mpLabel: "Sable concassée – 0/5", qtyKg: 602 },
+    { formuleLabel: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3", mpLabel: "Sable de dune", qtyKg: 254 },
+    { formuleLabel: "BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3", mpLabel: "TEMPO 10", qtyKg: 3.5 },
+
+    // f) GBA/DBA
+    { formuleLabel: "GBA/DBA C30/37", mpLabel: "Ciment normal CPJ55", qtyKg: 400 },
+    { formuleLabel: "GBA/DBA C30/37", mpLabel: "G1 – 4/10", qtyKg: 410 },
+    { formuleLabel: "GBA/DBA C30/37", mpLabel: "G2 – 10/20", qtyKg: 580 },
+    { formuleLabel: "GBA/DBA C30/37", mpLabel: "Sable concassée – 0/5", qtyKg: 655 },
+    { formuleLabel: "GBA/DBA C30/37", mpLabel: "Sable de dune", qtyKg: 230 },
+    { formuleLabel: "GBA/DBA C30/37", mpLabel: "TEMPO 10", qtyKg: 4 },
+
+    // g) C20/25
+    { formuleLabel: "BPS NM EN 206 C20/25 D20 CL0.4 S3", mpLabel: "Ciment normal CPJ55", qtyKg: 280 },
+    { formuleLabel: "BPS NM EN 206 C20/25 D20 CL0.4 S3", mpLabel: "G1 – 4/10", qtyKg: 484 },
+    { formuleLabel: "BPS NM EN 206 C20/25 D20 CL0.4 S3", mpLabel: "G2 – 10/20", qtyKg: 564 },
+    { formuleLabel: "BPS NM EN 206 C20/25 D20 CL0.4 S3", mpLabel: "Sable concassée – 0/5", qtyKg: 620 },
+    { formuleLabel: "BPS NM EN 206 C20/25 D20 CL0.4 S3", mpLabel: "Sable de dune", qtyKg: 264 },
+    { formuleLabel: "BPS NM EN 206 C20/25 D20 CL0.4 S3", mpLabel: "TEMPO 10", qtyKg: 2.8 },
+
+    // h) BPE
+    { formuleLabel: "BPE Béton de remplissage", mpLabel: "Ciment normal CPJ55", qtyKg: 250 },
+    { formuleLabel: "BPE Béton de remplissage", mpLabel: "G1 – 4/10", qtyKg: 490 },
+    { formuleLabel: "BPE Béton de remplissage", mpLabel: "G2 – 10/20", qtyKg: 571 },
+    { formuleLabel: "BPE Béton de remplissage", mpLabel: "Sable concassée – 0/5", qtyKg: 634 },
+    { formuleLabel: "BPE Béton de remplissage", mpLabel: "Sable de dune", qtyKg: 268 },
+    { formuleLabel: "BPE Béton de remplissage", mpLabel: "TEMPO 10", qtyKg: 2.8 },
+  ];
+
+  await prisma.formuleCatalogueItem.createMany({
+    data: comp.map((x) => ({
+      formuleId: byLabel(x.formuleLabel).id,
+      mpId: mpByLabel[x.mpLabel].id,
+      qty: x.qtyKg, // ✅ Kg / m³
+    })),
+  });
+
+  return {
+    mps: mpByLabel,
+    formsByLabel: byLabel,
+  };
+}
 
 async function createFullVariant(variantId: string, cfg: VariantConfig) {
   const CAT_LOG = "LOGISTIQUE_APPRO";
@@ -146,7 +325,6 @@ async function createFullVariant(variantId: string, cfg: VariantConfig) {
   const CAT_COST = "COUTS_CHARGES";
   const CAT_DEVIS = "DEVIS";
 
-  // 1) sections 1:1
   await prisma.sectionTransport.create({
     data: {
       variantId,
@@ -199,7 +377,6 @@ async function createFullVariant(variantId: string, cfg: VariantConfig) {
     data: { variantId, category: CAT_DEVIS, surcharge: cfg.devisSurcharge },
   });
 
-  // 2) listes Formules (VariantFormule)
   if (cfg.formules.length) {
     await prisma.variantFormule.createMany({
       data: cfg.formules.map((f) => ({
@@ -212,227 +389,186 @@ async function createFullVariant(variantId: string, cfg: VariantConfig) {
     });
   }
 
-  // ✅ 3) IMPORTANT : ne pas créer VariantMp ici !
-  // VariantMp sera auto générée via syncVariantMpsFromFormules (backend),
-  // donc on laisse propre.
+  // ✅ IMPORTANT : ne pas créer VariantMp ici (auto-sync via backend)
 }
 
 async function seed() {
-  await ensureCataloguesExist();
-  await resetBusinessDataOnly();
+  await resetAll();
 
-  const refs = await pickCatalogueRefs();
+  // ✅ catalogues fixes
+  const { formsByLabel } = await upsertFixedCatalogues();
 
-  const baseContracts: ContractSeed[] = [
-    {
-      dureeMois: 15,
-      cab: "LHM",
-      installation: "LHM",
-      genieCivil: "CLIENT",
-      transport: "LHM",
-      terrain: "CLIENT",
-      matierePremiere: "LHM",
-      maintenance: "PARTAGE",
-      chargeuse: "LHM",
-      branchementEau: "CLIENT",
-      consoEau: "LHM",
-      branchementElec: "CLIENT",
-      consoElec: "LHM",
-      postes: 2,
-      sundayPrice: 0,
-      delayPenalty: 15000,
-      chillerRent: 0,
-    },
-    {
-      dureeMois: 12,
-      cab: "LHM",
-      installation: "LHM",
-      genieCivil: "PARTAGE",
-      transport: "LHM",
-      terrain: "PARTAGE",
-      matierePremiere: "LHM",
-      maintenance: "LHM",
-      chargeuse: "LHM",
-      branchementEau: "LHM",
-      consoEau: "LHM",
-      branchementElec: "LHM",
-      consoElec: "LHM",
-      postes: 1,
-      sundayPrice: 2500,
-      delayPenalty: 20000,
-      chillerRent: 12000,
-    },
-    {
-      dureeMois: 18,
-      cab: "EXISTANTE",
-      installation: "EXISTANTE",
-      genieCivil: "CLIENT",
-      transport: "LHM",
-      terrain: "CLIENT",
-      matierePremiere: "LHM",
-      maintenance: "PARTAGE",
-      chargeuse: "LHM",
-      branchementEau: "CLIENT",
-      consoEau: "LHM",
-      branchementElec: "CLIENT",
-      consoElec: "LHM",
-      postes: 2,
-      sundayPrice: 0,
-      delayPenalty: 12000,
-      chillerRent: 0,
-    },
-    {
-      dureeMois: 24,
-      cab: "CLIENT",
-      installation: "CLIENT",
-      genieCivil: "CLIENT",
-      transport: "CLIENT",
-      terrain: "CLIENT",
-      matierePremiere: "PRESTATAIRE",
-      maintenance: "CLIENT",
-      chargeuse: "CLIENT",
-      branchementEau: "CLIENT",
-      consoEau: "CLIENT",
-      branchementElec: "CLIENT",
-      consoElec: "CLIENT",
-      postes: 1,
-      sundayPrice: 0,
-      delayPenalty: 0,
-      chillerRent: 0,
-    },
-  ];
+  // =========================
+  // P&L #1 EXACT (données fournies)
+  // =========================
+  const contract1: ContractSeed = {
+    dureeMois: 24,
+    cab: "LHM",
+    installation: "LHM",
+    genieCivil: "LHM",
+    transport: "LHM",
+    terrain: "CLIENT",
+    matierePremiere: "LHM",
+    maintenance: "LHM",
+    chargeuse: "LHM",
+    branchementEau: "CLIENT",
+    consoEau: "LHM",
+    branchementElec: "LHM",
+    consoElec: "CLIENT",
+    postes: 1,
+    sundayPrice: 5000,
+    delayPenalty: 150000,
+    chillerRent: 150000,
+  };
 
-  // ✅ 3 PNL
   const pnl1 = await prisma.pnl.create({
     data: {
-      title: "PNL Dessalement Nador - CAB dédiée",
+      title: "ADM Autoroute Guercif-Nador LOTS 2-2 et 2-3",
       model: "CAB_FIXE_NOUVELLE",
-      client: "Projet Dessalement (Nador)",
+      client: "SBTX",
       status: "ENCOURS",
       startDate: new Date("2026-02-01"),
       city: "Nador",
       region: "ORIENTAL",
-      contracts: { create: [baseContracts[0], baseContracts[2]] }, // 2 contrats
+      contracts: { create: [contract1] },
     },
     include: { contracts: true },
   });
 
+  const c1 = pnl1.contracts[0];
+
+  const v1 = await prisma.variant.create({
+    data: {
+      title: "Terrain d’AFSOU",
+      description: "Centrale LHM et Terrain Client",
+      status: "INITIALISEE",
+      contractId: c1.id,
+    },
+  });
+
+  const cfg1: VariantConfig = {
+    title: v1.title,
+    description: v1.description ?? "",
+    status: "INITIALISEE",
+
+    transportPrixMoyen: 79.6,
+    volumePompePct: 0,
+    prixAchatPompe: 0,
+    prixVentePompe: 0,
+
+    cabEtat: "NEUVE",
+    cabMode: "ACHAT",
+    cabCapacite: 2.0,
+    cabAmortMois: 30000,
+
+    // total maintenance = 12000
+    maintenance: { cab: 3000, elec: 2500, chargeur: 1500, generale: 2000, bassins: 1000, preventive: 2000 },
+
+    coutM3: { eau: 3, qualite: 2, dechets: 1.75 },
+
+    // total cout mensuel = 74370
+    coutMensuel: { electricite: 42000, gasoil: 15000, location: 12000, securite: 5370 },
+
+    coutOccasionnel: { genieCivil: 1200000, installation: 580000, transport: 0 },
+
+    // total employes mensuel = 77560 (1*25000 + 4*13140)
+    employes: { responsableNb: 1, responsableCout: 25000, centralistesNb: 4, centralistesCout: 13140 },
+
+    autresCouts: [
+      { label: "Frais généraux", unite: "POURCENT_CA", valeur: 6 },
+      { label: "Location chargeurse", unite: "MOIS", valeur: 22000 },
+    ],
+
+    devisSurcharge: 0,
+    withMajorations: false,
+
+    formules: [
+      { formuleId: formsByLabel("BPS NM EN 206 C40/50  XS1-XC4 D20 CL0.4 S3").id, volumeM3: 3200, momd: 244 },
+      { formuleId: formsByLabel("BPS NM EN 206 C35/45  XS1-XC4 D20  CL0.4 S3").id, volumeM3: 3600, momd: 220 },
+      { formuleId: formsByLabel("BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3").id, volumeM3: 18500, momd: 222 },
+      { formuleId: formsByLabel("BSS").id, volumeM3: 2500, momd: 222 },
+      { formuleId: formsByLabel("BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3").id, volumeM3: 2000, momd: 224 },
+      { formuleId: formsByLabel("GBA/DBA C30/37").id, volumeM3: 10000, momd: 280 },
+      { formuleId: formsByLabel("BPS NM EN 206 C20/25 D20 CL0.4 S3").id, volumeM3: 11300, momd: 239 },
+      { formuleId: formsByLabel("BPE Béton de remplissage").id, volumeM3: 3200, momd: 201 },
+    ],
+  };
+
+  await createFullVariant(v1.id, cfg1);
+
+  // =========================
+  // P&L #2 / #3 (optionnels, minimalistes pour tests)
+  // =========================
   const pnl2 = await prisma.pnl.create({
     data: {
-      title: "PNL Extension Industrielle - Ain Sebaâ",
+      title: "PNL Test Casablanca",
       model: "CAB_FIXE_EXISTANT",
-      client: "Industriel Y",
+      client: "Client Test",
       status: "ENCOURS",
-      startDate: new Date("2026-04-15"),
+      startDate: new Date("2026-03-01"),
       city: "Casablanca",
       region: "CASA",
-      contracts: { create: [baseContracts[1], baseContracts[0], baseContracts[2]] }, // 3 contrats
+      contracts: {
+        create: [
+          {
+            dureeMois: 12,
+            cab: "LHM",
+            installation: "LHM",
+            genieCivil: "CLIENT",
+            transport: "LHM",
+            terrain: "CLIENT",
+            matierePremiere: "LHM",
+            maintenance: "LHM",
+            chargeuse: "LHM",
+            branchementEau: "CLIENT",
+            consoEau: "LHM",
+            branchementElec: "CLIENT",
+            consoElec: "LHM",
+            postes: 1,
+            sundayPrice: 0,
+            delayPenalty: 20000,
+            chillerRent: 0,
+          },
+        ],
+      },
     },
     include: { contracts: true },
   });
 
-  const pnl3 = await prisma.pnl.create({
+  const v2 = await prisma.variant.create({
     data: {
-      title: "PNL Centrale Mobile - Projet Z",
-      model: "CAB_MOBILE_CLIENT",
-      client: "Client Z",
-      status: "ENCOURS",
-      startDate: new Date("2026-03-10"),
-      city: "Marrakech",
-      region: "MARRAKECH-SAFI",
-      contracts: { create: [baseContracts[3], baseContracts[0], baseContracts[2], baseContracts[1]] }, // 4 contrats
+      title: "Variante Base",
+      description: "Seed test",
+      status: "INITIALISEE",
+      contractId: pnl2.contracts[0].id,
     },
-    include: { contracts: true },
   });
 
-  const pnls = [pnl1, pnl2, pnl3];
+  await createFullVariant(v2.id, {
+    title: v2.title,
+    transportPrixMoyen: 65,
+    volumePompePct: 0,
+    prixAchatPompe: 0,
+    prixVentePompe: 0,
+    cabEtat: "NEUVE",
+    cabMode: "ACHAT",
+    cabCapacite: 2.0,
+    cabAmortMois: 25000,
+    maintenance: { cab: 2000, elec: 1500, chargeur: 1000, generale: 1500, bassins: 800, preventive: 1200 },
+    coutM3: { eau: 2.2, qualite: 1.2, dechets: 0.8 },
+    coutMensuel: { electricite: 30000, gasoil: 9000, location: 0, securite: 4000 },
+    coutOccasionnel: { genieCivil: 250000, installation: 120000, transport: 0 },
+    employes: { responsableNb: 1, responsableCout: 18000, centralistesNb: 2, centralistesCout: 9000 },
+    autresCouts: [{ label: "Frais généraux", unite: "POURCENT_CA", valeur: 6 }],
+    devisSurcharge: 0,
+    withMajorations: false,
+    formules: [
+      { formuleId: formsByLabel("BPS NM EN 206 C30/37 XS1 D20 CL0.4 S3").id, volumeM3: 8000, momd: 220 },
+      { formuleId: formsByLabel("BPS NM EN 206 C25/30 XS1 D20 CL0.4 S3").id, volumeM3: 4000, momd: 210 },
+    ],
+  });
 
-  // ✅ variants 1..3 / contrat
-  for (const p of pnls) {
-    for (const c of p.contracts) {
-      const vCount = randi(1, 3);
-
-      for (let i = 0; i < vCount; i++) {
-        const v = await prisma.variant.create({
-          data: {
-            title: i === 0 ? "Variante Base" : i === 1 ? "Variante Optim" : "Variante Prudente",
-            description: "Seed réaliste + transport moyen obligatoire",
-            status: "INITIALISEE",
-            contractId: c.id,
-          },
-        });
-
-        const volBase = randi(15000, 90000);
-        const v1 = Math.round(volBase * 0.45);
-        const v2 = Math.round(volBase * 0.35);
-        const v3 = Math.round(volBase * 0.20);
-
-        const cfg: VariantConfig = {
-          title: v.title,
-          transportPrixMoyen: 55 + i * 5, // ✅ prix moyen obligatoire
-          volumePompePct: 20 + i * 5,
-          prixAchatPompe: 110 + i * 3,
-          prixVentePompe: 165 + i * 5,
-
-          cabEtat: "NEUVE",
-          cabMode: i === 2 ? "LOCATION" : "ACHAT",
-          cabCapacite: rand(1.0, 2.5),
-          cabAmortMois: rand(18000, 50000),
-
-          maintenance: {
-            cab: rand(3000, 7000),
-            elec: rand(2000, 6500),
-            chargeur: rand(1500, 3000),
-            generale: rand(1500, 5000),
-            bassins: rand(500, 2000),
-            preventive: rand(1200, 4500),
-          },
-
-          coutM3: { eau: rand(1.2, 2.2), qualite: rand(0.4, 0.9), dechets: rand(0.2, 0.6) },
-          coutMensuel: {
-            electricite: rand(9000, 24000),
-            gasoil: rand(8000, 20000),
-            location: i === 2 ? rand(6000, 18000) : 0,
-            securite: rand(3000, 8000),
-          },
-          coutOccasionnel: {
-            genieCivil: rand(60000, 280000),
-            installation: rand(30000, 140000),
-            transport: rand(30000, 90000),
-          },
-
-          employes: {
-            responsableNb: 1,
-            responsableCout: rand(9000, 14000),
-            centralistesNb: rand(1, 3),
-            centralistesCout: rand(6500, 9500),
-          },
-
-          autresCouts: [
-            { label: "Frais généraux", unite: "POURCENT_CA", valeur: rand(5, 8) },
-            { label: "Marketing", unite: "MOIS", valeur: rand(2500, 8000) },
-          ],
-
-          devisSurcharge: i === 1 ? 3 : 0,
-          withMajorations: true,
-
-          formules: [
-            { formuleId: refs.f1.id, volumeM3: v1, momd: 180 + i * 10 },
-            { formuleId: refs.f2.id, volumeM3: v2, momd: 220 + i * 12 },
-            { formuleId: refs.f3.id, volumeM3: v3, momd: 260 + i * 15 },
-          ],
-        };
-
-        await createFullVariant(v.id, cfg);
-
-        // ✅ IMPORTANT : on NE crée PAS VariantMp ici
-        // VariantMp doit être auto-générée par les routes backend (syncVariantMpsFromFormules)
-        // => après le seed, dès que tu modifies/ajoutes/supprimes une formule, ça se mettra à jour.
-      }
-    }
-  }
-
-  console.log("✅ Seed business OK (sans toucher catalogues, sans créer VariantMp)");
+  console.log("✅ Seed OK: catalogues fixes + P&L #1 (SBTX) alimenté");
 }
 
 seed()

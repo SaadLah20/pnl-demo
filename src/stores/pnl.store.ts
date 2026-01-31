@@ -314,6 +314,13 @@ async updateVariant(id: string, payload: any) {
   });
   await this.loadPnls(); // recharge => KPIs recalculés via computeHeaderKpis
 },
+// ✅ pnl.store.ts (ajout utilitaire recommandé, optionnel)
+// (facilite les pages catalogue pour ne pas recharger 2x)
+// Ajoute ça dans actions, sans rien casser :
+async ensureCataloguesLoaded() {
+  if (!this.mpCatalogue?.length) await this.loadMpCatalogue();
+  if (!this.formulesCatalogue?.length) await this.loadFormulesCatalogue();
+}
 
   },
 });

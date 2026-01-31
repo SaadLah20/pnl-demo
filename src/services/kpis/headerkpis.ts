@@ -1,6 +1,8 @@
 // src/services/kpis/headerkpis.ts
 import type { HeaderKPIs } from "@/types/kpis.types";
 
+
+
 function n(x: any): number {
   const v = Number(x);
   return Number.isFinite(v) ? v : 0;
@@ -99,6 +101,7 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   const coutOcc = variant?.coutOccasionnel;
   const autresItems = variant?.autresCouts?.items ?? [];
 
+
   const coutM3Total =
     (n(coutM3?.eau) + n(coutM3?.qualite) + n(coutM3?.dechets)) * volumeTotalM3;
 
@@ -150,12 +153,19 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
     autresCoutsHorsPctTotal;
 
   // 6) Pompage
-  const volumePompePct = n(variant?.transport?.volumePompePct);
-  const prixAchatPompe = n(variant?.transport?.prixAchatPompe);
-  const prixVentePompe = n(variant?.transport?.prixVentePompe);
+  //const volumePompePct = n(variant?.transport?.volumePompePct);
+ // const prixAchatPompe = n(variant?.transport?.prixAchatPompe);
+ // const prixVentePompe = n(variant?.transport?.prixVentePompe);
 
-  const volumePompeM3 = volumeTotalM3 * (volumePompePct / 100);
-  const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
+ // const volumePompeM3 = volumeTotalM3 * (volumePompePct / 100);
+ // const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
+
+  // ------------------------------
+// 6) Pompage (désactivé)
+// ------------------------------
+const volumePompePct = 0;
+const volumePompeM3 = 0;
+const margePompageTotal = 0;
 
   // 7) Frais généraux
   const fraisGenerauxTotal = (fraisGenPct / 100) * caTotal;
