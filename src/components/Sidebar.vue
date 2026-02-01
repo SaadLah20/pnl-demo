@@ -62,6 +62,7 @@ const routeByItem: Record<string, string> = {
   "Mes P&L": "MesPnls",
   "Répertoire MP": "MpCatalogue",
   "Catalogue formules": "FormulesCatalogue",
+  "Détails": "Details",
 };
 
 function goToPage(item: string) {
@@ -76,7 +77,6 @@ function goToPage(item: string) {
 
   // fallback PageView with a stable name
   const pageNameMap: Record<string, string> = {
-    "Détails": "Variante/Détails",
     "Récapitulatif": "Variante/Récapitulatif",
 
     "MP": "Variante/Sections/Approvisionnement/MP",
@@ -107,6 +107,7 @@ watch(
   () => {
     if (route.name === "MesPnls") activeItem.value = "Mes P&L";
     else if (route.name === "MpCatalogue") activeItem.value = "Répertoire MP";
+    else if (route.name === "Details") activeItem.value = "Détails";
     else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";

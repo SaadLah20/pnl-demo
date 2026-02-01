@@ -6,7 +6,6 @@ const store = usePnlStore();
 
 onMounted(async () => {
   if (store.pnls.length === 0) await store.loadPnls();
-  // pour le dropdown "ajouter formule"
   if ((store as any).formulesCatalogue?.length === 0 && (store as any).loadFormulesCatalogue) {
     await (store as any).loadFormulesCatalogue();
   }
@@ -35,6 +34,25 @@ function money(v: number) {
   }).format(toNum(v));
 }
 
+/** garde uniquement les clés supportées par Prisma (présentes dans l'objet existant) */
+function pickSupported(existing: any, draft: Record<string, any>, baseKeys: string[]) {
+  const out: Record<string, any> = {};
+  const ex = existing ?? null;
+
+  // Toujours envoyer les champs "base" (safe)
+  for (const k of baseKeys) out[k] = toNum((draft as any)[k]);
+
+  // Envoyer les champs extra seulement s'ils existent dans la DB (donc Prisma les supporte)
+  if (ex) {
+    for (const k of Object.keys(draft)) {
+      if (baseKeys.includes(k)) continue;
+      if (k in ex) out[k] = toNum((draft as any)[k]);
+    }
+  }
+
+  return out;
+}
+
 /* =========================
    ACTIVE
 ========================= */
@@ -52,12 +70,13 @@ const variantsOfCurrentContract = computed<any[]>(() => contract.value?.variants
 function onChangePnl(pnlId: string) {
   store.setActivePnl(pnlId);
 }
+
 function onChangeContract(contractId: string) {
-  // pas de state activeContractId dans le store => on sélectionne juste 1ère variante du contrat choisi
   const c = contracts.value.find((x) => x.id === contractId);
   const firstVar = c?.variants?.[0]?.id ?? null;
   if (firstVar) store.setActiveVariant(firstVar);
 }
+
 function onChangeVariant(variantId: string) {
   store.setActiveVariant(variantId);
 }
@@ -69,13 +88,16 @@ const open = reactive({
   mp: true,
   transport: true,
   formules: true,
-  coutM3: false,
-  coutMensuel: false,
-  coutOccasionnel: false,
-  maintenance: false,
-  employes: false,
-  cab: false,
-  autresCouts: false,
+
+  cab: true,
+  maintenance: true,
+  coutM3: true,
+
+  coutMensuel: true,
+  coutOccasionnel: true,
+  employes: true,
+
+  autresCouts: true,
 });
 
 function toggle(k: keyof typeof open) {
@@ -128,20 +150,11 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() => {
-  const items = (variant.value as any)?.formules?.items ?? [];
-  // volume = somme volumes des formules (edited)
-  return items.reduce((s: number, it: any) => s + toNum(fe(it.id).volumeM3), 0);
-});
-
-const transportTotal = computed(() => toNum(transportPrixMoyen.value) * volumeTotal.value);
-
 /* =========================
    FORMULES VARIANTE (editable: volume & momd)
 ========================= */
 const formEdit = reactive<Record<string, { volumeM3: number; momd: number }>>({});
 
-// ✅ retourne toujours un objet
 function fe(id: string) {
   if (!formEdit[id]) formEdit[id] = { volumeM3: 0, momd: 0 };
   return formEdit[id];
@@ -161,17 +174,19 @@ watch(
   { immediate: true }
 );
 
+const volumeTotal = computed(() => {
+  const items = (variant.value as any)?.formules?.items ?? [];
+  return items.reduce((s: number, it: any) => s + toNum(fe(it.id).volumeM3), 0);
+});
+
+const transportTotal = computed(() => toNum(transportPrixMoyen.value) * volumeTotal.value);
+
 function mpPriceUsed(mpId: string): number {
   const vmp = ((variant.value as any)?.mp?.items ?? []).find((x: any) => x.mpId === mpId);
   if (!vmp) return 0;
-
-  // ✅ override uniquement
   if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
-
-  // ✅ sinon prix catalogue live
   return toNum(vmp?.mp?.prix);
 }
-
 
 type CompRow = { mpId: string; mpLabel: string; qty: number; prix: number; coutParM3: number };
 
@@ -181,15 +196,12 @@ function compositionFor(formule: any): CompRow[] {
     const mpId = String(it.mpId);
     const qty = toNum(it.qty);
     const prix = mpPriceUsed(mpId);
-    console.log("DEBUG CMP", { mpId, qty, prix, coutParM3: qty * prix });
-
     return {
       mpId,
       mpLabel: it?.mp?.label ?? "",
       qty,
       prix,
-// qty = kg/m³, prix = MAD/tonne  => cout = (kg/1000) * (MAD/tonne)
-coutParM3: (qty / 1000) * prix,
+      coutParM3: (qty / 1000) * prix, // kg/m3 + MAD/tonne
     };
   });
 }
@@ -200,7 +212,6 @@ function cmpParM3For(vf: any): number {
 }
 
 const formExpanded = reactive<Record<string, boolean>>({});
-
 function toggleForm(id: string) {
   formExpanded[id] = !formExpanded[id];
 }
@@ -209,6 +220,7 @@ function toggleForm(id: string) {
 const cmpTotal = computed(() =>
   formules.value.reduce((s: number, vf: any) => s + cmpParM3For(vf) * toNum(fe(vf.id).volumeM3), 0)
 );
+
 const momdTotal = computed(() =>
   formules.value.reduce((s: number, vf: any) => s + toNum(fe(vf.id).momd) * toNum(fe(vf.id).volumeM3), 0)
 );
@@ -216,7 +228,6 @@ const momdTotal = computed(() =>
 const pvParM3Moy = computed(() => {
   const vol = volumeTotal.value;
   if (vol === 0) return 0;
-  // moyenne pondérée du PV/m3
   const total = formules.value.reduce((s: number, vf: any) => {
     const volF = toNum(fe(vf.id).volumeM3);
     const pv = cmpParM3For(vf) + toNum(fe(vf.id).momd) + toNum(transportPrixMoyen.value);
@@ -234,13 +245,68 @@ const pctMomd = computed(() => (caTotal.value === 0 ? 0 : (momdTotal.value / caT
 
 /* =========================
    COSTS EDIT (sections)
+   -> UI montre tout, SAVE n’envoie que ce que Prisma supporte
 ========================= */
 const costEdit = reactive({
   coutM3: { eau: 0, qualite: 0, dechets: 0 },
-  coutMensuel: { electricite: 0, gasoil: 0, location: 0, securite: 0 },
-  coutOccasionnel: { genieCivil: 0, installation: 0, transport: 0 },
+
+  coutMensuel: {
+    electricite: 0,
+    locationGroupes: 0,
+    gasoil: 0,
+    hebergements: 0,
+    locationTerrain: 0,
+    telephone: 0,
+    troisG: 0,
+    taxeProfessionnelle: 0,
+    securite: 0,
+    locationVehicule: 0,
+    locationAmbulance: 0,
+    locationBungalows: 0,
+    epi: 0,
+
+    // compat ancien champ existant en DB actuellement
+    location: 0,
+  },
+
+  coutOccasionnel: {
+    genieCivil: 0,
+    installationCab: 0,
+    demontage: 0,
+    remisePointCentrale: 0,
+    transport: 0,
+    silots: 0,
+    localAdjuvant: 0,
+    bungalows: 0,
+
+    // compat DB actuelle
+    installation: 0,
+  },
+
   maintenance: { cab: 0, elec: 0, chargeur: 0, generale: 0, bassins: 0, preventive: 0 },
-  employes: { responsableNb: 0, responsableCout: 0, centralistesNb: 0, centralistesCout: 0 },
+
+  employes: {
+    responsableNb: 0,
+    responsableCout: 0,
+    centralistesNb: 0,
+    centralistesCout: 0,
+
+    manoeuvreNb: 0,
+    manoeuvreCout: 0,
+    coordinateurExploitationNb: 0,
+    coordinateurExploitationCout: 0,
+    technicienLaboNb: 0,
+    technicienLaboCout: 0,
+    femmeMenageNb: 0,
+    femmeMenageCout: 0,
+    gardienNb: 0,
+    gardienCout: 0,
+    maintenancierNb: 0,
+    maintenancierCout: 0,
+    panierRepasNb: 0,
+    panierRepasCout: 0,
+  },
+
   autresCouts: [] as Array<{ label: string; unite: string; valeur: number }>,
 });
 
@@ -250,22 +316,48 @@ watch(
   () => variant.value,
   (v) => {
     const vv: any = v ?? {};
+
     costEdit.coutM3 = {
       eau: toNum(vv?.coutM3?.eau),
       qualite: toNum(vv?.coutM3?.qualite),
       dechets: toNum(vv?.coutM3?.dechets),
     };
+
+    // DB actuelle: electricite, gasoil, location, securite
     costEdit.coutMensuel = {
       electricite: toNum(vv?.coutMensuel?.electricite),
       gasoil: toNum(vv?.coutMensuel?.gasoil),
-      location: toNum(vv?.coutMensuel?.location),
       securite: toNum(vv?.coutMensuel?.securite),
+      location: toNum(vv?.coutMensuel?.location),
+
+      // nouveaux champs (si pas en DB => 0)
+      locationGroupes: toNum(vv?.coutMensuel?.locationGroupes),
+      hebergements: toNum(vv?.coutMensuel?.hebergements),
+      locationTerrain: toNum(vv?.coutMensuel?.locationTerrain),
+      telephone: toNum(vv?.coutMensuel?.telephone),
+      troisG: toNum(vv?.coutMensuel?.troisG),
+      taxeProfessionnelle: toNum(vv?.coutMensuel?.taxeProfessionnelle),
+      locationVehicule: toNum(vv?.coutMensuel?.locationVehicule),
+      locationAmbulance: toNum(vv?.coutMensuel?.locationAmbulance),
+      locationBungalows: toNum(vv?.coutMensuel?.locationBungalows),
+      epi: toNum(vv?.coutMensuel?.epi),
     };
+
+    // DB actuelle: genieCivil, installation, transport
     costEdit.coutOccasionnel = {
       genieCivil: toNum(vv?.coutOccasionnel?.genieCivil),
-      installation: toNum(vv?.coutOccasionnel?.installation),
       transport: toNum(vv?.coutOccasionnel?.transport),
+      installation: toNum(vv?.coutOccasionnel?.installation),
+
+      // nouveaux champs (si pas en DB => 0)
+      installationCab: toNum(vv?.coutOccasionnel?.installationCab),
+      demontage: toNum(vv?.coutOccasionnel?.demontage),
+      remisePointCentrale: toNum(vv?.coutOccasionnel?.remisePointCentrale),
+      silots: toNum(vv?.coutOccasionnel?.silots),
+      localAdjuvant: toNum(vv?.coutOccasionnel?.localAdjuvant),
+      bungalows: toNum(vv?.coutOccasionnel?.bungalows),
     };
+
     costEdit.maintenance = {
       cab: toNum(vv?.maintenance?.cab),
       elec: toNum(vv?.maintenance?.elec),
@@ -274,12 +366,31 @@ watch(
       bassins: toNum(vv?.maintenance?.bassins),
       preventive: toNum(vv?.maintenance?.preventive),
     };
+
+    // DB actuelle: responsableNb/responsableCout/centralistesNb/centralistesCout
     costEdit.employes = {
       responsableNb: toNum(vv?.employes?.responsableNb),
       responsableCout: toNum(vv?.employes?.responsableCout),
       centralistesNb: toNum(vv?.employes?.centralistesNb),
       centralistesCout: toNum(vv?.employes?.centralistesCout),
+
+      // nouveaux postes (si pas en DB => 0)
+      manoeuvreNb: toNum(vv?.employes?.manoeuvreNb),
+      manoeuvreCout: toNum(vv?.employes?.manoeuvreCout),
+      coordinateurExploitationNb: toNum(vv?.employes?.coordinateurExploitationNb),
+      coordinateurExploitationCout: toNum(vv?.employes?.coordinateurExploitationCout),
+      technicienLaboNb: toNum(vv?.employes?.technicienLaboNb),
+      technicienLaboCout: toNum(vv?.employes?.technicienLaboCout),
+      femmeMenageNb: toNum(vv?.employes?.femmeMenageNb),
+      femmeMenageCout: toNum(vv?.employes?.femmeMenageCout),
+      gardienNb: toNum(vv?.employes?.gardienNb),
+      gardienCout: toNum(vv?.employes?.gardienCout),
+      maintenancierNb: toNum(vv?.employes?.maintenancierNb),
+      maintenancierCout: toNum(vv?.employes?.maintenancierCout),
+      panierRepasNb: toNum(vv?.employes?.panierRepasNb),
+      panierRepasCout: toNum(vv?.employes?.panierRepasCout),
     };
+
     amort_mois.value = toNum(vv?.cab?.amortMois);
 
     const items = vv?.autresCouts?.items ?? [];
@@ -293,8 +404,7 @@ watch(
 );
 
 /* =========================
-   SAVE HELPERS: build "full" payload (évite Bad Request)
-   -> on envoie tous les champs requis par Prisma
+   SAVE HELPERS: payloads "compat"
 ========================= */
 function buildTransportPayload(): any {
   const t: any = (variant.value as any)?.transport ?? {};
@@ -325,13 +435,36 @@ function buildCoutM3Payload(): any {
 }
 
 function buildCoutMensuelPayload(): any {
-  const s: any = (variant.value as any)?.coutMensuel ?? {};
-  return { category: s.category ?? "COUTS_CHARGES", ...costEdit.coutMensuel };
+  const existing: any = (variant.value as any)?.coutMensuel ?? null;
+  const baseKeys = ["electricite", "gasoil", "location", "securite"]; // DB actuelle safe
+  const data = pickSupported(existing, costEdit.coutMensuel as any, baseKeys);
+
+  // Si tu utilises "locationGroupes" dans l'UI, tu peux la recopier vers "location" en fallback:
+  // (utile tant que la DB n'a pas locationGroupes)
+  if (!existing || !("locationGroupes" in (existing ?? {}))) {
+    if (toNum((costEdit.coutMensuel as any).locationGroupes) !== 0) {
+      data.location = toNum((costEdit.coutMensuel as any).locationGroupes);
+    }
+  }
+
+  const s: any = existing ?? {};
+  return { category: s.category ?? "COUTS_CHARGES", ...data };
 }
 
 function buildCoutOccPayload(): any {
-  const s: any = (variant.value as any)?.coutOccasionnel ?? {};
-  return { category: s.category ?? "COUTS_CHARGES", ...costEdit.coutOccasionnel };
+  const existing: any = (variant.value as any)?.coutOccasionnel ?? null;
+  const baseKeys = ["genieCivil", "installation", "transport"]; // DB actuelle safe
+  const data = pickSupported(existing, costEdit.coutOccasionnel as any, baseKeys);
+
+  // fallback: si tu remplis installationCab mais DB a "installation"
+  if (!existing || !("installationCab" in (existing ?? {}))) {
+    if (toNum((costEdit.coutOccasionnel as any).installationCab) !== 0) {
+      data.installation = toNum((costEdit.coutOccasionnel as any).installationCab);
+    }
+  }
+
+  const s: any = existing ?? {};
+  return { category: s.category ?? "COUTS_CHARGES", ...data };
 }
 
 function buildMaintenancePayload(): any {
@@ -340,8 +473,11 @@ function buildMaintenancePayload(): any {
 }
 
 function buildEmployesPayload(): any {
-  const s: any = (variant.value as any)?.employes ?? {};
-  return { category: s.category ?? "COUTS_CHARGES", ...costEdit.employes };
+  const existing: any = (variant.value as any)?.employes ?? null;
+  const baseKeys = ["responsableNb", "responsableCout", "centralistesNb", "centralistesCout"]; // DB actuelle safe
+  const data = pickSupported(existing, costEdit.employes as any, baseKeys);
+  const s: any = existing ?? {};
+  return { category: s.category ?? "COUTS_CHARGES", ...data };
 }
 
 /* =========================
@@ -487,7 +623,6 @@ async function saveAutresCouts() {
   }
 }
 
-// ajouter / supprimer autres couts (front)
 function addAutreCout() {
   costEdit.autresCouts.push({ label: "Nouveau coût", unite: "FORFAIT", valeur: 0 });
 }
@@ -497,7 +632,6 @@ function removeAutreCout(idx: number) {
 
 /* ---- add/delete formules variante ---- */
 const selectedFormuleId = ref<string>("");
-
 const formulesCatalogue = computed<any[]>(() => ((store as any).formulesCatalogue ?? []) as any[]);
 
 async function addFormuleToVariant() {
@@ -505,10 +639,10 @@ async function addFormuleToVariant() {
   if (!variant.value) return;
   const formuleId = selectedFormuleId.value;
   if (!formuleId) return;
+
   saving.addFormule = true;
   try {
-await store.addFormuleToActiveVariant(formuleId);
-
+    await store.addFormuleToActiveVariant(formuleId);
     selectedFormuleId.value = "";
   } catch (e: any) {
     setErr(e);
@@ -521,8 +655,7 @@ async function deleteFormuleFromVariant(variantFormuleId: string) {
   err.value = null;
   if (!variant.value) return;
   try {
-await store.removeVariantFormule(variantFormuleId);
-
+    await store.removeVariantFormule(variantFormuleId);
   } catch (e: any) {
     setErr(e);
   }
@@ -579,9 +712,7 @@ await store.removeVariantFormule(variantFormuleId);
         </div>
       </div>
 
-      <!-- =========================
-           1) MP VARIANTE (read only)
-      ========================== -->
+      <!-- 1) MP -->
       <div v-if="variant" class="card">
         <div class="sectionHead" @click="toggle('mp')">
           <div class="sectionTitle">🧱 MP Variante</div>
@@ -616,15 +747,11 @@ await store.removeVariantFormule(variantFormuleId);
               </tbody>
             </table>
           </div>
-          <div class="muted" style="margin-top:8px">
-            (Aucune action ici — MP est synchronisée depuis les formules)
-          </div>
+          <div class="muted" style="margin-top: 8px">(MP synchronisée depuis les formules)</div>
         </div>
       </div>
 
-      <!-- =========================
-           2) TRANSPORT
-      ========================== -->
+      <!-- 2) TRANSPORT -->
       <div v-if="variant" class="card">
         <div class="sectionHead" @click="toggle('transport')">
           <div class="sectionTitle">🚚 Transport</div>
@@ -651,9 +778,7 @@ await store.removeVariantFormule(variantFormuleId);
         </div>
       </div>
 
-      <!-- =========================
-           3) FORMULES VARIANTE
-      ========================== -->
+      <!-- 3) FORMULES -->
       <div v-if="variant" class="card">
         <div class="sectionHead" @click="toggle('formules')">
           <div class="sectionTitle">🧪 Formules variante</div>
@@ -661,7 +786,6 @@ await store.removeVariantFormule(variantFormuleId);
         </div>
 
         <div v-show="open.formules">
-          <!-- Add formule -->
           <div class="row" style="margin: 10px 0 6px">
             <div class="field grow">
               <div class="label">Ajouter une formule</div>
@@ -672,6 +796,7 @@ await store.removeVariantFormule(variantFormuleId);
                 </option>
               </select>
             </div>
+
             <button class="btn" :disabled="saving.addFormule || !selectedFormuleId" @click="addFormuleToVariant()">
               {{ saving.addFormule ? "Ajout..." : "Ajouter" }}
             </button>
@@ -681,7 +806,6 @@ await store.removeVariantFormule(variantFormuleId);
             </button>
           </div>
 
-          <!-- Table formules -->
           <div v-if="formules.length === 0" class="muted">Aucune formule.</div>
 
           <div v-else class="tableWrap">
@@ -696,13 +820,14 @@ await store.removeVariantFormule(variantFormuleId);
                   <th></th>
                 </tr>
               </thead>
+
               <tbody>
                 <template v-for="vf in formules" :key="vf.id">
                   <tr>
                     <td>
                       <div class="click" @click="toggleForm(vf.id)">
                         <b>{{ vf.formule?.label ?? "-" }}</b>
-                        <span class="muted" style="margin-left:6px">{{ formExpanded[vf.id] ? "▾" : "▸" }}</span>
+                        <span class="muted" style="margin-left: 6px">{{ formExpanded[vf.id] ? "▾" : "▸" }}</span>
                       </div>
                       <div class="muted smallText">{{ vf.formule?.comment ?? "" }}</div>
                     </td>
@@ -721,14 +846,14 @@ await store.removeVariantFormule(variantFormuleId);
                       <b>{{ n(cmpParM3For(vf) + toNum(fe(vf.id).momd) + toNum(transportPrixMoyen)) }}</b>
                     </td>
 
-                    <td style="width: 90px; text-align:right">
+                    <td style="width: 90px; text-align: right">
                       <button class="btn danger" @click="deleteFormuleFromVariant(String(vf.id))">Suppr</button>
                     </td>
                   </tr>
 
                   <tr v-if="formExpanded[vf.id]">
                     <td colspan="6" class="subRow">
-                      <div class="muted" style="margin-bottom:6px">Composition (qty × prix → coût/m³)</div>
+                      <div class="muted" style="margin-bottom: 6px">Composition (qty × prix → coût/m³)</div>
                       <div class="tableWrap">
                         <table class="table small">
                           <thead>
@@ -756,7 +881,6 @@ await store.removeVariantFormule(variantFormuleId);
             </table>
           </div>
 
-          <!-- KPIs section formules -->
           <div class="kpisGrid">
             <div class="kpiBox"><div class="kpiL">Volume total</div><div class="kpiV">{{ n(volumeTotal, 0) }} m³</div></div>
             <div class="kpiBox"><div class="kpiL">CMP moyen</div><div class="kpiV">{{ n(cmpMoy) }} MAD/m³</div></div>
@@ -771,11 +895,7 @@ await store.removeVariantFormule(variantFormuleId);
         </div>
       </div>
 
-      <!-- =========================
-           4) COÛTS & CHARGES (sections séparées + bouton chacune)
-      ========================== -->
-
-      <!-- CAB (amort) -->
+      <!-- CAB -->
       <div v-if="variant" class="card">
         <div class="sectionHead" @click="toggle('cab')">
           <div class="sectionTitle">🏗️ CAB (coût)</div>
@@ -837,19 +957,36 @@ await store.removeVariantFormule(variantFormuleId);
         </div>
       </div>
 
-      <!-- Coûts mensuels -->
+      <!-- Coûts / mois -->
       <div v-if="variant" class="card">
         <div class="sectionHead" @click="toggle('coutMensuel')">
           <div class="sectionTitle">📅 Coûts / mois</div>
           <div class="chev">{{ open.coutMensuel ? "▾" : "▸" }}</div>
         </div>
+
         <div v-show="open.coutMensuel">
-          <div class="grid3">
+          <div class="grid4">
             <div class="field"><div class="label">Électricité</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.electricite" /></div>
+            <div class="field"><div class="label">Location groupes</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationGroupes" /></div>
             <div class="field"><div class="label">Gasoil</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.gasoil" /></div>
-            <div class="field"><div class="label">Location</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.location" /></div>
+            <div class="field"><div class="label">Hébergements</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.hebergements" /></div>
+
+            <div class="field"><div class="label">Location terrain</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationTerrain" /></div>
+            <div class="field"><div class="label">Téléphone</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.telephone" /></div>
+            <div class="field"><div class="label">3G</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.troisG" /></div>
+            <div class="field"><div class="label">Taxe professionnelle</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.taxeProfessionnelle" /></div>
+
             <div class="field"><div class="label">Sécurité</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.securite" /></div>
+            <div class="field"><div class="label">Location véhicule</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationVehicule" /></div>
+            <div class="field"><div class="label">Location ambulance</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationAmbulance" /></div>
+            <div class="field"><div class="label">Location bungalows</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationBungalows" /></div>
+
+            <div class="field"><div class="label">EPI</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.epi" /></div>
+
+            <!-- Champ DB actuel (pour debug/compat) -->
+            <div class="field"><div class="label muted">DB: location (compat)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutMensuel.location" /></div>
           </div>
+
           <div class="row" style="margin-top:10px">
             <button class="btn primary" :disabled="saving.coutMensuel" @click="saveCoutMensuel()">
               {{ saving.coutMensuel ? "Enregistrement..." : "Enregistrer" }}
@@ -864,12 +1001,23 @@ await store.removeVariantFormule(variantFormuleId);
           <div class="sectionTitle">🧾 Coûts occasionnels</div>
           <div class="chev">{{ open.coutOccasionnel ? "▾" : "▸" }}</div>
         </div>
+
         <div v-show="open.coutOccasionnel">
-          <div class="grid3">
+          <div class="grid4">
             <div class="field"><div class="label">Génie civil</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.genieCivil" /></div>
-            <div class="field"><div class="label">Installation</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.installation" /></div>
+            <div class="field"><div class="label">Installation de la CAB</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.installationCab" /></div>
+            <div class="field"><div class="label">Démontage</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.demontage" /></div>
+            <div class="field"><div class="label">Remise au point centrale</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.remisePointCentrale" /></div>
+
             <div class="field"><div class="label">Transport</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.transport" /></div>
+            <div class="field"><div class="label">Silots</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.silots" /></div>
+            <div class="field"><div class="label">Local adjuvant</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.localAdjuvant" /></div>
+            <div class="field"><div class="label">Bungalows</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.bungalows" /></div>
+
+            <!-- Champ DB actuel -->
+            <div class="field"><div class="label muted">DB: installation (compat)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.coutOccasionnel.installation" /></div>
           </div>
+
           <div class="row" style="margin-top:10px">
             <button class="btn primary" :disabled="saving.coutOccasionnel" @click="saveCoutOcc()">
               {{ saving.coutOccasionnel ? "Enregistrement..." : "Enregistrer" }}
@@ -884,17 +1032,45 @@ await store.removeVariantFormule(variantFormuleId);
           <div class="sectionTitle">👷 Employés</div>
           <div class="chev">{{ open.employes ? "▾" : "▸" }}</div>
         </div>
+
         <div v-show="open.employes">
           <div class="grid4">
-            <div class="field"><div class="label">Responsable (Nb)</div><input class="input right" type="number" step="1" v-model.number="costEdit.employes.responsableNb" /></div>
-            <div class="field"><div class="label">Responsable (coût)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.responsableCout" /></div>
-            <div class="field"><div class="label">Centralistes (Nb)</div><input class="input right" type="number" step="1" v-model.number="costEdit.employes.centralistesNb" /></div>
-            <div class="field"><div class="label">Centralistes (coût)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.centralistesCout" /></div>
+            <div class="field"><div class="label">Responsable (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.responsableNb" /></div>
+            <div class="field"><div class="label">Responsable (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.responsableCout" /></div>
+
+            <div class="field"><div class="label">Centralistes (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.centralistesNb" /></div>
+            <div class="field"><div class="label">Centralistes (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.centralistesCout" /></div>
+
+            <div class="field"><div class="label">Manœuvre (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.manoeuvreNb" /></div>
+            <div class="field"><div class="label">Manœuvre (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.manoeuvreCout" /></div>
+
+            <div class="field"><div class="label">Coord. exploitation (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.coordinateurExploitationNb" /></div>
+            <div class="field"><div class="label">Coord. exploitation (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.coordinateurExploitationCout" /></div>
+
+            <div class="field"><div class="label">Technicien labo (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.technicienLaboNb" /></div>
+            <div class="field"><div class="label">Technicien labo (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.technicienLaboCout" /></div>
+
+            <div class="field"><div class="label">Femme de ménage (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.femmeMenageNb" /></div>
+            <div class="field"><div class="label">Femme de ménage (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.femmeMenageCout" /></div>
+
+            <div class="field"><div class="label">Gardien (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.gardienNb" /></div>
+            <div class="field"><div class="label">Gardien (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.gardienCout" /></div>
+
+            <div class="field"><div class="label">Maintenancier (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.maintenancierNb" /></div>
+            <div class="field"><div class="label">Maintenancier (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.maintenancierCout" /></div>
+
+            <div class="field"><div class="label">Panier repas (Nb)</div><input class="input right" type="number" step="0.1" v-model.number="costEdit.employes.panierRepasNb" /></div>
+            <div class="field"><div class="label">Panier repas (coût moyen)</div><input class="input right" type="number" step="0.01" v-model.number="costEdit.employes.panierRepasCout" /></div>
           </div>
+
           <div class="row" style="margin-top:10px">
             <button class="btn primary" :disabled="saving.employes" @click="saveEmployes()">
               {{ saving.employes ? "Enregistrement..." : "Enregistrer" }}
             </button>
+          </div>
+
+          <div class="muted" style="margin-top:8px">
+            ⚠️ Tant que Prisma n’a pas les colonnes de ces nouveaux postes, seuls Responsable/Centralistes seront sauvés.
           </div>
         </div>
       </div>
@@ -905,6 +1081,7 @@ await store.removeVariantFormule(variantFormuleId);
           <div class="sectionTitle">➕ Autres coûts</div>
           <div class="chev">{{ open.autresCouts ? "▾" : "▸" }}</div>
         </div>
+
         <div v-show="open.autresCouts">
           <div class="row" style="margin: 10px 0">
             <button class="btn" @click="addAutreCout()">+ Ajouter coût</button>
@@ -937,7 +1114,7 @@ await store.removeVariantFormule(variantFormuleId);
                     </select>
                   </td>
                   <td style="width: 20%"><input class="input right" type="number" step="0.01" v-model.number="it.valeur" /></td>
-                  <td style="width: 5%; text-align:right">
+                  <td style="width: 5%; text-align: right">
                     <button class="btn danger" @click="removeAutreCout(idx)">Suppr</button>
                   </td>
                 </tr>

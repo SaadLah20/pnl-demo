@@ -144,10 +144,24 @@ model SectionCoutMensuel {
   id          String  @id @default(uuid())
   variantId   String  @unique
   category    String
+
+  // existants
   electricite Float
   gasoil      Float
-  location    Float
+  location    Float     // ⚠️ on le garde (compat). Tu peux l’utiliser comme "Location groupes"
   securite    Float
+
+  // ✅ nouveaux champs (defaults => pas de casse)
+  hebergements         Float @default(0)
+  locationTerrain      Float @default(0)
+  telephone            Float @default(0)
+  troisG               Float @default(0)
+  taxeProfessionnelle  Float @default(0)
+  locationVehicule     Float @default(0)
+  locationAmbulance    Float @default(0)
+  locationBungalows    Float @default(0)
+  epi                  Float @default(0)
+
   variant     Variant @relation(fields: [variantId], references: [id])
 }
 
@@ -155,9 +169,19 @@ model SectionCoutOccasionnel {
   id           String  @id @default(uuid())
   variantId    String  @unique
   category     String
+
+  // existants
   genieCivil   Float
-  installation Float
+  installation Float   // "Installation de la CAB"
   transport    Float
+
+  // ✅ nouveaux champs
+  demontage            Float @default(0)
+  remisePointCentrale  Float @default(0)
+  silots               Float @default(0)
+  localAdjuvant        Float @default(0)
+  bungalows            Float @default(0)
+
   variant      Variant @relation(fields: [variantId], references: [id])
 }
 
@@ -165,10 +189,35 @@ model SectionEmployes {
   id               String  @id @default(uuid())
   variantId        String  @unique
   category         String
+
+  // existants
   responsableNb    Float
   responsableCout  Float
   centralistesNb   Float
   centralistesCout Float
+
+  // ✅ nouveaux rôles (Nb peut être 1.5 etc => Float OK)
+  manoeuvreNb                     Float @default(0)
+  manoeuvreCout                   Float @default(0)
+
+  coordinateurExploitationNb      Float @default(0)
+  coordinateurExploitationCout    Float @default(0)
+
+  technicienLaboNb                Float @default(0)
+  technicienLaboCout              Float @default(0)
+
+  femmeMenageNb                   Float @default(0)
+  femmeMenageCout                 Float @default(0)
+
+  gardienNb                       Float @default(0)
+  gardienCout                     Float @default(0)
+
+  maintenancierNb                 Float @default(0)
+  maintenancierCout               Float @default(0)
+
+  panierRepasNb                   Float @default(0)
+  panierRepasCout                 Float @default(0)
+
   variant          Variant @relation(fields: [variantId], references: [id])
 }
 
@@ -266,12 +315,12 @@ model FormuleCatalogueItem {
 }
 
 model VariantMp {
-  id        String  @id @default(uuid())
-  variantId String
-  sectionId String?
-  mpId      String
-  prix      Float
-  comment   String?
+  id          String  @id @default(uuid())
+  variantId   String
+  sectionId   String?
+  mpId        String
+  prix        Float
+  comment     String?
   prixOverride Float?
 
   variant Variant                 @relation(fields: [variantId], references: [id])
@@ -289,7 +338,6 @@ model VariantFormule {
   volumeM3  Float
   momd      Float
 
-  // ✅ NEW: CMP marché override
   cmpOverride Float?
 
   variant Variant          @relation(fields: [variantId], references: [id])

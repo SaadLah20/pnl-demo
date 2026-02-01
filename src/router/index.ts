@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import PageView from "@/pages/PageView.vue";
 import MesPnlPage from "@/pages/MesPnlPage.vue";
+import DetailsPage from "@/pages/DetailsPage.vue";
+
 
 // ✅ tes pages
 import MpCataloguePage from "@/pages/MpCataloguePage.vue";
@@ -28,6 +30,8 @@ const routes = [
     name: "FormulesCatalogue",
     component: FormulesCataloguePage,
   },
+
+  { path: "/details", name: "Details", component: DetailsPage },
 
   // ✅ Redirect racine -> Mes P&L
   {

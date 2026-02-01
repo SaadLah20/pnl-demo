@@ -5,7 +5,6 @@ import { prisma } from "./db";
 import { getPnls } from "./pnl.repo";
 import { Prisma } from "@prisma/client";
 
-
 const app = express();
 
 app.use(cors());
@@ -71,19 +70,15 @@ async function getFullVariant(variantId: string) {
  * - Garde les overrides prix existants pour ceux qui restent
  */
 async function syncVariantMpsFromFormules(tx: Prisma.TransactionClient, variantId: string) {
-  // section MP
   const sec = await tx.sectionMatierePremiere.upsert({
     where: { variantId },
     create: { variantId, category: "LOGISTIQUE_APPRO" },
     update: {},
   });
 
-  // récupérer toutes les MP utilisées par toutes les formules de la variante
   const vfs = await tx.variantFormule.findMany({
     where: { variantId },
-    include: {
-      formule: { include: { items: true } }, // items: { mpId, qty }
-    },
+    include: { formule: { include: { items: true } } },
   });
 
   const usedMpIds = new Set<string>();
@@ -91,11 +86,9 @@ async function syncVariantMpsFromFormules(tx: Prisma.TransactionClient, variantI
     for (const it of vf.formule?.items ?? []) usedMpIds.add(String(it.mpId));
   }
 
-  // existants dans la variante
   const existing = await tx.variantMp.findMany({ where: { variantId } });
   const existingByMp = new Map(existing.map((x) => [x.mpId, x]));
 
-  // créer manquants
   const toCreateMpIds = Array.from(usedMpIds).filter((mpId) => !existingByMp.has(mpId));
   if (toCreateMpIds.length) {
     const mps = await tx.mpCatalogue.findMany({ where: { id: { in: toCreateMpIds } } });
@@ -111,13 +104,11 @@ async function syncVariantMpsFromFormules(tx: Prisma.TransactionClient, variantI
     });
   }
 
-  // supprimer non utilisés
   const toDeleteIds = existing.filter((x) => !usedMpIds.has(x.mpId)).map((x) => x.id);
   if (toDeleteIds.length) {
     await tx.variantMp.deleteMany({ where: { id: { in: toDeleteIds } } });
   }
 
-  // si plus aucune formule => vider MP variante
   if (usedMpIds.size === 0) {
     await tx.variantMp.deleteMany({ where: { variantId } });
   }
@@ -129,19 +120,17 @@ async function syncVariantMpsFromFormules(tx: Prisma.TransactionClient, variantI
  * - Sinon: create avec defaults + data partiel
  */
 async function upsertPartialSection(params: {
-  tx: Prisma.TransactionClient;
   model: any; // tx.sectionTransport, etc.
   variantId: string;
   categoryDefault: string;
   defaults: Record<string, any>;
   data: Record<string, any>;
 }) {
-const { model, variantId, categoryDefault, defaults, data } = params;
+  const { model, variantId, categoryDefault, defaults, data } = params;
   if (!data) return;
 
   const existing = await model.findUnique({ where: { variantId } });
   if (existing) {
-    // update partiel
     await model.update({
       where: { variantId },
       data: {
@@ -150,7 +139,6 @@ const { model, variantId, categoryDefault, defaults, data } = params;
       },
     });
   } else {
-    // create avec defaults + ce qu'on reçoit
     await model.create({
       data: {
         variantId,
@@ -160,6 +148,48 @@ const { model, variantId, categoryDefault, defaults, data } = params;
       },
     });
   }
+}
+
+/* =========================================================
+   NORMALIZERS (compat + sécurité Prisma)
+========================================================= */
+
+function pickDefined<T extends Record<string, any>>(obj: T): Partial<T> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj ?? {})) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as Partial<T>;
+}
+
+// coutMensuel: UI peut envoyer locationGroupes, DB attend location
+function normalizeCoutMensuel(payload: any) {
+  const p = payload ?? {};
+  const mapped = {
+    ...p,
+    // compat UI -> DB
+    location: p.location ?? p.locationGroupes,
+  };
+  delete mapped.locationGroupes;
+  return pickDefined(mapped);
+}
+
+// coutOccasionnel: UI peut envoyer installationCab, DB attend installation
+function normalizeCoutOccasionnel(payload: any) {
+  const p = payload ?? {};
+  const mapped = {
+    ...p,
+    installation: p.installation ?? p.installationCab,
+  };
+  delete mapped.installationCab;
+  return pickDefined(mapped);
+}
+
+// Employes: s'assure que si UI envoie des champs, ils passent,
+// et si section n'existe pas, on create avec defaults COMPLETS.
+function normalizeEmployes(payload: any) {
+  const p = payload ?? {};
+  return pickDefined(p);
 }
 
 /* =========================================================
@@ -202,10 +232,7 @@ app.delete("/mp-catalogue/:id", async (req: Request, res: Response) => {
   const id = String(req.params.id);
 
   try {
-    // Utilisée dans une formule catalogue ?
     const usedInFormules = await prisma.formuleCatalogueItem.count({ where: { mpId: id } });
-
-    // Utilisée dans une variante (override mp) ?
     const usedInVariants = await prisma.variantMp.count({ where: { mpId: id } });
 
     if (usedInFormules > 0 || usedInVariants > 0) {
@@ -222,7 +249,6 @@ app.delete("/mp-catalogue/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
-
 
 /* =========================================================
    FORMULES CATALOGUE CRUD
@@ -267,7 +293,6 @@ app.delete("/formules-catalogue/:id", async (req: Request, res: Response) => {
   const id = String(req.params.id);
 
   try {
-    // 1) Si utilisée dans une variante => refuser (sinon FK error P2003)
     const usedInVariants = await prisma.variantFormule.count({ where: { formuleId: id } });
 
     if (usedInVariants > 0) {
@@ -277,7 +302,6 @@ app.delete("/formules-catalogue/:id", async (req: Request, res: Response) => {
       });
     }
 
-    // 2) Supprimer composition puis formule (transaction)
     await prisma.$transaction(async (tx) => {
       await tx.formuleCatalogueItem.deleteMany({ where: { formuleId: id } });
       await tx.formuleCatalogue.delete({ where: { id } });
@@ -287,32 +311,20 @@ app.delete("/formules-catalogue/:id", async (req: Request, res: Response) => {
   } catch (e: any) {
     console.error("DELETE /formules-catalogue failed", { id, e });
 
-    // Prisma codes utiles
-    if (e?.code === "P2025") {
-      return res.status(404).json({ error: "NOT_FOUND" });
-    }
-    if (e?.code === "P2003") {
-      // FK constraint => formule référencée quelque part
-      // on renvoie un code clair pour le front
-      return res.status(409).json({ error: "FORMULE_IN_USE" });
-    }
+    if (e?.code === "P2025") return res.status(404).json({ error: "NOT_FOUND" });
+    if (e?.code === "P2003") return res.status(409).json({ error: "FORMULE_IN_USE" });
 
     return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
 
-
-
-
-// composition items
-// composition items + 🔥 resync variants using this formule
+// composition items + resync variants using this formule
 app.put("/formules-catalogue/:id/items", async (req: Request, res: Response) => {
   try {
     const formuleId = String(req.params.id);
     const items = (req.body?.items ?? []) as Array<{ mpId: string; qty: number }>;
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 1) replace composition
       await tx.formuleCatalogueItem.deleteMany({ where: { formuleId } });
 
       if (items.length) {
@@ -325,7 +337,6 @@ app.put("/formules-catalogue/:id/items", async (req: Request, res: Response) => 
         });
       }
 
-      // 2) 🔥 resync variants that use this formule
       const links = await tx.variantFormule.findMany({
         where: { formuleId },
         select: { variantId: true },
@@ -350,12 +361,9 @@ app.put("/formules-catalogue/:id/items", async (req: Request, res: Response) => 
   }
 });
 
-
 /* =========================================================
    VARIANT MP (override prix/comment)
-   (tu peux les garder même si tu n'affiches pas d'actions sur MP)
 ========================================================= */
-
 app.post("/variants/:id/mps", async (req: Request, res: Response) => {
   try {
     const variantId = String(req.params.id);
@@ -420,7 +428,7 @@ app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response)
 });
 
 /* =========================================================
-   VARIANT CRUD + UPDATE (FIX partial payload) + FORMULES routes
+   VARIANT CRUD + UPDATE
 ========================================================= */
 
 app.post("/variants", async (req: Request, res: Response) => {
@@ -428,34 +436,42 @@ app.post("/variants", async (req: Request, res: Response) => {
     const created = await prisma.variant.create({
       data: {
         ...req.body,
+        // ✅ création correcte SectionAutresCouts + 1 item par défaut
         autresCouts: {
           create: {
             category: "COUTS_CHARGES",
-            label: "Frais généraux",
-            unite: "POURCENT_CA",
-            valeur: 0,
+            items: {
+              create: [
+                {
+                  label: "Frais généraux",
+                  unite: "POURCENT_CA",
+                  valeur: 0,
+                },
+              ],
+            },
           },
         },
       },
     });
     res.json(created);
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: "Bad Request" });
+  } catch (err: any) {
+    console.error("POST /variants failed", err);
+    res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
 
-// ✅ UPDATE VARIANT : accepte payload partiel (transport prixMoyen seul, etc.)
+// ✅ UPDATE VARIANT : accepte payload partiel + normalise compat
 app.put("/variants/:id", async (req: Request, res: Response) => {
   try {
     const variantId = String(req.params.id);
     const body = req.body ?? {};
 
+    console.log("PUT /variants/:id", variantId, "keys=", Object.keys(body));
+
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // TRANSPORT
       if (body.transport) {
         await upsertPartialSection({
-          tx,
           model: tx.sectionTransport,
           variantId,
           categoryDefault: "LOGISTIQUE_APPRO",
@@ -473,7 +489,6 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       // CAB
       if (body.cab) {
         await upsertPartialSection({
-          tx,
           model: tx.sectionCab,
           variantId,
           categoryDefault: "LOGISTIQUE_APPRO",
@@ -490,7 +505,6 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       // Maintenance
       if (body.maintenance) {
         await upsertPartialSection({
-          tx,
           model: tx.sectionMaintenance,
           variantId,
           categoryDefault: "COUTS_CHARGES",
@@ -502,7 +516,6 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       // Coût / m3
       if (body.coutM3) {
         await upsertPartialSection({
-          tx,
           model: tx.sectionCoutM3,
           variantId,
           categoryDefault: "COUTS_CHARGES",
@@ -511,39 +524,98 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         });
       }
 
-      // Coût mensuel
+      // ✅ Coût mensuel (compat: locationGroupes -> location)
       if (body.coutMensuel) {
+        const normalized = normalizeCoutMensuel(body.coutMensuel);
+        console.log("coutMensuel normalized =", normalized);
+
         await upsertPartialSection({
-          tx,
           model: tx.sectionCoutMensuel,
           variantId,
           categoryDefault: "COUTS_CHARGES",
-          defaults: { electricite: 0, gasoil: 0, location: 0, securite: 0 },
-          data: body.coutMensuel,
+          // ✅ defaults complets (évite create incomplet)
+          defaults: {
+            electricite: 0,
+            gasoil: 0,
+            location: 0,
+            securite: 0,
+
+            hebergements: 0,
+            locationTerrain: 0,
+            telephone: 0,
+            troisG: 0,
+            taxeProfessionnelle: 0,
+            locationVehicule: 0,
+            locationAmbulance: 0,
+            locationBungalows: 0,
+            epi: 0,
+          },
+          data: normalized,
         });
       }
 
-      // Coût occasionnel
+      // ✅ Coût occasionnel (compat: installationCab -> installation)
       if (body.coutOccasionnel) {
+        const normalized = normalizeCoutOccasionnel(body.coutOccasionnel);
+        console.log("coutOccasionnel normalized =", normalized);
+
         await upsertPartialSection({
-          tx,
           model: tx.sectionCoutOccasionnel,
           variantId,
           categoryDefault: "COUTS_CHARGES",
-          defaults: { genieCivil: 0, installation: 0, transport: 0 },
-          data: body.coutOccasionnel,
+          // ✅ defaults complets
+          defaults: {
+            genieCivil: 0,
+            installation: 0,
+            transport: 0,
+
+            demontage: 0,
+            remisePointCentrale: 0,
+            silots: 0,
+            localAdjuvant: 0,
+            bungalows: 0,
+          },
+          data: normalized,
         });
       }
 
-      // Employés
+      // ✅ Employés (defaults complets => tous les rôles sauvés si colonnes Prisma existent)
       if (body.employes) {
+        const normalized = normalizeEmployes(body.employes);
+        console.log("employes normalized =", normalized);
+
         await upsertPartialSection({
-          tx,
           model: tx.sectionEmployes,
           variantId,
           categoryDefault: "COUTS_CHARGES",
-          defaults: { responsableNb: 0, responsableCout: 0, centralistesNb: 0, centralistesCout: 0 },
-          data: body.employes,
+          defaults: {
+            responsableNb: 0,
+            responsableCout: 0,
+            centralistesNb: 0,
+            centralistesCout: 0,
+
+            manoeuvreNb: 0,
+            manoeuvreCout: 0,
+
+            coordinateurExploitationNb: 0,
+            coordinateurExploitationCout: 0,
+
+            technicienLaboNb: 0,
+            technicienLaboCout: 0,
+
+            femmeMenageNb: 0,
+            femmeMenageCout: 0,
+
+            gardienNb: 0,
+            gardienCout: 0,
+
+            maintenancierNb: 0,
+            maintenancierCout: 0,
+
+            panierRepasNb: 0,
+            panierRepasCout: 0,
+          },
+          data: normalized,
         });
       }
 
@@ -571,22 +643,21 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         }
       }
 
-      // Formules: update volumes/momd
+      // Formules: update volumes/momd (+ sync MP)
       if (body.formules?.items) {
         const items = body.formules.items as Array<{ id: string; volumeM3: number; momd: number; cmpOverride?: number | null }>;
+
         for (const it of items) {
           await tx.variantFormule.update({
             where: { id: String(it.id) },
             data: {
               volumeM3: Number(it.volumeM3 ?? 0),
               momd: Number(it.momd ?? 0),
-              // on ignore cmpOverride si ton schema ne l'a pas
               ...(it.cmpOverride !== undefined ? { cmpOverride: it.cmpOverride } : {}),
             } as any,
           });
         }
 
-        // 🔥 Sync MP après modif formules (utile si tu changes catalogue + resync plus tard)
         await syncVariantMpsFromFormules(tx, variantId);
       }
     });
@@ -594,7 +665,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
     const updated = await getFullVariant(variantId);
     res.json(updated);
   } catch (err: any) {
-    console.error(err);
+    console.error("PUT /variants/:id failed", err);
     res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
@@ -635,7 +706,7 @@ app.post("/variants/:id/formules", async (req: Request, res: Response) => {
   }
 });
 
-// ✅ Update variant formule (volume, MOMD, CMP override) + sync MP (au cas où)
+// ✅ Update variant formule (volume, MOMD, CMP override) + sync MP
 app.put("/variants/:id/formules/:variantFormuleId", async (req: Request, res: Response) => {
   try {
     const variantId = String(req.params.id);
@@ -686,7 +757,7 @@ app.delete("/variants/:id/formules/:variantFormuleId", async (req: Request, res:
   }
 });
 
-// (optionnel) delete variant
+// delete variant
 app.delete("/variants/:id", async (req: Request, res: Response) => {
   try {
     await prisma.variant.delete({ where: { id: String(req.params.id) } });
