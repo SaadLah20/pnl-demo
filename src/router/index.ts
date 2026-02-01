@@ -3,6 +3,8 @@ import { createRouter, createWebHistory } from "vue-router";
 import PageView from "@/pages/PageView.vue";
 import MesPnlPage from "@/pages/MesPnlPage.vue";
 import DetailsPage from "@/pages/DetailsPage.vue";
+import PnlArchivePage from "@/pages/PnlArchivePage.vue";
+
 
 
 // ✅ tes pages
@@ -30,6 +32,12 @@ const routes = [
     name: "FormulesCatalogue",
     component: FormulesCataloguePage,
   },
+
+  {
+  path: "/pnl-archives",
+  name: "PnlArchives",
+  component: PnlArchivePage,
+},
 
   { path: "/details", name: "Details", component: DetailsPage },
 

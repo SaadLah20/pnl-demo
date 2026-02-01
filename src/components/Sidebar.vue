@@ -63,6 +63,8 @@ const routeByItem: Record<string, string> = {
   "Répertoire MP": "MpCatalogue",
   "Catalogue formules": "FormulesCatalogue",
   "Détails": "Details",
+    "P&L archivés": "PnlArchives",
+
 };
 
 function goToPage(item: string) {
@@ -108,6 +110,7 @@ watch(
     if (route.name === "MesPnls") activeItem.value = "Mes P&L";
     else if (route.name === "MpCatalogue") activeItem.value = "Répertoire MP";
     else if (route.name === "Details") activeItem.value = "Détails";
+    else if (route.name === "PnlArchives") activeItem.value = "P&L archivés";
     else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";

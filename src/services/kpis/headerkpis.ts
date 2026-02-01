@@ -1,8 +1,6 @@
 // src/services/kpis/headerkpis.ts
 import type { HeaderKPIs } from "@/types/kpis.types";
 
-
-
 function n(x: any): number {
   const v = Number(x);
   return Number.isFinite(v) ? v : 0;
@@ -16,13 +14,11 @@ function round2(x: number) {
   return Math.round(x * 100) / 100;
 }
 
-
 function pricePerKg(prix: number): number {
   const p = n(prix);
   if (p <= 0) return 0;
-  return p / 1000; // ✅ toujours DH/tonne -> DH/kg
+  return p / 1000; // DH/tonne -> DH/kg
 }
-
 
 export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   const formulesItems = variant?.formules?.items ?? [];
@@ -34,7 +30,7 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   // 1) Volume total
   const volumeTotalM3 = sum(formulesItems, (f) => n(f?.volumeM3));
 
-  // 2) Transport (DH/m3)
+  // 2) Transport
   const transportMoyenM3 = n(variant?.transport?.prixMoyen);
   const transportTotal = transportMoyenM3 * volumeTotalM3;
 
@@ -42,21 +38,16 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   function mpPrixUsed(mpId: string): number {
     const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
     if (!vmp) return 0;
-
-    const prix =
-      vmp?.prixOverride != null ? n(vmp.prixOverride) : n(vmp?.mp?.prix);
-
-    return prix;
+    return vmp?.prixOverride != null ? n(vmp.prixOverride) : n(vmp?.mp?.prix);
   }
 
   // 3) CMP formule (DH/m3)
-  // CMP = Σ (qtyKg * prixKg)
   function cmpFormuleM3(formule: any): number {
     const compo = formule?.items ?? [];
     return sum(compo, (it: any) => {
       const mpId = String(it?.mpId ?? "");
-      const qtyKg = n(it?.qty); // KG/m3
-      const prix = mpPrixUsed(mpId); // DH/tonne (souvent)
+      const qtyKg = n(it?.qty);
+      const prix = mpPrixUsed(mpId); // DH/tonne
       const prixKg = pricePerKg(prix);
       return qtyKg * prixKg;
     });
@@ -75,7 +66,7 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
     const vol = n(f?.volumeM3);
     const momd = n(f?.momd);
     const cmp = cmpFormuleM3(f?.formule);
-    const pv = cmp + transportMoyenM3 + momd; // DH/m3
+    const pv = cmp + transportMoyenM3 + momd;
     return pv * vol;
   });
 
@@ -94,16 +85,26 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   const coutOcc = variant?.coutOccasionnel;
   const autresItems = variant?.autresCouts?.items ?? [];
 
-
   const coutM3Total =
     (n(coutM3?.eau) + n(coutM3?.qualite) + n(coutM3?.dechets)) * volumeTotalM3;
 
-  const coutMensuelTotal =
-    (n(coutMensuel?.electricite) +
-      n(coutMensuel?.gasoil) +
-      n(coutMensuel?.location) +
-      n(coutMensuel?.securite)) *
-    duree;
+  // ✅ inclure tous les mensuels
+  const coutMensuelMensuel =
+    n(coutMensuel?.electricite) +
+    n(coutMensuel?.gasoil) +
+    n(coutMensuel?.location) +
+    n(coutMensuel?.securite) +
+    n(coutMensuel?.hebergements) +
+    n(coutMensuel?.locationTerrain) +
+    n(coutMensuel?.telephone) +
+    n(coutMensuel?.troisG) +
+    n(coutMensuel?.taxeProfessionnelle) +
+    n(coutMensuel?.locationVehicule) +
+    n(coutMensuel?.locationAmbulance) +
+    n(coutMensuel?.locationBungalows) +
+    n(coutMensuel?.epi);
+
+  const coutMensuelTotal = coutMensuelMensuel * duree;
 
   const maintenanceMensuel =
     n(maintenance?.cab) +
@@ -115,14 +116,30 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
 
   const maintenanceTotal = maintenanceMensuel * duree;
 
+  // ✅ inclure tous les postes employés
   const employesMensuel =
     n(employes?.responsableNb) * n(employes?.responsableCout) +
-    n(employes?.centralistesNb) * n(employes?.centralistesCout);
+    n(employes?.centralistesNb) * n(employes?.centralistesCout) +
+    n(employes?.manoeuvreNb) * n(employes?.manoeuvreCout) +
+    n(employes?.coordinateurExploitationNb) * n(employes?.coordinateurExploitationCout) +
+    n(employes?.technicienLaboNb) * n(employes?.technicienLaboCout) +
+    n(employes?.femmeMenageNb) * n(employes?.femmeMenageCout) +
+    n(employes?.gardienNb) * n(employes?.gardienCout) +
+    n(employes?.maintenancierNb) * n(employes?.maintenancierCout) +
+    n(employes?.panierRepasNb) * n(employes?.panierRepasCout);
 
   const employesTotal = employesMensuel * duree;
 
+  // ✅ inclure tous les occasionnels
   const coutOccasionnelTotal =
-    n(coutOcc?.genieCivil) + n(coutOcc?.installation) + n(coutOcc?.transport);
+    n(coutOcc?.genieCivil) +
+    n(coutOcc?.installation) +
+    n(coutOcc?.transport) +
+    n(coutOcc?.demontage) +
+    n(coutOcc?.remisePointCentrale) +
+    n(coutOcc?.silots) +
+    n(coutOcc?.localAdjuvant) +
+    n(coutOcc?.bungalows);
 
   const fraisGenPct = n(
     autresItems.find((x: any) => String(x?.unite ?? "").includes("POURCENT"))?.valeur
@@ -145,20 +162,10 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
     coutOccasionnelTotal +
     autresCoutsHorsPctTotal;
 
-  // 6) Pompage
-  //const volumePompePct = n(variant?.transport?.volumePompePct);
- // const prixAchatPompe = n(variant?.transport?.prixAchatPompe);
- // const prixVentePompe = n(variant?.transport?.prixVentePompe);
-
- // const volumePompeM3 = volumeTotalM3 * (volumePompePct / 100);
- // const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
-
-  // ------------------------------
-// 6) Pompage (désactivé)
-// ------------------------------
-const volumePompePct = 0;
-const volumePompeM3 = 0;
-const margePompageTotal = 0;
+  // 6) Pompage désactivé
+  const volumePompePct = 0;
+  const volumePompeM3 = 0;
+  const margePompageTotal = 0;
 
   // 7) Frais généraux
   const fraisGenerauxTotal = (fraisGenPct / 100) * caTotal;
