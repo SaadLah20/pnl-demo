@@ -54,11 +54,16 @@ const amortMois = computed<number>(() => toNum(variant.value?.cab?.amortMois));
    CMP / PV / CA (pour %)
 ========================= */
 function mpPriceUsed(mpId: string): number {
-  const vmp = (variant.value?.mp?.items ?? []).find((x: any) => x.mpId === mpId);
+  const vmp = ((variant.value as any)?.mp?.items ?? []).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-  if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
+
+  // ✅ prix variante (override)
+  if (vmp?.prix != null) return toNum(vmp.prix);
+
+  // fallback catalogue
   return toNum(vmp?.mp?.prix);
 }
+
 
 type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
 

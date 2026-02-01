@@ -34,12 +34,17 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   const transportMoyenM3 = n(variant?.transport?.prixMoyen);
   const transportTotal = transportMoyenM3 * volumeTotalM3;
 
-  // Prix MP utilisé: override -> catalogue
-  function mpPrixUsed(mpId: string): number {
-    const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
-    if (!vmp) return 0;
-    return vmp?.prixOverride != null ? n(vmp.prixOverride) : n(vmp?.mp?.prix);
-  }
+function mpPrixUsed(mpId: string): number {
+  const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
+  if (!vmp) return 0;
+
+  // ✅ override (prix variante)
+  if (vmp?.prix != null) return n(vmp.prix);
+
+  // fallback catalogue
+  return n(vmp?.mp?.prix);
+}
+
 
   // 3) CMP formule (DH/m3)
   function cmpFormuleM3(formule: any): number {

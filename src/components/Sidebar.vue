@@ -64,6 +64,10 @@ const routeByItem: Record<string, string> = {
   "Catalogue formules": "FormulesCatalogue",
   "Détails": "Details",
     "P&L archivés": "PnlArchives",
+      "CAB": "CAB",
+      "MP": "Mp"
+
+
 
 };
 
@@ -111,7 +115,9 @@ watch(
     else if (route.name === "MpCatalogue") activeItem.value = "Répertoire MP";
     else if (route.name === "Details") activeItem.value = "Détails";
     else if (route.name === "PnlArchives") activeItem.value = "P&L archivés";
+    else if (route.name === "CAB") activeItem.value = "CAB";
     else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
+    else if (route.name === "Mp") activeItem.value = "MP";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 

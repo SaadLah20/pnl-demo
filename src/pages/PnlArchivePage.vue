@@ -37,14 +37,17 @@ function pickSupported(existing: any, draft: Record<string, any>, baseKeys: stri
   const out: Record<string, any> = {};
   const ex = existing ?? null;
 
+  // toujours inclure les champs "legacy" (connus)
   for (const k of baseKeys) out[k] = toNum((draft as any)[k]);
 
+  // si l'objet existe, inclure les nouveaux champs uniquement s'ils existent dans Prisma/DB
   if (ex) {
     for (const k of Object.keys(draft)) {
       if (baseKeys.includes(k)) continue;
       if (k in ex) out[k] = toNum((draft as any)[k]);
     }
   }
+
   return out;
 }
 
@@ -144,18 +147,23 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() =>
-  (variant.value as any)?.formules?.items?.reduce((s: number, it: any) => s + toNum(fe(it.id).volumeM3), 0) ?? 0
+const volumeTotal = computed(
+  () => (variant.value as any)?.formules?.items?.reduce((s: number, it: any) => s + toNum(fe(it.id).volumeM3), 0) ?? 0
 );
 
 const transportTotal = computed(() => toNum(transportPrixMoyen.value) * volumeTotal.value);
 
 function mpPriceUsed(mpId: string): number {
-  const vmp = ((variant.value as any)?.mp?.items ?? []).find((x: any) => x.mpId === mpId);
+  const vmp = ((variant.value as any)?.mp?.items ?? []).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-  if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
+
+  // ✅ prix variante (override)
+  if (vmp?.prix != null) return toNum(vmp.prix);
+
+  // fallback catalogue
   return toNum(vmp?.mp?.prix);
 }
+
 
 type CompRow = { mpId: string; mpLabel: string; qty: number; prix: number; coutParM3: number };
 function compositionFor(formule: any): CompRow[] {
@@ -177,7 +185,7 @@ function toggleForm(id: string) {
   formExpanded[k] = !formExpanded[k];
 }
 
-/* KPIs */
+/* KPIs (tu dis qu'ils sont OK, je garde tel quel) */
 const cmpTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + cmpParM3For(vf) * toNum(fe(vf.id).volumeM3), 0));
 const momdTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + toNum(fe(vf.id).momd) * toNum(fe(vf.id).volumeM3), 0));
 const cmpMoy = computed(() => (volumeTotal.value === 0 ? 0 : cmpTotal.value / volumeTotal.value));
@@ -266,7 +274,11 @@ watch(
   () => variant.value,
   (v) => {
     const vv: any = v ?? {};
-    costEdit.coutM3 = { eau: toNum(vv?.coutM3?.eau), qualite: toNum(vv?.coutM3?.qualite), dechets: toNum(vv?.coutM3?.dechets) };
+    costEdit.coutM3 = {
+      eau: toNum(vv?.coutM3?.eau),
+      qualite: toNum(vv?.coutM3?.qualite),
+      dechets: toNum(vv?.coutM3?.dechets),
+    };
 
     costEdit.coutMensuel = {
       electricite: toNum(vv?.coutMensuel?.electricite),
@@ -373,9 +385,10 @@ function buildCoutM3Payload(): any {
 
 function buildCoutMensuelPayload(): any {
   const existing: any = (variant.value as any)?.coutMensuel ?? null;
-  const baseKeys = ["electricite", "gasoil", "location", "securite"];
+  const baseKeys = ["electricite", "gasoil", "location", "securite"]; // legacy-safe
   const data = pickSupported(existing, costEdit.coutMensuel as any, baseKeys);
 
+  // fallback vieux schema: si locationGroupes n'existe pas, on peut ranger dans "location" si non zéro
   if (!existing || !("locationGroupes" in (existing ?? {}))) {
     if (toNum((costEdit.coutMensuel as any).locationGroupes) !== 0) {
       data.location = toNum((costEdit.coutMensuel as any).locationGroupes);
@@ -388,9 +401,10 @@ function buildCoutMensuelPayload(): any {
 
 function buildCoutOccPayload(): any {
   const existing: any = (variant.value as any)?.coutOccasionnel ?? null;
-  const baseKeys = ["genieCivil", "installation", "transport"];
+  const baseKeys = ["genieCivil", "installation", "transport"]; // legacy-safe
   const data = pickSupported(existing, costEdit.coutOccasionnel as any, baseKeys);
 
+  // fallback vieux schema: si installationCab n'existe pas, on peut ranger dans "installation" si non zéro
   if (!existing || !("installationCab" in (existing ?? {}))) {
     if (toNum((costEdit.coutOccasionnel as any).installationCab) !== 0) {
       data.installation = toNum((costEdit.coutOccasionnel as any).installationCab);
@@ -406,13 +420,32 @@ function buildMaintenancePayload(): any {
   return { category: s.category ?? "COUTS_CHARGES", ...costEdit.maintenance };
 }
 
+const EMP_GROUPS = [
+  { key: "responsable", label: "Responsable" },
+  { key: "centralistes", label: "Centralistes" },
+  { key: "manoeuvre", label: "Manœuvre" },
+  { key: "coordinateurExploitation", label: "Coordinateur exploitation" },
+  { key: "technicienLabo", label: "Technicien labo" },
+  { key: "femmeMenage", label: "Femme ménage" },
+  { key: "gardien", label: "Gardien" },
+  { key: "maintenancier", label: "Maintenancier" },
+  { key: "panierRepas", label: "Panier repas" },
+] as const;
+
 function buildEmployesPayload(): any {
   const existing: any = (variant.value as any)?.employes ?? null;
-  const baseKeys = ["responsableNb", "responsableCout", "centralistesNb", "centralistesCout"];
+  const baseKeys = ["responsableNb", "responsableCout", "centralistesNb", "centralistesCout"]; // legacy-safe
   const data = pickSupported(existing, costEdit.employes as any, baseKeys);
   const s: any = existing ?? {};
   return { category: s.category ?? "COUTS_CHARGES", ...data };
 }
+
+/** vrai si la DB ne supporte pas les nouveaux champs (on se base sur l'objet renvoyé par l'API) */
+const employesNeedsMigration = computed(() => {
+  const ex: any = (variant.value as any)?.employes ?? null;
+  if (!ex) return true; // on ne sait pas => on reste prudent
+  return !("manoeuvreNb" in ex) || !("coordinateurExploitationNb" in ex) || !("panierRepasCout" in ex);
+});
 
 /* =========================
    ACTIONS
@@ -523,7 +556,9 @@ async function saveEmployes() {
   if (!variant.value) return;
   saving.employes = true;
   try {
-    await store.updateVariant(variant.value.id, { employes: buildEmployesPayload() });
+    const payload = { employes: buildEmployesPayload() };
+    console.log("[saveEmployes] payload =>", payload);
+    await store.updateVariant(variant.value.id, payload);
   } catch (e: any) {
     setErr(e);
   } finally {
@@ -906,29 +941,30 @@ async function deleteFormuleFromVariant(variantFormuleId: string) {
         </div>
       </details>
 
+      <!-- ✅ EMPLOYES: affiche TOUS les postes -->
       <details class="panel" v-if="variant">
-        <summary class="sum"><b>Employés</b> <span class="muted">(compat Prisma)</span></summary>
+        <summary class="sum"><b>Employés</b> <span class="muted">Nb / Coût</span></summary>
 
         <div class="grid4 pad">
-          <div class="field"><div class="label">Responsable Nb</div><input class="input r" type="number" step="0.1" v-model.number="costEdit.employes.responsableNb" /></div>
-          <div class="field"><div class="label">Responsable coût</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.employes.responsableCout" /></div>
-
-          <div class="field"><div class="label">Centralistes Nb</div><input class="input r" type="number" step="0.1" v-model.number="costEdit.employes.centralistesNb" /></div>
-          <div class="field"><div class="label">Centralistes coût</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.employes.centralistesCout" /></div>
-
-          <div class="field"><div class="label">Manœuvre Nb</div><input class="input r" type="number" step="0.1" v-model.number="costEdit.employes.manoeuvreNb" /></div>
-          <div class="field"><div class="label">Manœuvre coût</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.employes.manoeuvreCout" /></div>
-
-          <div class="field"><div class="label">Gardien Nb</div><input class="input r" type="number" step="0.1" v-model.number="costEdit.employes.gardienNb" /></div>
-          <div class="field"><div class="label">Gardien coût</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.employes.gardienCout" /></div>
+          <template v-for="g in EMP_GROUPS" :key="g.key">
+            <div class="field">
+              <div class="label">{{ g.label }} — Nb</div>
+              <input class="input r" type="number" step="0.1" v-model.number="(costEdit.employes as any)[`${g.key}Nb`]" />
+            </div>
+            <div class="field">
+              <div class="label">{{ g.label }} — Coût</div>
+              <input class="input r" type="number" step="0.01" v-model.number="(costEdit.employes as any)[`${g.key}Cout`]" />
+            </div>
+          </template>
         </div>
 
         <div class="row padTop">
           <button class="btn primary" :disabled="saving.employes" @click="saveEmployes()">
             {{ saving.employes ? "..." : "Enregistrer" }}
           </button>
-          <div class="muted small">
-            Tant que Prisma n’a pas les colonnes, seuls Responsable/Centralistes seront sauvés.
+
+          <div v-if="employesNeedsMigration" class="muted small">
+            ⚠️ Prisma/DB semble ne pas supporter tous les nouveaux champs (manœuvre/coordinateur/panier…). Dans ce cas, seuls les champs existants seront persistés.
           </div>
         </div>
       </details>

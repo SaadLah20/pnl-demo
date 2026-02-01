@@ -277,18 +277,22 @@ export const usePnlStore = defineStore("pnl", {
       return res;
     },
 
-    async updateVariantMp(variantMpId: string, payload: { prix?: number; comment?: string }) {
-      const variant = (this as any).activeVariant;
-      if (!variant) throw new Error("No active variant");
+async updateVariantMp(
+  variantMpId: string,
+  payload: { prix?: number | null; comment?: string }
+) {
+  const variant = (this as any).activeVariant;
+  if (!variant) throw new Error("No active variant");
 
-      const res = await jsonFetch(`/variants/${variant.id}/mps/${variantMpId}`, {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      });
+  const res = await jsonFetch(`/variants/${variant.id}/mps/${variantMpId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 
-      if (res?.variant) this.replaceActiveVariantInState(res.variant);
-      return res;
-    },
+  if (res?.variant) this.replaceActiveVariantInState(res.variant);
+  return res;
+}
+,
 
     async removeVariantMp(variantMpId: string) {
       const variant = (this as any).activeVariant;
