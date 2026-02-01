@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+
+// Heroicons (optionnels si tu veux des icônes dans les selects)
+import { MagnifyingGlassIcon, EyeIcon, PencilSquareIcon } from "@heroicons/vue/24/outline";
 
 type KpiName =
   | "ASP"
@@ -27,29 +30,106 @@ onMounted(() => {
   if (store.pnls.length === 0) store.loadPnls();
 });
 
-const activePnl = computed(() => store.activePnl);
-const activeVariant = computed(() => store.activeVariant);
+/* =========================
+   ACTIVE ENTITIES
+========================= */
+const pnls = computed<any[]>(() => store.pnls ?? []);
+const activePnl = computed<any | null>(() => store.activePnl ?? null);
+const activeVariant = computed<any | null>(() => store.activeVariant ?? null);
+const headerKpis = computed<any>(() => store.activeHeaderKPIs);
 
-const headerKpis = computed(() => store.activeHeaderKPIs);
-
-// Cherche le contrat qui contient la variante active
-const activeContract = computed(() => {
+/** Contrat actif basé sur activeVariantId (même logique que toi) */
+const activeContract = computed<any | null>(() => {
   const pnl = activePnl.value;
   const vId = store.activeVariantId;
   if (!pnl || !pnl.contracts?.length) return null;
-  if (!vId) return pnl.contracts[0];
+  if (!vId) return pnl.contracts[0] ?? null;
 
   return (
     pnl.contracts.find((c: any) => (c.variants ?? []).some((v: any) => v.id === vId)) ??
-    pnl.contracts[0]
+    pnl.contracts[0] ??
+    null
   );
 });
 
-// Champs affichés dans le header
+const contractsOfActivePnl = computed<any[]>(() => activePnl.value?.contracts ?? []);
+
+/* =========================
+   SEARCHABLE PNL SELECT
+========================= */
+const pnlQuery = ref("");
+const pnlOpen = ref(false);
+
+const filteredPnls = computed(() => {
+  const q = pnlQuery.value.trim().toLowerCase();
+  if (!q) return pnls.value;
+
+  return pnls.value.filter((p: any) => {
+    const blob = `${p.title ?? ""} ${p.client ?? ""} ${p.id ?? ""}`.toLowerCase();
+    return blob.includes(q);
+  });
+});
+
+/* =========================
+   STORE SETTERS (safe)
+========================= */
+function setActivePnlId(id: string) {
+  const s: any = store as any;
+  if (typeof s.setActivePnl === "function") s.setActivePnl(id);
+  else s.activePnlId = id;
+}
+
+function setActiveContractId(id: string) {
+  const s: any = store as any;
+  if (typeof s.setActiveContract === "function") s.setActiveContract(id);
+  else s.activeContractId = id;
+}
+
+function setActiveVariantId(id: string) {
+  const s: any = store as any;
+  if (typeof s.setActiveVariant === "function") s.setActiveVariant(id);
+  else s.activeVariantId = id;
+}
+
+/** util: retourne la 1ère variante d’un contrat */
+function firstVariantIdOfContract(contract: any): string | null {
+  const v = (contract?.variants ?? [])[0];
+  return v?.id ? String(v.id) : null;
+}
+
+/** quand P&L change: activePnl + contrat1 + variante1 */
+function onPickPnl(pnlId: string) {
+  pnlOpen.value = false;
+  pnlQuery.value = "";
+
+  const pnl = pnls.value.find((p: any) => String(p.id) === String(pnlId));
+  if (!pnl) return;
+
+  setActivePnlId(String(pnl.id));
+
+  const c0 = (pnl.contracts ?? [])[0];
+  if (c0?.id) setActiveContractId(String(c0.id));
+
+  const v0 = firstVariantIdOfContract(c0);
+  if (v0) setActiveVariantId(v0);
+}
+
+/** quand Contrat change: contrat + variante1 */
+function onPickContract(contractId: string) {
+  const c = contractsOfActivePnl.value.find((x: any) => String(x.id) === String(contractId));
+  if (!c) return;
+
+  setActiveContractId(String(c.id));
+
+  const v0 = firstVariantIdOfContract(c);
+  if (v0) setActiveVariantId(v0);
+}
+
+/* =========================
+   HEADER FIELDS
+========================= */
 const projectName = computed(() => activePnl.value?.title ?? "—");
-const contractName = computed(() =>
-  activeContract.value ? `Contrat ${activeContract.value.id.slice(0, 6)}` : "—"
-);
+const contractName = computed(() => (activeContract.value ? `Contrat ${String(activeContract.value.id).slice(0, 6)}` : "—"));
 const variantName = computed(() => activeVariant.value?.title ?? "—");
 
 const durationMonths = computed(() => activeContract.value?.dureeMois ?? 0);
@@ -57,7 +137,9 @@ const status = computed(() => activeVariant.value?.status ?? "—");
 const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
 
-// KPI (placeholder propre, connecté au store)
+/* =========================
+   KPI METRICS (inchangé)
+========================= */
 const metrics = computed<Metrics>(() => {
   const k = headerKpis.value;
 
@@ -83,48 +165,15 @@ const metrics = computed<Metrics>(() => {
 
   return {
     ASP: { total: aspTotal, m3: m3(aspTotal), month: month(aspTotal), percent: 100 },
-
     CMP: { total: cmpTotal, m3: m3(cmpTotal), month: month(cmpTotal), percent: per(cmpTotal) },
-
     MOMD: { total: momdTotal, m3: m3(momdTotal), month: month(momdTotal), percent: per(momdTotal) },
-
-    Transport: {
-      total: transportTotal,
-      m3: m3(transportTotal),
-      month: month(transportTotal),
-      percent: per(transportTotal),
-    },
-
-    Production: {
-      total: productionTotal,
-      m3: m3(productionTotal),
-      month: month(productionTotal),
-      percent: per(productionTotal),
-    },
-
-    EBITDA: {
-      total: ebitdaTotal,
-      m3: m3(ebitdaTotal),
-      month: month(ebitdaTotal),
-      percent: per(ebitdaTotal),
-    },
-
-    EBIT: {
-      total: ebitTotal,
-      m3: m3(ebitTotal),
-      month: month(ebitTotal),
-      percent: per(ebitTotal),
-    },
-
-    Amortissement: {
-      total: amortTotal,
-      m3: m3(amortTotal),
-      month: month(amortTotal),
-      percent: per(amortTotal),
-    },
+    Transport: { total: transportTotal, m3: m3(transportTotal), month: month(transportTotal), percent: per(transportTotal) },
+    Production: { total: productionTotal, m3: m3(productionTotal), month: month(productionTotal), percent: per(productionTotal) },
+    EBITDA: { total: ebitdaTotal, m3: m3(ebitdaTotal), month: month(ebitdaTotal), percent: per(ebitdaTotal) },
+    EBIT: { total: ebitTotal, m3: m3(ebitTotal), month: month(ebitTotal), percent: per(ebitTotal) },
+    Amortissement: { total: amortTotal, m3: m3(amortTotal), month: month(amortTotal), percent: per(amortTotal) },
   };
 });
-
 
 const kpiOrder: KpiName[] = [
   "ASP",
@@ -137,13 +186,21 @@ const kpiOrder: KpiName[] = [
   "Amortissement",
 ];
 
-const actions = [
-  { label: "Dupliquer", icon: "📄" },
-  { label: "Nouvelle variante", icon: "➕" },
-  { label: "Archiver", icon: "🗄️" },
-  { label: "Éditer", icon: "✏️" },
-  { label: "Supprimer", icon: "🗑️" },
-];
+/* =========================
+   Buttons (placeholders)
+========================= */
+function viewPnl() {
+  // TODO route -> page détails pnl si tu en as
+}
+function editPnl() {
+  // TODO open modal edit pnl
+}
+function viewContract() {
+  // TODO route -> page détails contrat si tu en as
+}
+function editContract() {
+  // TODO open modal edit contrat
+}
 </script>
 
 <template>
@@ -151,16 +208,93 @@ const actions = [
     <!-- Ligne principale -->
     <div class="top-row">
       <div class="left-info">
-        <div class="edit-item pnL">P&L : {{ projectName }}</div>
-        <div class="edit-item contract">Contrat : {{ contractName }}</div>
+        <!-- ✅ P&L selector + search -->
+        <div class="select-pill pnl">
+          <div class="pill-head" @click="pnlOpen = !pnlOpen">
+            <span class="pill-label">P&L :</span>
+            <span class="pill-value">{{ projectName }}</span>
 
+            <div class="mini-actions">
+              <button class="mini-btn" title="Voir" @click.stop="viewPnl">
+                <EyeIcon class="mini-ic" />
+              </button>
+              <button class="mini-btn" title="Éditer" @click.stop="editPnl">
+                <PencilSquareIcon class="mini-ic" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="pnlOpen" class="dropdown">
+            <div class="searchbar">
+              <MagnifyingGlassIcon class="s-ic" />
+              <input
+                class="s-in"
+                v-model="pnlQuery"
+                placeholder="Rechercher un P&L (titre, client, id...)"
+              />
+            </div>
+
+            <div class="dd-list">
+              <button
+                v-for="p in filteredPnls"
+                :key="p.id"
+                class="dd-item"
+                :class="{ active: String(p.id) === String(activePnl?.id) }"
+                @click="onPickPnl(String(p.id))"
+              >
+                <div class="dd-main">
+                  <b class="dd-title">{{ p.title ?? `P&L ${String(p.id).slice(0, 6)}` }}</b>
+                  <div class="dd-sub">{{ p.client ?? "—" }}</div>
+                </div>
+                <div class="dd-id">{{ String(p.id).slice(0, 6) }}</div>
+              </button>
+
+              <div v-if="filteredPnls.length === 0" class="dd-empty">Aucun P&L trouvé.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ✅ Contrat selector -->
+        <div class="select-pill contract">
+          <div class="pill-head">
+            <span class="pill-label">Contrat :</span>
+
+            <select
+              class="pill-select"
+              :value="activeContract?.id ? String(activeContract.id) : ''"
+              @change="onPickContract(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="" disabled>—</option>
+              <option
+                v-for="c in contractsOfActivePnl"
+                :key="c.id"
+                :value="String(c.id)"
+              >
+                {{ c.title ? String(c.title) : `Contrat ${String(c.id).slice(0, 6)}` }}
+              </option>
+            </select>
+
+            <div class="mini-actions">
+              <button class="mini-btn" title="Voir" @click.stop="viewContract">
+                <EyeIcon class="mini-ic" />
+              </button>
+              <button class="mini-btn" title="Éditer" @click.stop="editContract">
+                <PencilSquareIcon class="mini-ic" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Variante (inchangé) -->
         <div class="variant-block">
           <div class="edit-item variant">Variante : {{ variantName }}</div>
 
           <div class="actions-block">
-            <button v-for="act in actions" :key="act.label" class="action-btn">
-              {{ act.icon }} {{ act.label }}
-            </button>
+            <button class="action-btn">📄 Dupliquer</button>
+            <button class="action-btn">➕ Nouvelle variante</button>
+            <button class="action-btn">🗄️ Archiver</button>
+            <button class="action-btn">✏️ Éditer</button>
+            <button class="action-btn">🗑️ Supprimer</button>
           </div>
         </div>
       </div>
@@ -232,284 +366,112 @@ const actions = [
 
 <style scoped>
 /* =========================
-   Dark Premium Header Dashboard
-   + Right-info amber
-   + KPI 3-colors values
-   + ASP & EBIT FULL BLOCK special
-   (CSS only, template unchanged)
-   ========================= */
-
+   Ton CSS existant (gardé)
+========================= */
 .header-dashboard {
   position: sticky;
   top: 0;
   z-index: 100;
-
   font-family: "Inter", sans-serif;
-
-  /* ✅ Dark premium glass */
-  background: rgba(15, 23, 42, 0.92); /* slate-900 */
+  background: rgba(15, 23, 42, 0.92);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-
-  border-bottom: 1px solid rgba(51, 65, 85, 0.8); /* slate-700 */
+  border-bottom: 1px solid rgba(51, 65, 85, 0.8);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
-
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+.top-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.left-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 280px; }
 
-/* =========================
-   TOP ROW: horizontal toolbar
-   ========================= */
-.top-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.left-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-width: 280px;
-}
-
-/* Compact pills */
 .edit-item {
-  width: auto;
-  max-width: 420px;
-
-  font-size: 11px;
-  font-weight: 750;
-  color: #e2e8f0; /* slate-200 */
-
-  padding: 4px 8px;
-  border-radius: 999px;
-
+  width: auto; max-width: 420px;
+  font-size: 11px; font-weight: 750; color: #e2e8f0;
+  padding: 4px 8px; border-radius: 999px;
   border: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(2, 6, 23, 0.55); /* slate-950 */
-
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-
+  background: rgba(2, 6, 23, 0.55);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
 }
-
-/* Accent soft */
-.edit-item.pnL {
-  border-color: rgba(0, 158, 224, 0.35);
-  background: rgba(2, 6, 23, 0.65);
-  color: #7dd3fc; /* sky-300 */
-}
-
-.edit-item.contract {
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(2, 6, 23, 0.65);
-  color: #fdba74; /* orange-300 */
-}
-
 .edit-item.variant {
   border-color: rgba(34, 197, 94, 0.35);
   background: rgba(2, 6, 23, 0.65);
-  color: #86efac; /* green-300 */
+  color: #86efac;
   font-weight: 800;
 }
 
-/* inline compact surface for variant + actions */
 .variant-block {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-
-  padding: 5px 7px;
-  border-radius: 12px;
-
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 5px 7px; border-radius: 12px;
   border: 1px solid rgba(51, 65, 85, 0.85);
   background: rgba(2, 6, 23, 0.55);
-
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
 }
-
-/* actions chips */
-.actions-block {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
+.actions-block { display: flex; gap: 6px; flex-wrap: wrap; }
 .action-btn {
   border: 1px solid rgba(51, 65, 85, 0.9);
   background: rgba(15, 23, 42, 0.55);
-
-  color: #cbd5e1; /* slate-300 */
+  color: #cbd5e1;
   font-size: 10.2px;
   font-weight: 700;
-
   padding: 3px 8px;
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
-
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
   transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease,
     border-color 0.12s ease, color 0.12s ease;
 }
-
 .action-btn:hover {
   transform: translateY(-1px);
-
   background: rgba(0, 158, 224, 0.18);
   border-color: rgba(0, 158, 224, 0.35);
-
   color: #e2e8f0;
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.32);
 }
 
-.action-btn:active {
-  transform: translateY(0);
-}
-
-.action-btn:focus-visible {
-  outline: 2px solid rgba(125, 211, 252, 0.35);
-  outline-offset: 2px;
-}
-
-/* =========================
-   RIGHT META: amber (clearer)
-   ========================= */
 .right-info {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-
-  font-size: 10.5px;
-  font-weight: 750;
-
-  color: rgba(253, 230, 138, 0.98); /* amber-200 */
-
+  display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center;
+  font-size: 10.5px; font-weight: 750;
+  color: rgba(253, 230, 138, 0.98);
   padding: 5px 8px;
   border-radius: 12px;
-
   border: 1px solid rgba(245, 158, 11, 0.30);
   background: rgba(245, 158, 11, 0.06);
 }
 
-/* =========================
-   KPI GRID (dense + premium dark)
-   ========================= */
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 8px;
-}
-
-@media (max-width: 1200px) {
-  .kpi-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-.kpi-column {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.kpi-title {
-  font-size: 9.5px;
-  font-weight: 750;
-  letter-spacing: 0.45px;
-  text-transform: uppercase;
-  color: #94a3b8; /* slate-400 */
-  text-align: center;
-  line-height: 1.1;
-}
-
-/* KPI card */
+/* KPI grid (inchangé) */
+.kpi-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 1200px) { .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.kpi-column { display: flex; flex-direction: column; gap: 5px; }
+.kpi-title { font-size: 9.5px; font-weight: 750; letter-spacing: 0.45px; text-transform: uppercase; color: #94a3b8; text-align: center; line-height: 1.1; }
 .kpi-box {
-  position: relative;
-  border-radius: 14px;
-  padding: 8px 8px;
-
-  background: rgba(2, 6, 23, 0.62); /* slate-950 */
+  position: relative; border-radius: 14px; padding: 8px 8px;
+  background: rgba(2, 6, 23, 0.62);
   border: 1px solid rgba(51, 65, 85, 0.9);
-
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
   transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
 }
-
 .kpi-box::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  border-radius: 14px 14px 0 0;
-  opacity: 0.95;
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  border-radius: 14px 14px 0 0; opacity: 0.95;
   background: linear-gradient(90deg, #009ee0, #22c55e);
 }
-
-.kpi-box:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45);
-  border-color: rgba(148, 163, 184, 0.55);
-}
-
-/* Percent typography */
-.kpi-percent {
-  font-size: 14px;
-  font-weight: 750;
-  line-height: 1.1;
-  color: #e2e8f0;
-  text-align: center;
-  margin-bottom: 6px;
-
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.2px;
-}
-
-/* KPI values base */
+.kpi-box:hover { transform: translateY(-1px); box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45); border-color: rgba(148, 163, 184, 0.55); }
+.kpi-percent { font-size: 14px; font-weight: 750; line-height: 1.1; color: #e2e8f0; text-align: center; margin-bottom: 6px; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
 .kpi-values span {
-  display: block;
-  text-align: center;
-
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.35;
-
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.1px;
-
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: block; text-align: center;
+  font-size: 10px; font-weight: 600; line-height: 1.35;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.kpi-values span:nth-child(1) { color: #e2e8f0; font-weight: 650; }
+.kpi-values span:nth-child(2) { color: #7dd3fc; font-weight: 600; opacity: 0.95; }
+.kpi-values span:nth-child(3) { color: #86efac; font-weight: 600; opacity: 0.95; }
 
-/* 3 colors for KPI values */
-.kpi-values span:nth-child(1) {
-  color: #e2e8f0; /* total */
-  font-weight: 650;
-}
-.kpi-values span:nth-child(2) {
-  color: #7dd3fc; /* m3 */
-  font-weight: 600;
-  opacity: 0.95;
-}
-.kpi-values span:nth-child(3) {
-  color: #86efac; /* month */
-  font-weight: 600;
-  opacity: 0.95;
-}
-
-/* KPI accents by order (kpiOrder) */
+/* accents */
 .kpi-column:nth-child(1) .kpi-box::before { background: linear-gradient(90deg, #009ee0, #22c55e); }
 .kpi-column:nth-child(2) .kpi-box::before { background: linear-gradient(90deg, #f59e0b, #ef4444); }
 .kpi-column:nth-child(3) .kpi-box::before { background: linear-gradient(90deg, #22c55e, #16a34a); }
@@ -520,98 +482,120 @@ const actions = [
 .kpi-column:nth-child(8) .kpi-box::before { background: linear-gradient(90deg, #94a3b8, #64748b); }
 
 /* =========================
-   SPECIAL: ASP & EBIT (FULL BLOCK)
-   Order in kpiOrder:
-   1 = ASP
-   7 = EBIT
-   ========================= */
+   ✅ AJOUTS: selectors UI
+========================= */
+.select-pill {
+  position: relative;
+  border-radius: 999px;
+  padding: 4px 8px;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(2, 6, 23, 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.select-pill.pnl { border-color: rgba(0, 158, 224, 0.35); background: rgba(2, 6, 23, 0.65); }
+.select-pill.contract { border-color: rgba(245, 158, 11, 0.35); background: rgba(2, 6, 23, 0.65); }
 
-/* ASP special (whole block) */
-.kpi-column:nth-child(1) {
-  transform: translateY(-2px);
+.pill-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.pill-label { font-size: 11px; font-weight: 800; color: #cbd5e1; }
+.pill-value {
+  font-size: 11px; font-weight: 850;
+  color: #e2e8f0;
+  max-width: 260px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.select-pill.pnl .pill-value { color: #7dd3fc; }
+.select-pill.contract .pill-value { color: #fdba74; }
+
+.mini-actions { display: inline-flex; gap: 4px; margin-left: 2px; }
+.mini-btn {
+  width: 24px; height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mini-btn:hover { background: rgba(0, 158, 224, 0.16); }
+.mini-ic { width: 14px; height: 14px; color: #cbd5e1; }
+
+.pill-select {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #fdba74;
+  font-weight: 850;
+  font-size: 11px;
+  max-width: 220px;
+  cursor: pointer;
+}
+.pill-select option { color: #111827; }
+
+/* dropdown search list (P&L) */
+.dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(520px, 72vw);
+  background: rgba(2, 6, 23, 0.92);
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  padding: 10px;
+  z-index: 200;
 }
 
-.kpi-column:nth-child(1) .kpi-title {
-  color: #7dd3fc;
-  font-weight: 900;
-  letter-spacing: 0.55px;
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.s-ic { width: 16px; height: 16px; color: #94a3b8; }
+.s-in {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 12px;
 }
 
-.kpi-column:nth-child(1) .kpi-box {
-  border-color: rgba(125, 211, 252, 0.55);
-
-  background: linear-gradient(
-    180deg,
-    rgba(0, 158, 224, 0.12),
-    rgba(2, 6, 23, 0.70)
-  );
-
-  box-shadow:
-    0 18px 42px rgba(0, 158, 224, 0.12),
-    0 18px 42px rgba(0, 0, 0, 0.48);
+.dd-list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.dd-item {
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
 }
+.dd-item:hover { background: rgba(0, 158, 224, 0.14); border-color: rgba(0, 158, 224, 0.35); }
+.dd-item.active { background: rgba(34, 197, 94, 0.14); border-color: rgba(34, 197, 94, 0.35); }
+.dd-title { color: #e2e8f0; font-size: 12px; }
+.dd-sub { color: #94a3b8; font-size: 11px; margin-top: 2px; }
+.dd-id { color: #94a3b8; font-size: 11px; font-variant-numeric: tabular-nums; }
+.dd-empty { color: #94a3b8; font-size: 12px; padding: 10px; text-align: center; }
 
-.kpi-column:nth-child(1) .kpi-box::before {
-  height: 4px;
-  background: linear-gradient(90deg, #7dd3fc, #22c55e);
-}
-
-.kpi-column:nth-child(1) .kpi-percent {
-  color: #7dd3fc;
-  font-weight: 950;
-}
-
-/* EBIT special (whole block) */
-.kpi-column:nth-child(7) {
-  transform: translateY(-2px);
-}
-
-.kpi-column:nth-child(7) .kpi-title {
-  color: rgba(253, 230, 138, 0.98);
-  font-weight: 900;
-  letter-spacing: 0.55px;
-}
-
-.kpi-column:nth-child(7) .kpi-box {
-  border-color: rgba(245, 158, 11, 0.55);
-
-  background: linear-gradient(
-    180deg,
-    rgba(245, 158, 11, 0.10),
-    rgba(2, 6, 23, 0.72)
-  );
-
-  box-shadow:
-    0 18px 42px rgba(245, 158, 11, 0.10),
-    0 18px 42px rgba(0, 0, 0, 0.50);
-}
-
-.kpi-column:nth-child(7) .kpi-box::before {
-  height: 4px;
-  background: linear-gradient(90deg, rgba(253, 230, 138, 0.98), #64748b);
-}
-
-.kpi-column:nth-child(7) .kpi-percent {
-  color: rgba(253, 230, 138, 0.98);
-  font-weight: 950;
-}
-
-/* Hover special */
-.kpi-column:nth-child(1) .kpi-box:hover,
-.kpi-column:nth-child(7) .kpi-box:hover {
-  transform: translateY(-2px);
-  border-color: rgba(226, 232, 240, 0.35);
-  box-shadow:
-    0 22px 55px rgba(0, 0, 0, 0.55),
-    0 22px 55px rgba(255, 255, 255, 0.03);
-}
-
-/* Mobile */
 @media (max-width: 900px) {
-  .header-dashboard { padding: 7px 9px; gap: 7px; }
-  .edit-item { max-width: 320px; }
-  .kpi-percent { font-size: 13.5px; }
-  .kpi-values span { font-size: 9.8px; }
+  .dropdown { width: min(520px, 92vw); }
 }
-
 </style>

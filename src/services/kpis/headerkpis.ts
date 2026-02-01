@@ -16,20 +16,13 @@ function round2(x: number) {
   return Math.round(x * 100) / 100;
 }
 
-/**
- * Hypothèses actuelles (à stabiliser plus tard via un champ "priceUnit"):
- * - qty des compositions est en KG / m3
- * - prix MP est généralement en DH / TONNE (ex: 900, 1050, 1200...)
- *
- * Heuristique:
- * - si prix > 50 => DH/tonne => prixKg = prix/1000
- * - sinon => DH/kg
- */
+
 function pricePerKg(prix: number): number {
   const p = n(prix);
   if (p <= 0) return 0;
-  return p > 50 ? p / 1000 : p;
+  return p / 1000; // ✅ toujours DH/tonne -> DH/kg
 }
+
 
 export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   const formulesItems = variant?.formules?.items ?? [];
