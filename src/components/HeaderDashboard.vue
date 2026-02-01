@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
-// Heroicons (optionnels si tu veux des icônes dans les selects)
+// Heroicons
 import { MagnifyingGlassIcon, EyeIcon, PencilSquareIcon } from "@heroicons/vue/24/outline";
 
 type KpiName =
@@ -38,7 +38,7 @@ const activePnl = computed<any | null>(() => store.activePnl ?? null);
 const activeVariant = computed<any | null>(() => store.activeVariant ?? null);
 const headerKpis = computed<any>(() => store.activeHeaderKPIs);
 
-/** Contrat actif basé sur activeVariantId (même logique que toi) */
+/** Contrat actif basé sur activeVariantId */
 const activeContract = computed<any | null>(() => {
   const pnl = activePnl.value;
   const vId = store.activeVariantId;
@@ -129,7 +129,9 @@ function onPickContract(contractId: string) {
    HEADER FIELDS
 ========================= */
 const projectName = computed(() => activePnl.value?.title ?? "—");
-const contractName = computed(() => (activeContract.value ? `Contrat ${String(activeContract.value.id).slice(0, 6)}` : "—"));
+const contractName = computed(() =>
+  activeContract.value ? `Contrat ${String(activeContract.value.id).slice(0, 6)}` : "—"
+);
 const variantName = computed(() => activeVariant.value?.title ?? "—");
 
 const durationMonths = computed(() => activeContract.value?.dureeMois ?? 0);
@@ -138,14 +140,13 @@ const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
 
 /* =========================
-   KPI METRICS (inchangé)
+   KPI METRICS
 ========================= */
 const metrics = computed<Metrics>(() => {
   const k = headerKpis.value;
 
   const vol = k?.volumeTotalM3 ?? 0;
   const duree = durationMonths.value || 0;
-
   const ca = k?.caTotal ?? 0;
 
   const per = (x: number) => (ca > 0 ? (x / ca) * 100 : 0);
@@ -189,17 +190,19 @@ const kpiOrder: KpiName[] = [
 /* =========================
    Buttons (placeholders)
 ========================= */
-function viewPnl() {
-  // TODO route -> page détails pnl si tu en as
-}
-function editPnl() {
-  // TODO open modal edit pnl
-}
-function viewContract() {
-  // TODO route -> page détails contrat si tu en as
-}
-function editContract() {
-  // TODO open modal edit contrat
+function viewPnl() {}
+function editPnl() {}
+function viewContract() {}
+function editContract() {}
+
+/* =========================
+   UI HELPERS
+========================= */
+function kpiClass(key: KpiName) {
+  return {
+    highlight: ["ASP", "EBITDA", "EBIT"].includes(key),
+    ebit: key === "EBIT",
+  };
 }
 </script>
 
@@ -227,11 +230,7 @@ function editContract() {
           <div v-if="pnlOpen" class="dropdown">
             <div class="searchbar">
               <MagnifyingGlassIcon class="s-ic" />
-              <input
-                class="s-in"
-                v-model="pnlQuery"
-                placeholder="Rechercher un P&L (titre, client, id...)"
-              />
+              <input class="s-in" v-model="pnlQuery" placeholder="Rechercher un P&L (titre, client, id...)" />
             </div>
 
             <div class="dd-list">
@@ -265,11 +264,7 @@ function editContract() {
               @change="onPickContract(($event.target as HTMLSelectElement).value)"
             >
               <option value="" disabled>—</option>
-              <option
-                v-for="c in contractsOfActivePnl"
-                :key="c.id"
-                :value="String(c.id)"
-              >
+              <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
                 {{ c.title ? String(c.title) : `Contrat ${String(c.id).slice(0, 6)}` }}
               </option>
             </select>
@@ -285,7 +280,7 @@ function editContract() {
           </div>
         </div>
 
-        <!-- Variante (inchangé) -->
+        <!-- Variante -->
         <div class="variant-block">
           <div class="edit-item variant">Variante : {{ variantName }}</div>
 
@@ -309,12 +304,7 @@ function editContract() {
 
     <!-- KPI GRID -->
     <div class="kpi-grid">
-      <div
-        v-for="key in kpiOrder"
-        :key="key"
-        class="kpi-column"
-        :class="{ highlight: ['ASP', 'EBITDA', 'EBIT'].includes(key) }"
-      >
+      <div v-for="key in kpiOrder" :key="key" class="kpi-column" :class="kpiClass(key)">
         <div class="kpi-title">{{ key }}</div>
 
         <div class="kpi-box">
@@ -442,11 +432,13 @@ function editContract() {
   background: rgba(245, 158, 11, 0.06);
 }
 
-/* KPI grid (inchangé) */
+/* KPI grid */
 .kpi-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 1200px) { .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-.kpi-column { display: flex; flex-direction: column; gap: 5px; }
+
+.kpi-column { display: flex; flex-direction: column; gap: 5px; position: relative; }
 .kpi-title { font-size: 9.5px; font-weight: 750; letter-spacing: 0.45px; text-transform: uppercase; color: #94a3b8; text-align: center; line-height: 1.1; }
+
 .kpi-box {
   position: relative; border-radius: 14px; padding: 8px 8px;
   background: rgba(2, 6, 23, 0.62);
@@ -482,7 +474,46 @@ function editContract() {
 .kpi-column:nth-child(8) .kpi-box::before { background: linear-gradient(90deg, #94a3b8, #64748b); }
 
 /* =========================
-   ✅ AJOUTS: selectors UI
+   ✅ EBIT SPECIAL (sans badge)
+========================= */
+.kpi-column.ebit .kpi-title {
+  color: rgba(254, 240, 138, 0.98);
+  font-weight: 900;
+  letter-spacing: 0.7px;
+}
+.kpi-column.ebit .kpi-box {
+  border-color: rgba(245, 158, 11, 0.55);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(245, 158, 11, 0.18) inset;
+  filter: saturate(1.15);
+}
+.kpi-column.ebit .kpi-box::before {
+  height: 4px;
+  opacity: 1;
+  background: linear-gradient(90deg, #f59e0b, #fde68a);
+}
+.kpi-column.ebit .kpi-percent {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: -0.35px;
+  color: rgba(254, 240, 138, 0.98);
+  text-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+.kpi-column.ebit .kpi-values span:nth-child(1) {
+  font-weight: 900;
+  color: rgba(254, 240, 138, 0.98);
+}
+.kpi-column.ebit .kpi-box:hover {
+  transform: translateY(-2px);
+  border-color: rgba(245, 158, 11, 0.8);
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(245, 158, 11, 0.22) inset;
+}
+
+/* =========================
+   ✅ selectors UI
 ========================= */
 .select-pill {
   position: relative;
@@ -541,7 +572,6 @@ function editContract() {
 }
 .pill-select option { color: #111827; }
 
-/* dropdown search list (P&L) */
 .dropdown {
   position: absolute;
   top: calc(100% + 8px);
