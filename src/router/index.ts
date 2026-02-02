@@ -8,6 +8,7 @@ import MpCataloguePage from "@/pages/MpCataloguePage.vue";
 import FormulesCataloguePage from "@/pages/FormulesCataloguePage.vue";
 import CabPage from "@/pages/Cab.Page.vue";
 import MpPage from "@/pages/MpPage.vue";
+import TransportPage from "@/pages/TransportPage.vue";
 
 
 const routes = [
@@ -20,6 +21,9 @@ const routes = [
 
     { path: "/CAB", name: "CAB", component: CabPage },
         { path: "/mp", name: "Mp", component: MpPage },
+                { path: "/Transport", name: "Transport", component: TransportPage },
+
+        
 
 
 

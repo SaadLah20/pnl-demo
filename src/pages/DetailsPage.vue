@@ -1,8 +1,10 @@
 <!-- src/pages/DetailsPage.vue -->
 <script setup lang="ts">
 import { computed, onMounted, reactive } from "vue";
+import { useRouter } from "vue-router";
 import { usePnlStore } from "@/stores/pnl.store";
 
+const router = useRouter();
 const store = usePnlStore();
 
 onMounted(async () => {
@@ -64,7 +66,6 @@ function mpPriceUsed(mpId: string): number {
   return toNum(vmp?.mp?.prix);
 }
 
-
 type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
 
 function compositionFor(formuleCatalogue: any): CompRow[] {
@@ -103,6 +104,66 @@ function pctOfCa(totalCost: number): number {
   const ca = caTotal.value;
   if (ca <= 0) return 0;
   return (toNum(totalCost) / ca) * 100;
+}
+
+/* =========================
+   NAVIGATION (vers pages sidebar)
+========================= */
+/**
+ * On mappe chaque "block.key" -> item sidebar
+ * (qui est ensuite résolu via la même logique PageView / routes hard)
+ */
+const sectionToSidebarItem: Record<string, string> = {
+  Transport: "Transport",
+  "Coûts / m³": "Cout au m3",
+  "Coûts / mois": "Cout au mois",
+  "Coûts occasionnels": "Couts occasionnels",
+  Maintenance: "Maintenance",
+  Employés: "Cout employés",
+  CAB: "CAB",
+  "Autres coûts": "Autres couts",
+};
+
+/**
+ * Reproduit la logique de ta sidebar (goToPage) mais localement,
+ * pour éviter d'importer le composant sidebar.
+ */
+function goToSidebarItem(item: string) {
+  // routes "hard" (dans ton sidebar: routeByItem)
+  const routeByItem: Record<string, string> = {
+    Transport: "Transport",
+    CAB: "CAB",
+    MP: "Mp",
+  };
+
+  const rn = routeByItem[item];
+  if (rn) {
+    router.push({ name: rn });
+    return;
+  }
+
+  // fallback PageView (dans ton sidebar: pageNameMap)
+  const pageNameMap: Record<string, string> = {
+    Maintenance: "Variante/Sections/Couts/Maintenance",
+    "Cout au m3": "Variante/Sections/Couts/Cout au m3",
+    "Cout au mois": "Variante/Sections/Couts/Cout au mois",
+    "Cout employés": "Variante/Sections/Couts/Cout employés",
+    "Couts occasionnels": "Variante/Sections/Couts/Couts occasionnels",
+    "Autres couts": "Variante/Sections/Couts/Autres couts",
+
+    // si un jour tu veux rendre ces pages cliquables aussi depuis détails:
+    Formules: "Variante/Sections/Formules/Formules",
+    "Qté et MOMD": "Variante/Sections/Formules/Qté et MOMD",
+  };
+
+  const pageName = pageNameMap[item] ?? item;
+  router.push({ name: "PageView", params: { name: pageName } });
+}
+
+function editSection(blockKey: string) {
+  const item = sectionToSidebarItem[blockKey];
+  if (!item) return;
+  goToSidebarItem(item);
 }
 
 /* =========================
@@ -173,11 +234,8 @@ const blocks = computed<SectionBlock[]>(() => {
     const parent = makeFromPerM3(key, "Transport", transportPrixMoyen.value, 0, true);
     const children: Line[] = [
       makeFromPerM3(key, "Prix moyen transport", transportPrixMoyen.value, 1, false),
-      ...(volumePompePct.value
-        ? [makeFromTotal(key, "Volume pompé (%)", 0, 1, false)] // juste pour info visuelle, valeurs seront 0 (OK)
-        : []),
     ];
-    out.push({ key, title: "Transport", parent, children: children.filter((x) => x.label !== "Volume pompé (%)") });
+    out.push({ key, title: "Transport", parent, children });
   }
 
   // 2) Coûts / m3 (champs)
@@ -327,8 +385,7 @@ function initOpenState() {
     if (!(b.key in open)) open[b.key] = false; // collapsed by default
   }
 }
-// init whenever blocks change (first render + variant change)
-computed(() => blocks.value).value; // keep TS happy
+
 onMounted(() => initOpenState());
 const _blocksWatcher = computed(() => {
   initOpenState();
@@ -392,7 +449,7 @@ function expandAll() {
           </div>
         </div>
 
-        <!-- SECTIONS (collapsible) -->
+        <!-- SECTIONS (collapsible + edit) -->
         <div class="card">
           <div class="sectionTitle">Sections (hiérarchie)</div>
 
@@ -405,30 +462,39 @@ function expandAll() {
                   <th class="r">/mois</th>
                   <th class="r">Total</th>
                   <th class="r">%</th>
+                  <th class="r editCol">Édit</th>
                 </tr>
               </thead>
 
               <tbody>
                 <template v-for="b in blocks" :key="b.key">
-                  <!-- Parent row (BOLD total only for section) -->
-                  <tr class="parentRow" @click="toggle(b.key)">
+                  <!-- Parent row -->
+                  <tr class="parentRow">
                     <td>
                       <div class="labelCell">
-                        <span class="chev">{{ open[b.key] ? "▾" : "▸" }}</span>
-                        <b>{{ b.parent.label }}</b>
+                        <!-- ✅ toggle uniquement via chevron -->
+                        <button class="chevBtn" @click.stop="toggle(b.key)" :aria-label="'toggle ' + b.key">
+                          <span class="chev">{{ open[b.key] ? "▾" : "▸" }}</span>
+                        </button>
+
+                        <!-- ✅ clic sur le nom => edit/navigate -->
+                        <button class="sectionLink" @click.stop="editSection(b.key)" :title="'Ouvrir: ' + b.key">
+                          <b>{{ b.parent.label }}</b>
+                        </button>
                       </div>
                     </td>
 
                     <td class="r">{{ n(b.parent.perM3) }}</td>
                     <td class="r">{{ money(b.parent.perMonth) }}</td>
-
-                    <!-- ✅ total section en gras -->
                     <td class="r"><b>{{ money(b.parent.total) }}</b></td>
-
                     <td class="r">{{ n(b.parent.pct) }}%</td>
+
+                    <td class="r editCol">
+                      <button class="editBtn" @click.stop="editSection(b.key)">Éditer</button>
+                    </td>
                   </tr>
 
-                  <!-- Children rows (NOT bold totals) -->
+                  <!-- Children rows -->
                   <tr
                     v-for="c in b.children"
                     v-show="open[b.key]"
@@ -443,16 +509,14 @@ function expandAll() {
                     </td>
                     <td class="r">{{ n(c.perM3) }}</td>
                     <td class="r">{{ money(c.perMonth) }}</td>
-
-                    <!-- ✅ total coût NON gras -->
                     <td class="r">{{ money(c.total) }}</td>
-
                     <td class="r">{{ n(c.pct) }}%</td>
+                    <td class="r editCol"></td>
                   </tr>
 
                   <!-- If no children -->
                   <tr v-if="open[b.key] && b.children.length === 0" class="childRow empty">
-                    <td class="muted" colspan="5" style="padding-left: 36px;">Aucun détail (valeurs = 0).</td>
+                    <td class="muted" colspan="6" style="padding-left: 36px;">Aucun détail (valeurs = 0).</td>
                   </tr>
                 </template>
               </tbody>
@@ -502,8 +566,10 @@ function expandAll() {
 .table th { background:#fafafa; color:#6b7280; font-size:11px; }
 .r { text-align:right; }
 
+.editCol { width: 88px; }
+
 /* parent/child */
-.parentRow { background:#fcfcfd; cursor:pointer; user-select:none; }
+.parentRow { background:#fcfcfd; user-select:none; }
 .parentRow:hover { background:#f8fafc; }
 
 .childRow { background:#fff; }
@@ -511,6 +577,42 @@ function expandAll() {
 
 .labelCell { display:flex; align-items:center; gap:8px; }
 .labelCell.child { padding-left: 18px; }
+
 .chev { width: 16px; display:inline-block; color:#6b7280; }
 .indent { width: 16px; display:inline-block; color:#9ca3af; }
+
+/* ✅ NEW: toggle button + link */
+.chevBtn{
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.chevBtn:hover{ background:#eef2f7; }
+
+.sectionLink{
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  text-align: left;
+}
+.sectionLink:hover{
+  background:#eef2f7;
+}
+
+/* ✅ NEW: edit button */
+.editBtn{
+  border: 1px solid #d1d5db;
+  background:#fff;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.editBtn:hover{
+  background:#f9fafb;
+}
 </style>

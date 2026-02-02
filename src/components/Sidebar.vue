@@ -58,18 +58,17 @@ const open = ref({
 
 // Routes "hard"
 const routeByItem: Record<string, string> = {
-  // GENERAL
   "Mes P&L": "MesPnls",
   "Répertoire MP": "MpCatalogue",
   "Catalogue formules": "FormulesCatalogue",
   "Détails": "Details",
-    "P&L archivés": "PnlArchives",
-      "CAB": "CAB",
-      "MP": "Mp"
+  "P&L archivés": "PnlArchives",
 
-
-
+  "CAB": "CAB",
+  "MP": "Mp",
+  "Transport": "Transport",
 };
+
 
 function goToPage(item: string) {
   activeItem.value = item;
@@ -84,9 +83,6 @@ function goToPage(item: string) {
   // fallback PageView with a stable name
   const pageNameMap: Record<string, string> = {
     "Récapitulatif": "Variante/Récapitulatif",
-
-    "MP": "Variante/Sections/Approvisionnement/MP",
-    "Transport": "Variante/Sections/Approvisionnement/Transport",
 
     "Formules": "Variante/Sections/Formules/Formules",
     "Qté et MOMD": "Variante/Sections/Formules/Qté et MOMD",
@@ -118,6 +114,7 @@ watch(
     else if (route.name === "CAB") activeItem.value = "CAB";
     else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
     else if (route.name === "Mp") activeItem.value = "MP";
+    else if (route.name === "Transport") activeItem.value = "Transport";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 
