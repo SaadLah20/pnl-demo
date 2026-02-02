@@ -4,8 +4,6 @@ import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
 const API = "http://localhost:3001";
 
-
-
 async function jsonFetch(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {
     headers: { "Content-Type": "application/json" },
@@ -13,7 +11,6 @@ async function jsonFetch(url: string, opts?: RequestInit) {
   });
 
   if (!res.ok) {
-    // On essaie de lire du JSON { error, details } sinon fallback texte
     let j: any = null;
     let txt = "";
 
@@ -36,28 +33,21 @@ async function jsonFetch(url: string, opts?: RequestInit) {
       (typeof txt === "string" && txt) ||
       `API error: ${res.status}`;
 
-    // ✅ patch spécifique
+    // patches métier
     if (j?.error === "FORMULE_IN_USE") {
       const d = j?.details ?? {};
-      msg = `Formule utilisée dans des variantes (${Number(
-        d.usedInVariants ?? 0
-      )}). Supprime d'abord les références.`;
+      msg = `Formule utilisée dans des variantes (${Number(d.usedInVariants ?? 0)}). Supprime d'abord les références.`;
     }
-
     if (j?.error === "MP_IN_USE") {
-  const d = j?.details ?? {};
-  msg = `MP utilisée (formules: ${Number(d.usedInFormules ?? 0)}, variantes: ${Number(d.usedInVariants ?? 0)}). Supprime d'abord les références.`;
-}
-
+      const d = j?.details ?? {};
+      msg = `MP utilisée (formules: ${Number(d.usedInFormules ?? 0)}, variantes: ${Number(d.usedInVariants ?? 0)}). Supprime d'abord les références.`;
+    }
 
     throw new Error(msg);
   }
 
-  
-
   return res.json().catch(() => null);
 }
-
 
 type AnyObj = Record<string, any>;
 
@@ -67,7 +57,7 @@ export const usePnlStore = defineStore("pnl", {
     activePnlId: null as string | null,
     activeVariantId: null as string | null,
 
-    // ✅ catalogues
+    // catalogues
     mpCatalogue: [] as any[],
     formulesCatalogue: [] as any[],
 
@@ -142,11 +132,13 @@ export const usePnlStore = defineStore("pnl", {
         const data = await jsonFetch("/pnls");
         this.pnls = data ?? [];
 
+        // init active
         if (!this.activePnlId && this.pnls[0]) this.activePnlId = this.pnls[0].id;
         if (!this.activeVariantId && this.pnls[0]) {
           this.activeVariantId = this.pnls[0]?.contracts?.[0]?.variants?.[0]?.id ?? null;
         }
 
+        // if invalid active -> reset
         if (this.activePnlId && !this.pnls.find((p) => p.id === this.activePnlId)) {
           this.activePnlId = this.pnls[0]?.id ?? null;
           this.activeVariantId = this.pnls[0]?.contracts?.[0]?.variants?.[0]?.id ?? null;
@@ -169,7 +161,7 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // ✅ LOAD CATALOGUES
+    // CATALOGUES
     // -------------------------
     async loadMpCatalogue() {
       const data = await jsonFetch("/mp-catalogue");
@@ -181,8 +173,13 @@ export const usePnlStore = defineStore("pnl", {
       this.formulesCatalogue = data ?? [];
     },
 
+    async ensureCataloguesLoaded() {
+      if (!this.mpCatalogue?.length) await this.loadMpCatalogue();
+      if (!this.formulesCatalogue?.length) await this.loadFormulesCatalogue();
+    },
+
     // -------------------------
-    // ✅ MP CATALOGUE CRUD
+    // MP CATALOGUE CRUD
     // -------------------------
     async createMpCatalogue(payload: {
       categorie: string;
@@ -221,7 +218,7 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // ✅ FORMULES CATALOGUE CRUD
+    // FORMULES CATALOGUE CRUD
     // -------------------------
     async createFormuleCatalogue(payload: {
       label: string;
@@ -262,7 +259,7 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // -------------------------
-    // ✅ VARIANT MP
+    // VARIANT MP
     // -------------------------
     async addMpToActiveVariant(mpId: string) {
       const variant = (this as any).activeVariant;
@@ -277,22 +274,19 @@ export const usePnlStore = defineStore("pnl", {
       return res;
     },
 
-async updateVariantMp(
-  variantMpId: string,
-  payload: { prix?: number | null; comment?: string }
-) {
-  const variant = (this as any).activeVariant;
-  if (!variant) throw new Error("No active variant");
+    // prix: number | null (null => restore catalogue côté backend)
+    async updateVariantMp(variantMpId: string, payload: { prix?: number | null; comment?: string }) {
+      const variant = (this as any).activeVariant;
+      if (!variant) throw new Error("No active variant");
 
-  const res = await jsonFetch(`/variants/${variant.id}/mps/${variantMpId}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
+      const res = await jsonFetch(`/variants/${variant.id}/mps/${variantMpId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
 
-  if (res?.variant) this.replaceActiveVariantInState(res.variant);
-  return res;
-}
-,
+      if (res?.variant) this.replaceActiveVariantInState(res.variant);
+      return res;
+    },
 
     async removeVariantMp(variantMpId: string) {
       const variant = (this as any).activeVariant;
@@ -307,7 +301,7 @@ async updateVariantMp(
     },
 
     // -------------------------
-    // ✅ VARIANT FORMULE
+    // VARIANT FORMULE
     // -------------------------
     async addFormuleToActiveVariant(formuleId: string) {
       const variant = (this as any).activeVariant;
@@ -350,22 +344,30 @@ async updateVariantMp(
       return res;
     },
 
-    // ✅ Update complet d'une variante (sections + autresCouts.items + formules.items)
-// backend: PUT /variants/:id
-async updateVariant(id: string, payload: any) {
-  await jsonFetch(`/variants/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-  await this.loadPnls(); // recharge => KPIs recalculés via computeHeaderKpis
-},
-// ✅ pnl.store.ts (ajout utilitaire recommandé, optionnel)
-// (facilite les pages catalogue pour ne pas recharger 2x)
-// Ajoute ça dans actions, sans rien casser :
-async ensureCataloguesLoaded() {
-  if (!this.mpCatalogue?.length) await this.loadMpCatalogue();
-  if (!this.formulesCatalogue?.length) await this.loadFormulesCatalogue();
-}
+    // -------------------------
+    // UPDATE VARIANT (full sections)
+    // -------------------------
+    async updateVariant(id: string, payload: any) {
+      await jsonFetch(`/variants/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      await this.loadPnls(); // simple et sûr
+    },
 
+    // -------------------------
+    // ✅ META EDIT (popups MesPnlPage)
+    // -------------------------
+    async updatePnl(pnlId: string, payload: { title?: string; client?: string | null; city?: string; region?: string; status?: string }) {
+      await jsonFetch(`/pnls/${pnlId}`, { method: "PUT", body: JSON.stringify(payload) });
+      await this.loadPnls();
+    },
+
+    async updateContract(contractId: string, payload: { ref?: string; dureeMois?: number | null; terrain?: string | null; installation?: string | null; status?: string }) {
+      await jsonFetch(`/contracts/${contractId}`, { method: "PUT", body: JSON.stringify(payload) });
+      await this.loadPnls();
+    },
+
+    async updateVariantMeta(variantId: string, payload: { title?: string; status?: string; description?: string | null }) {
+      await jsonFetch(`/variants/${variantId}`, { method: "PUT", body: JSON.stringify(payload) });
+      await this.loadPnls();
+    },
   },
 });

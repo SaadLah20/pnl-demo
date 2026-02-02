@@ -385,6 +385,33 @@ app.put("/variants/:id/mps/:variantMpId", async (req: Request, res: Response) =>
   }
 });
 
+// =========================================================
+// PNL UPDATE (pour popup edit)
+// =========================================================
+app.put("/pnls/:id", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+
+    const updated = await prisma.pnl.update({
+      where: { id },
+      data: {
+        title: req.body?.title === undefined ? undefined : String(req.body.title),
+        client: req.body?.client === undefined ? undefined : (req.body.client ?? null),
+        city: req.body?.city === undefined ? undefined : String(req.body.city),
+        region: req.body?.region === undefined ? undefined : String(req.body.region),
+        status: req.body?.status === undefined ? undefined : String(req.body.status),
+        // ⚠️ model non modifiable volontairement
+      },
+    });
+
+    res.json({ ok: true, pnl: updated });
+  } catch (e: any) {
+    console.error(e);
+    res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
+
 app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response) => {
   try {
     const variantId = String(req.params.id);

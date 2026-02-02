@@ -67,6 +67,9 @@ const routeByItem: Record<string, string> = {
   "CAB": "CAB",
   "MP": "Mp",
   "Transport": "Transport",
+    "Formules": "Formules",
+"Qté et MOMD": "MomdAndQuantity",
+
 };
 
 
@@ -115,6 +118,8 @@ watch(
     else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
     else if (route.name === "Mp") activeItem.value = "MP";
     else if (route.name === "Transport") activeItem.value = "Transport";
+    else if (route.name === "Formules") activeItem.value = "Formules";
+    else if (route.name === "MomdAndQuantity") activeItem.value = "Qté et MOMD";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 

@@ -5,6 +5,10 @@ import { usePnlStore } from "@/stores/pnl.store";
 
 const store = usePnlStore();
 
+onMounted(async () => {
+  if ((store as any).pnls?.length === 0) await (store as any).loadPnls();
+});
+
 /* =========================
    HELPERS
 ========================= */
@@ -18,47 +22,39 @@ function n(v: number, digits = 2) {
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
-
-/* =========================
-   ZONES FIXES (LIBELLÉS)
-========================= */
-type ZoneDef = { label: string; range: string };
-const ZONES: ZoneDef[] = [
-  { label: "Zone 1", range: "0–10 km" },
-  { label: "Zone 2", range: "10–20 km" },
-  { label: "Zone 3", range: "20–30 km" },
-  { label: "Zone 4", range: "30–40 km" },
-  { label: "Zone 5", range: "40–50 km" },
-];
-
-/* =========================
-   STATE
-========================= */
-type TransportType = "MOYENNE" | "PAR_ZONE";
-type UiZone = { pct: number; prix: number };
-
-type TransportUi = {
-  type: TransportType;
-
-  // ✅ on sépare : manuel (mode MOYENNE) vs calculé (mode PAR_ZONE)
-  prixMoyenManuel: number;
-
-  zones: UiZone[];
-
-  includePompage: boolean;
-  volumePompePct: number;
-  prixAchatPompe: number;
-  prixVentePompe: number;
-};
-
-function emptyZones(): UiZone[] {
-  return ZONES.map(() => ({ pct: 0, prix: 0 }));
+function clamp(x: any, min: number, max: number) {
+  const v = toNum(x);
+  return Math.max(min, Math.min(max, v));
+}
+function nearlyEqual(a: number, b: number, eps = 0.001) {
+  return Math.abs(a - b) <= eps;
 }
 
-const ui = reactive<TransportUi>({
-  type: "MOYENNE",
-  prixMoyenManuel: 0,
-  zones: emptyZones(),
+/* =========================
+   ACTIVE VARIANT ONLY
+========================= */
+const variant = computed<any>(() => (store as any).activeVariant);
+const contract = computed<any>(() => (store as any).activeContract);
+const dureeMois = computed(() => toNum(contract.value?.dureeMois));
+
+/* =========================
+   TRANSPORT EDIT MODEL
+========================= */
+type TransportType = "MOYENNE" | "PAR_ZONE";
+type ZoneRow = { key: string; label: string; pct: number; prix: number };
+
+const DEFAULT_ZONES: ZoneRow[] = [
+  { key: "Z1", label: "Z1 — 0–10 km", pct: 0, prix: 0 },
+  { key: "Z2", label: "Z2 — 10–20 km", pct: 0, prix: 0 },
+  { key: "Z3", label: "Z3 — 20–30 km", pct: 0, prix: 0 },
+  { key: "Z4", label: "Z4 — 30–40 km", pct: 0, prix: 0 },
+  { key: "Z5", label: "Z5 — 40–50 km", pct: 0, prix: 0 },
+];
+
+const edit = reactive({
+  type: "MOYENNE" as TransportType,
+  prixMoyen: 0,
+  zones: DEFAULT_ZONES.map((z) => ({ ...z })) as ZoneRow[],
 
   includePompage: false,
   volumePompePct: 0,
@@ -66,207 +62,279 @@ const ui = reactive<TransportUi>({
   prixVentePompe: 0,
 });
 
-const variant = computed(() => store.activeVariant);
-
-const saving = ref(false);
-const err = ref<string | null>(null);
+const manualPrixMoyen = ref<number>(0);
 
 /* =========================
-   MODAL (confirm)
+   UI
 ========================= */
-const modal = reactive({
-  open: false,
-  title: "Confirmer",
-  message: "",
-  onConfirm: null as null | (() => void),
-});
+const zonesOpen = ref(true);
+const overMsg = ref<string>("");
 
-function openConfirm(title: string, message: string, onConfirm: () => void) {
-  modal.title = title;
-  modal.message = message;
-  modal.onConfirm = onConfirm;
-  modal.open = true;
+/* =========================
+   LOAD FROM VARIANT
+========================= */
+function loadFromVariant() {
+  const t = variant.value?.transport ?? {};
+
+  const type = (t?.type as TransportType) ?? "MOYENNE";
+  edit.type = type === "PAR_ZONE" ? "PAR_ZONE" : "MOYENNE";
+
+  const pm = toNum(t?.prixMoyen);
+  manualPrixMoyen.value = pm;
+  edit.prixMoyen = pm;
+
+  const zones = Array.isArray(t?.zones) ? t.zones : null;
+  if (zones && zones.length) {
+    const byKey = new Map<string, any>();
+    for (const z of zones) byKey.set(String(z?.key ?? ""), z);
+
+    edit.zones = DEFAULT_ZONES.map((base) => {
+      const z = byKey.get(base.key);
+      return {
+        key: base.key,
+        label: base.label,
+        pct: clamp(z?.pct, 0, 100),
+        prix: clamp(z?.prix, 0, 1e9),
+      };
+    });
+  } else {
+    edit.zones = DEFAULT_ZONES.map((z) => ({ ...z }));
+  }
+
+  const hasPompe =
+    t?.volumePompePct != null || t?.prixAchatPompe != null || t?.prixVentePompe != null;
+
+  edit.includePompage =
+    Boolean(hasPompe) &&
+    (toNum(t?.volumePompePct) > 0 || toNum(t?.prixVentePompe) > 0 || toNum(t?.prixAchatPompe) > 0);
+
+  edit.volumePompePct = clamp(t?.volumePompePct, 0, 100);
+  edit.prixAchatPompe = clamp(t?.prixAchatPompe, 0, 1e9);
+  edit.prixVentePompe = clamp(t?.prixVentePompe, 0, 1e9);
+
+  overMsg.value = "";
 }
-function closeConfirm() {
-  modal.open = false;
-  modal.onConfirm = null;
-}
+watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 
 /* =========================
    COMPUTEDS
 ========================= */
-const sumPct = computed(() => ui.zones.reduce((s, z) => s + toNum(z.pct), 0));
-const prixMoyenCalcule = computed(() => ui.zones.reduce((s, z) => s + toNum(z.prix) * (toNum(z.pct) / 100), 0));
-const pctOk = computed(() => Math.abs(sumPct.value - 100) <= 0.01);
+const pctSum = computed(() => edit.zones.reduce((s, z) => s + toNum(z.pct), 0));
+const pctOk = computed(() => nearlyEqual(pctSum.value, 100));
+const remainingPct = computed(() => Math.max(0, 100 - pctSum.value));
 
-// ✅ valeur affichée (mais pas écrasée)
-const prixMoyenDisplay = computed(() => (ui.type === "PAR_ZONE" ? prixMoyenCalcule.value : ui.prixMoyenManuel));
+const prixMoyenParZone = computed(() => {
+  return edit.zones.reduce((s, z) => s + toNum(z.prix) * (toNum(z.pct) / 100), 0);
+});
+const prixMoyenUsed = computed(() => (edit.type === "PAR_ZONE" ? prixMoyenParZone.value : edit.prixMoyen));
 
-const pompageMargeParM3 = computed(() => {
-  if (!ui.includePompage) return 0;
-  const marge = toNum(ui.prixVentePompe) - toNum(ui.prixAchatPompe);
-  return marge * (toNum(ui.volumePompePct) / 100);
+const margePompageParM3 = computed(() => {
+  if (!edit.includePompage) return 0;
+  const marge = toNum(edit.prixVentePompe) - toNum(edit.prixAchatPompe);
+  const pct = toNum(edit.volumePompePct) / 100;
+  return marge * pct;
+});
+
+const canSave = computed(() => {
+  if (!variant.value) return false;
+  if (edit.type === "PAR_ZONE" && !pctOk.value) return false;
+  return true;
 });
 
 /* =========================
-   SYNC FROM API
+   PREVENT >100%
 ========================= */
-function syncFromVariant() {
-  const v: any = variant.value;
-  const t: any = v?.transport ?? null;
+function setPct(z: ZoneRow, raw: any) {
+  overMsg.value = "";
+  const next = clamp(raw, 0, 100);
 
-  ui.type = t?.type === "PAR_ZONE" ? "PAR_ZONE" : "MOYENNE";
+  const sumWithoutThis = pctSum.value - toNum(z.pct);
+  const maxForThis = clamp(100 - sumWithoutThis, 0, 100);
 
-  // ✅ on récupère la "vraie" moyenne de la DB dans le manuel
-  ui.prixMoyenManuel = toNum(t?.prixMoyen);
-
-  const apiZones: any[] = Array.isArray(t?.zones) ? t.zones : [];
-  const nextZones: UiZone[] = emptyZones();
-
-  for (let i = 0; i < nextZones.length; i++) {
-    const src = apiZones[i];
-    if (src) nextZones[i] = { pct: toNum(src.pct), prix: toNum(src.prix) };
+  if (next > maxForThis + 1e-9) {
+    z.pct = maxForThis;
+    overMsg.value = `Somme max = 100%. Pour "${z.label}", max autorisé = ${n(maxForThis, 2)}%.`;
+    return;
   }
-  ui.zones = nextZones;
-
-  ui.includePompage = Boolean(t?.volumePompePct != null || t?.prixAchatPompe != null || t?.prixVentePompe != null);
-  ui.volumePompePct = toNum(t?.volumePompePct);
-  ui.prixAchatPompe = toNum(t?.prixAchatPompe);
-  ui.prixVentePompe = toNum(t?.prixVentePompe);
+  z.pct = next;
 }
 
-onMounted(async () => {
-  if (store.pnls.length === 0) await store.loadPnls();
-  syncFromVariant();
-});
+function normalizeZones() {
+  edit.zones = edit.zones.map((z) => ({
+    ...z,
+    pct: clamp(z.pct, 0, 100),
+    prix: clamp(z.prix, 0, 1e9),
+  }));
+}
+watch(
+  () => edit.zones.map((z) => [z.pct, z.prix]),
+  () => normalizeZones(),
+  { deep: true }
+);
 
 watch(
-  () => variant.value?.id,
-  () => syncFromVariant()
+  () => edit.type,
+  (t) => {
+    if (t === "MOYENNE") edit.prixMoyen = manualPrixMoyen.value;
+    if (t === "PAR_ZONE") zonesOpen.value = true;
+  }
+);
+watch(
+  () => edit.prixMoyen,
+  (v) => {
+    if (edit.type === "MOYENNE") manualPrixMoyen.value = toNum(v);
+  }
 );
 
 /* =========================
-   MODE SWITCH LOGIC
+   POMPAGE RESET
 ========================= */
-// ✅ Quand l'utilisateur bascule de PAR_ZONE vers MOYENNE,
-// on force le manuel à reprendre la valeur DB de la variante active
 watch(
-  () => ui.type,
-  (next, prev) => {
-    if (prev === "PAR_ZONE" && next === "MOYENNE") {
-      // reprend la moyenne réelle de la variante active (DB)
-      const t: any = (variant.value as any)?.transport ?? null;
-      ui.prixMoyenManuel = toNum(t?.prixMoyen);
+  () => edit.includePompage,
+  (on) => {
+    if (!on) {
+      edit.volumePompePct = 0;
+      edit.prixAchatPompe = 0;
+      edit.prixVentePompe = 0;
     }
   }
 );
 
-watch(
-  () => ui.includePompage,
-  (on) => {
-    if (!on) {
-      ui.volumePompePct = 0;
-      ui.prixAchatPompe = 0;
-      ui.prixVentePompe = 0;
-    }
-  }
-);
+/* =========================
+   MODAL
+========================= */
+const modal = reactive({
+  open: false,
+  title: "",
+  message: "",
+  mode: "confirm" as "confirm" | "info",
+  onConfirm: null as null | (() => void | Promise<void>),
+});
+function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "confirm";
+  modal.onConfirm = onConfirm;
+}
+function openInfo(title: string, message: string) {
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "info";
+  modal.onConfirm = null;
+}
+function closeModal() {
+  modal.open = false;
+  modal.title = "";
+  modal.message = "";
+  modal.onConfirm = null;
+}
+async function confirmModal() {
+  const fn = modal.onConfirm;
+  closeModal();
+  if (modal.mode === "confirm" && fn) await fn();
+}
 
 /* =========================
    SAVE
 ========================= */
-function buildPayload() {
-  const existing: any = (variant.value as any)?.transport ?? {};
-  const payload: any = {
-    category: existing?.category ?? "LOGISTIQUE_APPRO",
-    type: ui.type,
-    prixMoyen: Number(prixMoyenDisplay.value),
+const saving = ref(false);
+const err = ref<string | null>(null);
+
+function buildPayload(): any {
+  const tExisting: any = variant.value?.transport ?? {};
+  return {
+    category: tExisting.category ?? "LOGISTIQUE_APPRO",
+    type: edit.type,
+    prixMoyen: Number(prixMoyenUsed.value),
     zones:
-      ui.type === "PAR_ZONE"
-        ? ui.zones.map((z, i) => ({
-            label: ZONES[i]?.label ?? `Zone ${i + 1}`,
-            pct: Number(toNum(z.pct)),
-            prix: Number(toNum(z.prix)),
+      edit.type === "PAR_ZONE"
+        ? edit.zones.map((z) => ({
+            key: z.key,
+            pct: Number(clamp(z.pct, 0, 100)),
+            prix: Number(clamp(z.prix, 0, 1e9)),
           }))
         : [],
+    volumePompePct: Number(edit.includePompage ? clamp(edit.volumePompePct, 0, 100) : 0),
+    prixAchatPompe: Number(edit.includePompage ? clamp(edit.prixAchatPompe, 0, 1e9) : 0),
+    prixVentePompe: Number(edit.includePompage ? clamp(edit.prixVentePompe, 0, 1e9) : 0),
   };
-
-  if (ui.includePompage) {
-    payload.volumePompePct = Number(toNum(ui.volumePompePct));
-    payload.prixAchatPompe = Number(toNum(ui.prixAchatPompe));
-    payload.prixVentePompe = Number(toNum(ui.prixVentePompe));
-  } else {
-    payload.volumePompePct = null;
-    payload.prixAchatPompe = null;
-    payload.prixVentePompe = null;
-  }
-
-  return payload;
 }
 
 async function save() {
-  err.value = null;
   if (!variant.value) return;
 
-  if (ui.type === "PAR_ZONE" && !pctOk.value) {
-    err.value = `La somme des pourcentages doit être 100%. Actuel: ${n(sumPct.value, 2)}%`;
+  if (!canSave.value) {
+    openInfo("Impossible d’enregistrer", "La somme des % doit être exactement 100%.");
     return;
   }
 
+  err.value = null;
   saving.value = true;
   try {
-    await store.updateVariant(variant.value.id, { transport: buildPayload() });
-    syncFromVariant();
+    await (store as any).updateVariant(variant.value.id, { transport: buildPayload() });
+
+    const t = (store as any).activeVariant?.transport ?? {};
+    manualPrixMoyen.value = toNum(t?.prixMoyen);
+    if (edit.type === "MOYENNE") edit.prixMoyen = manualPrixMoyen.value;
+
+    openInfo("Enregistré", "La section transport a été mise à jour.");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
+    openInfo("Erreur", String(err.value ?? e?.message ?? e));
   } finally {
     saving.value = false;
   }
 }
-
-function resetParZone() {
-  openConfirm("Réinitialiser", "Remettre tous les pourcentages et prix des zones à 0 ?", () => {
-    ui.zones = emptyZones();
-    closeConfirm();
+function askSave() {
+  openConfirm("Enregistrer Transport", "Confirmer la mise à jour de la section Transport pour la variante active ?", async () => {
+    await save();
+  });
+}
+function askReset() {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base (annule les modifications non enregistrées) ?", () => {
+    loadFromVariant();
   });
 }
 </script>
 
 <template>
   <div class="page">
-    <!-- header -->
     <div class="top">
       <div class="title">
         <div class="h1">Transport</div>
-        <div class="muted">Paramétrage de la section Transport pour la variante active</div>
+        <div class="muted" v-if="variant">
+          Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
+          <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
+        </div>
+        <div class="muted" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
-        <button class="btn" @click="store.loadPnls()">Recharger</button>
-        <button class="btn primary" :disabled="saving || !variant" @click="save()">
+        <button class="btn" type="button" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
+        <button class="btn primary" type="button" :disabled="!canSave || saving" @click="askSave()">
           {{ saving ? "..." : "Enregistrer" }}
         </button>
       </div>
     </div>
 
-    <div v-if="store.loading" class="panel">Chargement…</div>
-    <div v-else-if="store.error" class="panel error"><b>Erreur :</b> {{ store.error }}</div>
+    <div v-if="(store as any).loading" class="panel">Chargement…</div>
+    <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
 
     <template v-else>
+      <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
+
       <div v-if="!variant" class="panel">
-        <b>Aucune variante active</b>
-        <div class="muted">Sélectionne une variante dans la sidebar.</div>
+        <div class="muted">Sélectionne une variante (via ta page Mes P&L) puis reviens ici.</div>
       </div>
 
-      <div v-else>
-        <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
-
-        <!-- MODE -->
+      <template v-else>
         <div class="panel">
-          <div class="grid2">
+          <div class="headGrid">
             <div class="field">
               <div class="label">Type</div>
-              <select class="select" v-model="ui.type">
+              <select class="select" v-model="edit.type">
                 <option value="MOYENNE">Moyenne</option>
                 <option value="PAR_ZONE">Par zone</option>
               </select>
@@ -275,56 +343,112 @@ function resetParZone() {
             <div class="field">
               <div class="label">Prix moyen (MAD/m³)</div>
               <input
-                class="input r wPrice"
+                class="input r num"
                 type="number"
                 step="0.01"
-                v-model.number="ui.prixMoyenManuel"
-                :disabled="ui.type === 'PAR_ZONE'"
+                :disabled="edit.type === 'PAR_ZONE'"
+                :value="edit.type === 'PAR_ZONE' ? Number(prixMoyenParZone.toFixed(2)) : Number(toNum(edit.prixMoyen).toFixed(2))"
+                @input="
+                  (e) => {
+                    if (edit.type !== 'PAR_ZONE') {
+                      edit.prixMoyen = toNum((e.target as HTMLInputElement).value);
+                    }
+                  }
+                "
               />
-              <div v-if="ui.type === 'PAR_ZONE'" class="hint">
-                Calculé automatiquement : <b>{{ n(prixMoyenCalcule) }}</b> MAD/m³
+            </div>
+
+            <div class="impactBox">
+              <div class="label">Impact pompage (marge/m³)</div>
+              <div class="impactVal">
+                <b>{{ n(margePompageParM3, 2) }}</b>
+                <span class="muted">MAD/m³</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- PAR ZONE -->
-        <div v-if="ui.type === 'PAR_ZONE'" class="panel">
-          <div class="panelHead">
-            <div>
-              <b>Paramétrage par zone</b>
-              <div class="muted small">Saisis uniquement <b>%</b> et <b>Prix</b>. Somme = <b>100%</b>.</div>
+        <!-- CALCULATEUR PAR ZONE -->
+        <div class="panel" v-if="edit.type === 'PAR_ZONE'">
+          <button class="collHead" type="button" @click="zonesOpen = !zonesOpen">
+            <div class="collLeft">
+              <b>Calculateur par zone</b>
+              <span class="muted small">Zone · % · Prix · Contrib.</span>
             </div>
 
-            <button class="btn" @click="resetParZone()">Réinitialiser</button>
-          </div>
+            <div class="sumBadge" :class="{ ok: pctOk, bad: !pctOk }" aria-live="polite">
+              <div class="sumLine">
+                <span class="sumLbl">Somme</span>
+                <b>{{ n(pctSum, 2) }}%</b>
+              </div>
+              <div class="sumState">
+                <span v-if="pctOk" class="good">OK : 100%</span>
+                <span v-else class="warn">Reste {{ n(remainingPct, 2) }}%</span>
+              </div>
+            </div>
 
-          <div class="pctLine" :class="{ bad: !pctOk }">
-            <span>Somme des % :</span>
-            <b>{{ n(sumPct, 2) }}%</b>
-            <span v-if="!pctOk" class="warn">→ Complète jusqu’à 100%</span>
-          </div>
+            <div class="chev" :class="{ open: zonesOpen }">⌄</div>
+          </button>
 
-          <div class="zonesGrid">
-            <div class="zoneCard" v-for="(z, i) in ui.zones" :key="i">
-              <div class="zoneHead">
-                <div class="zoneTitle">
-                  <b>{{ ZONES[i]?.label }}</b>
-                  <span class="muted">{{ ZONES[i]?.range }}</span>
+          <div v-show="zonesOpen" class="collBody">
+            <div class="sumSticky" :class="{ ok: pctOk, bad: !pctOk }">
+              <div class="sumStickyLeft">
+                <b>Somme</b>
+                <span>{{ n(pctSum, 2) }}%</span>
+              </div>
+              <div class="sumStickyRight">
+                <span v-if="pctOk" class="good">OK : 100%</span>
+                <span v-else class="warn">Répartition incomplète</span>
+              </div>
+            </div>
+
+            <div v-if="overMsg" class="overMsg"><b>Limite 100% :</b> {{ overMsg }}</div>
+
+            <!-- ✅ 5 tuiles sur 1 ligne (écran desktop) -->
+            <div class="zonesWrap">
+              <div class="zoneTile" v-for="z in edit.zones" :key="z.key">
+                <div class="tileTitle">{{ z.label }}</div>
+
+                <div class="tileInputs">
+                  <div class="inCol">
+                    <div class="miniLbl">%</div>
+                    <div class="inWrap">
+                      <input
+                        class="tileInput r"
+                        type="number"
+                        step="0.01"
+                        :value="z.pct"
+                        placeholder="Pourcentage"
+                        @input="(e) => setPct(z, (e.target as HTMLInputElement).value)"
+                      />
+                      <span class="unitR">%</span>
+                    </div>
+                  </div>
+
+                  <div class="inCol">
+                    <div class="miniLbl">Prix</div>
+                    <div class="inWrap">
+                      <input
+                        class="tileInput r"
+                        type="number"
+                        step="0.01"
+                        v-model.number="z.prix"
+                        placeholder="Prix"
+                      />
+                      <span class="unitR">DH</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="tileFoot">
+                  <span class="muted small">Contrib.</span>
+                  <b>{{ n(toNum(z.prix) * (toNum(z.pct) / 100), 2) }}</b>
                 </div>
               </div>
+            </div>
 
-              <div class="zoneRow">
-                <div class="zr">
-                  <div class="miniLabel">% Vol.</div>
-                  <input class="inputSm r wPct" type="number" step="1" min="0" max="100" v-model.number="z.pct" />
-                </div>
-
-                <div class="zr">
-                  <div class="miniLabel">Prix (MAD/m³)</div>
-                  <input class="inputSm r wPrix" type="number" step="0.01" min="0" v-model.number="z.prix" />
-                </div>
-              </div>
+            <div v-if="!pctOk" class="alert">
+              <b>Action requise :</b> Ajuste la répartition pour atteindre <b>100%</b> (sinon enregistrement bloqué).
             </div>
           </div>
         </div>
@@ -333,53 +457,39 @@ function resetParZone() {
         <div class="panel">
           <div class="row">
             <label class="check">
-              <input type="checkbox" v-model="ui.includePompage" />
-              <span>Inclure pompage</span>
+              <input type="checkbox" v-model="edit.includePompage" />
+              <span><b>Inclure pompage</b></span>
             </label>
-
-            <div v-if="ui.includePompage" class="impact">
-              <span class="muted">Impact pompage</span>
-              <b>{{ n(pompageMargeParM3) }}</b>
-              <span class="muted">MAD/m³</span>
-            </div>
+            <div class="muted small">Si décoché : valeurs remises à 0 (et envoyées à 0 au backend au save).</div>
           </div>
 
-          <div v-if="ui.includePompage" class="pompageGrid">
+          <div v-if="edit.includePompage" class="pumpGrid">
             <div class="field">
-              <div class="label">% volume pompé</div>
-              <input class="inputSm r wPct" type="number" step="1" min="0" max="100" v-model.number="ui.volumePompePct" />
+              <div class="label">% pompé</div>
+              <input class="input r num" type="number" step="0.01" v-model.number="edit.volumePompePct" />
             </div>
-
             <div class="field">
-              <div class="label">Prix achat</div>
-              <input class="inputSm r wPrix" type="number" step="0.01" min="0" v-model.number="ui.prixAchatPompe" />
+              <div class="label">Achat</div>
+              <input class="input r num" type="number" step="0.01" v-model.number="edit.prixAchatPompe" />
             </div>
-
             <div class="field">
-              <div class="label">Prix vente</div>
-              <input class="inputSm r wPrix" type="number" step="0.01" min="0" v-model.number="ui.prixVentePompe" />
+              <div class="label">Vente</div>
+              <input class="input r num" type="number" step="0.01" v-model.number="edit.prixVentePompe" />
             </div>
           </div>
         </div>
-      </div>
+      </template>
     </template>
 
-    <!-- Modal -->
-    <div v-if="modal.open" class="modalOverlay" @click.self="closeConfirm()">
-      <div class="modal">
+    <!-- MODAL -->
+    <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
+      <div class="modal" role="dialog" aria-modal="true">
         <div class="modalTitle">{{ modal.title }}</div>
         <div class="modalMsg">{{ modal.message }}</div>
+
         <div class="modalActions">
-          <button class="btn" @click="closeConfirm()">Annuler</button>
-          <button
-            class="btn primary"
-            @click="
-              () => {
-                const fn = modal.onConfirm;
-                if (fn) fn();
-              }
-            "
-          >
+          <button class="btn" type="button" @click="closeModal()">Fermer</button>
+          <button v-if="modal.mode === 'confirm'" class="btn primary" type="button" @click="confirmModal()">
             Confirmer
           </button>
         </div>
@@ -389,7 +499,7 @@ function resetParZone() {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:12px; padding:12px; }
+.page { display:flex; flex-direction:column; gap:8px; padding:10px; }
 
 /* top */
 .top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
@@ -397,30 +507,26 @@ function resetParZone() {
 .h1 { font-size:16px; font-weight:800; line-height:1.1; margin:0; }
 .muted { color:#6b7280; font-size:12px; }
 .small { font-size:11px; }
-
 .actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
 /* panel */
-.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
+.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
 .panel.error { border-color:#ef4444; background:#fff5f5; }
 
-.panelHead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
-
-.field { display:flex; flex-direction:column; gap:6px; }
+/* controls */
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.field { display:flex; flex-direction:column; gap:5px; }
 .label { font-size:11px; color:#6b7280; }
+.r { text-align:right; }
 
-.select, .input, .inputSm {
+.select, .input {
   border:1px solid #d1d5db;
   border-radius:10px;
   font-size:13px;
   padding:7px 9px;
-  max-width: 100%;
+  width:100%;
 }
-.input { width: 100%; }
-.inputSm { font-size:12px; padding:6px 8px; }
-.r { text-align:right; }
 
-/* buttons */
 .btn {
   border:1px solid #d1d5db;
   background:#fff;
@@ -432,115 +538,207 @@ function resetParZone() {
 .btn:hover { background:#f9fafb; }
 .btn.primary { background:#007a33; border-color:#007a33; color:#fff; }
 .btn.primary:hover { background:#046a2f; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
 
-/* ✅ largeur inputs adaptées */
-.wPct { width: 90px; }
-.wPrix { width: 130px; }
-.wPrice { max-width: 220px; }
-
-.grid2 { display:grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap:10px; }
-@media (max-width: 980px) { .grid2 { grid-template-columns: 1fr; } }
-
-.hint { font-size:12px; margin-top:2px; color:#374151; }
-.hint b { font-weight:800; }
-
-.pctLine {
-  display:flex; gap:8px; align-items:baseline;
-  border:1px solid #e5e7eb;
-  background:#fcfcfd;
-  border-radius:10px;
-  padding:8px 10px;
-  margin-bottom:12px;
-  font-size:12px;
-  flex-wrap:wrap;
-}
-.pctLine.bad { border-color:#f59e0b; background:#fffbeb; }
-.warn { color:#b45309; font-weight:700; }
-
-/* zones */
-.zonesGrid{
+/* header compact */
+.headGrid{
   display:grid;
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
-  gap: 14px 14px;
+  grid-template-columns: 180px 260px 1fr;
+  gap:10px;
+  align-items:end;
 }
-@media (max-width: 860px) { .zonesGrid { grid-template-columns: 1fr; } }
+@media (max-width: 980px){
+  .headGrid{ grid-template-columns: 1fr; }
+}
+.num { max-width: 190px; }
+.input:disabled { background:#f3f4f6; color:#111827; }
 
-.zoneCard{
-  border:1px solid #e5e7eb;
-  border-radius:12px;
-  padding:10px;
-  background:#fcfcfd;
+.impactBox{
+  padding-left: 14px;
+  border-left: 1px dashed #e5e7eb;
 }
-.zoneHead{
+@media (max-width: 980px){
+  .impactBox{ padding-left: 0; border-left: none; }
+}
+.impactVal{ display:flex; gap:8px; align-items:baseline; }
+.impactVal b{ font-weight:800; }
+
+/* collapsible */
+.collHead{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  border:1px solid #eef2f7;
+  background:#fcfcfd;
+  border-radius:12px;
+  padding:8px 10px;
+  cursor:pointer;
+}
+.collHead:hover{ background:#fafafa; }
+.collLeft{ display:flex; flex-direction:column; gap:2px; align-items:flex-start; }
+.chev{ width:22px; text-align:center; transition: transform .15s ease; color:#6b7280; }
+.chev.open{ transform: rotate(180deg); }
+
+.sumBadge{
+  border:1px solid #e5e7eb;
+  border-radius:10px;
+  padding:6px 8px;
+  min-width: 165px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  text-align:right;
+}
+.sumBadge.ok{ border-color:#16a34a33; background:#16a34a0f; }
+.sumBadge.bad{ border-color:#ef444433; background:#ef44440f; }
+.sumLbl{ color:#6b7280; font-size:11px; margin-right:6px; }
+.sumLine{ display:flex; justify-content:flex-end; gap:6px; align-items:baseline; }
+.sumState{ font-size:11px; }
+.good { color:#166534; }
+.warn { color:#b91c1c; }
+
+.collBody{ margin-top:8px; }
+
+/* sticky sum */
+.sumSticky{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:center;
+  padding:6px 10px;
+  border:1px solid #e5e7eb;
+  border-radius:10px;
+  background:#fff;
+  margin-bottom:8px;
+}
+.sumSticky.ok{ border-color:#16a34a33; background:#16a34a0f; }
+.sumSticky.bad{ border-color:#ef444433; background:#ef44440f; }
+.sumStickyLeft{ display:flex; gap:8px; align-items:baseline; }
+.sumStickyLeft b{ font-weight:900; }
+.sumStickyRight{ font-size:12px; }
+
+.overMsg{
+  border:1px solid #f59e0b33;
+  background:#f59e0b0f;
+  border-radius:12px;
+  padding:8px 10px;
+  margin-bottom:8px;
+  font-size:12px;
+  color:#92400e;
+}
+
+/* ✅ 5 tuiles en 1 ligne sur desktop */
+.zonesWrap{
+  display:grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap:8px;
+}
+@media (max-width: 1250px){
+  .zonesWrap{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 860px){
+  .zonesWrap{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px){
+  .zonesWrap{ grid-template-columns: 1fr; }
+}
+
+.zoneTile{
+  border:1px solid #eef2f7;
+  background:#fff;
+  border-radius:12px;
+  padding:8px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width: 0; /* important pour grid */
+}
+
+.tileTitle{ font-weight:900; font-size:12px; color:#111827; }
+
+.tileInputs{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:8px;
+}
+
+.inCol{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.miniLbl{ font-size:10px; color:#6b7280; line-height:1; }
+
+/* ✅ unités à droite */
+.inWrap{ position:relative; display:flex; align-items:center; min-width:0; }
+.unitR{
+  position:absolute;
+  right:8px;
+  font-size:11px;
+  color:#6b7280;
+  pointer-events:none;
+}
+.tileInput{
+  width:100%;
+  border:1px solid #d1d5db;
+  border-radius:10px;
+  padding:7px 26px 7px 8px; /* espace à droite pour unité */
+  font-size:13px;
+  min-width:0;
+}
+.tileInput:focus{ outline:none; border-color:#9ca3af; }
+
+.tileFoot{
   display:flex;
   justify-content:space-between;
   align-items:baseline;
-  gap:10px;
-  margin-bottom:10px;
+  border-top: 1px dashed #e5e7eb;
+  padding-top:7px;
 }
-.zoneTitle{ display:flex; flex-direction:column; gap:2px; }
-.zoneTitle b{ font-size:13px; }
+.tileFoot b{ font-weight:900; }
 
-.zoneRow{
-  display:flex;
-  gap:14px;
-  align-items:flex-end;
-  flex-wrap:nowrap;
+/* alert */
+.alert {
+  margin-top:8px;
+  border:1px solid #ef444433;
+  background:#ef44440f;
+  border-radius:12px;
+  padding:8px 10px;
+  font-size:13px;
 }
-@media (max-width: 420px) { .zoneRow { flex-wrap:wrap; } }
 
-.zr{ display:flex; flex-direction:column; gap:6px; }
-.miniLabel{ font-size:11px; color:#6b7280; }
+/* checkbox */
+.check { display:flex; gap:8px; align-items:center; cursor:pointer; user-select:none; }
+.check input { width:16px; height:16px; }
 
 /* pompage */
-.row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-.check { display:flex; align-items:center; gap:8px; font-size:13px; user-select:none; }
-
-.impact {
-  margin-left: 16px;
-  display:flex;
-  align-items:baseline;
-  gap:8px;
-  padding:6px 10px;
-  border:1px dashed #d1d5db;
-  border-radius:999px;
-  background:#fafafa;
-}
-.impact b { font-weight:900; }
-
-.pompageGrid{
-  margin-top:12px;
+.pumpGrid{
   display:grid;
-  grid-template-columns: repeat(3, max-content);
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(160px, 220px));
+  gap:10px;
+  margin-top:10px;
   align-items:end;
 }
-@media (max-width: 860px) {
-  .pompageGrid { grid-template-columns: 1fr; }
-  .wPct, .wPrix { width: 100%; }
-}
+@media (max-width: 980px){ .pumpGrid{ grid-template-columns: 1fr; } }
 
 /* modal */
-.modalOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(17,24,39,0.35);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding: 16px;
+.modalMask {
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.35);
+  display:flex; align-items:center; justify-content:center;
+  padding:16px;
   z-index: 50;
 }
 .modal {
-  width: 100%;
-  max-width: 420px;
+  width:min(520px, 100%);
   background:#fff;
-  border-radius: 14px;
   border:1px solid #e5e7eb;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-  padding: 14px;
+  border-radius:16px;
+  padding:14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.15);
 }
-.modalTitle { font-weight: 900; font-size: 14px; margin-bottom: 6px; }
-.modalMsg { font-size: 13px; color:#374151; margin-bottom: 12px; }
-.modalActions { display:flex; justify-content:flex-end; gap:8px; }
+.modalTitle { font-weight:900; font-size:14px; margin-bottom:6px; }
+.modalMsg { color:#374151; font-size:13px; white-space:pre-wrap; }
+.modalActions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 </style>
