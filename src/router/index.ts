@@ -11,6 +11,13 @@ import MpPage from "@/pages/MpPage.vue";
 import TransportPage from "@/pages/TransportPage.vue";
 import FormulesPage from "@/pages/FormulesPage.vue";
 import MomdAndQuantity from "@/pages/MomdAndQuantityPage.vue";
+import MaintenancePage from "@/pages/MaintenancePage.vue";
+import CoutM3 from "@/pages/CoutM3Page.vue";
+import CoutMensuelPage from "@/pages/CoutMensuelPage.vue";
+import CoutEmployesPage from "@/pages/CoutEmployesPage.vue";
+
+
+
 
 
 
@@ -27,6 +34,11 @@ const routes = [
                 { path: "/Transport", name: "Transport", component: TransportPage },
                 { path: "/formules", name: "Formules", component: FormulesPage },
                 { path: "/MomdAndQuantity", name: "MomdAndQuantity", component: MomdAndQuantity },
+{ path: "/maintenance", name: "Maintenance", component: MaintenancePage },
+{ path: "/cout-m3", name: "cout au m3", component: CoutM3 },
+{ path: "/cout-mois", name: "CoutMensuel", component: CoutMensuelPage },
+{ path: "/cout-employes", name: "CoutEmployes", component: CoutEmployesPage },
+
 
         
 

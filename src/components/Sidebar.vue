@@ -69,6 +69,11 @@ const routeByItem: Record<string, string> = {
   "Transport": "Transport",
     "Formules": "Formules",
 "Qté et MOMD": "MomdAndQuantity",
+"Maintenance": "Maintenance",
+"Cout au m3":"cout au m3",
+"Cout au mois": "CoutMensuel",
+"Cout employés" : "CoutEmployes",
+
 
 };
 
@@ -120,6 +125,11 @@ watch(
     else if (route.name === "Transport") activeItem.value = "Transport";
     else if (route.name === "Formules") activeItem.value = "Formules";
     else if (route.name === "MomdAndQuantity") activeItem.value = "Qté et MOMD";
+else if (route.name === "Maintenance") activeItem.value = "Maintenance";
+else if (route.name === "cout au m3") activeItem.value = "cout au m3";
+else if (route.name === "CoutMensuel") activeItem.value = "Cout au mois";
+else if (route.name === "CoutEmployes") activeItem.value = "Cout employés";
+
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 

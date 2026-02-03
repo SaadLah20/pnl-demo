@@ -45,53 +45,6 @@ const contract = computed<any>(() => (store as any).activeContract);
 const dureeMois = computed(() => Math.max(0, toNum(contract.value?.dureeMois)));
 
 /* =========================
-   CALCUL BASE (Volume + CA)
-   => % CA fiable (comme ta page "Mes P&L")
-========================= */
-const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
-const volumeTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => s + toNum(vf?.volumeM3), 0)
-);
-
-const transportPrixMoyen = computed(() => toNum((variant.value as any)?.transport?.prixMoyen));
-
-function mpPriceUsed(mpId: string): number {
-  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find(
-    (x: any) => String(x.mpId) === String(mpId)
-  );
-  if (!vmp) return 0;
-  if (vmp?.prix != null) return toNum(vmp.prix);
-  return toNum(vmp?.mp?.prix);
-}
-
-type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
-function compositionFor(formule: any): CompRow[] {
-  const items = (formule?.items ?? []) as any[];
-  return items.map((it: any) => {
-    const mpId = String(it.mpId);
-    const qty = toNum(it.qty); // kg/m3
-    const prix = mpPriceUsed(mpId); // DH/tonne
-    return { mpId, qty, prix, coutParM3: (qty / 1000) * prix };
-  });
-}
-function cmpParM3For(vf: any): number {
-  return compositionFor(vf?.formule).reduce((s: number, x) => s + toNum(x.coutParM3), 0);
-}
-
-const caTotal = computed(() => {
-  // CA = Σ (PV_formule * Qté_formule)
-  return formules.value.reduce((s: number, vf: any) => {
-    const vol = toNum(vf?.volumeM3);
-    const momd = toNum(vf?.momd);
-    const cmp = cmpParM3For(vf);
-    const pv = cmp + transportPrixMoyen.value + momd;
-    return s + pv * vol;
-  }, 0);
-});
-
-const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
-
-/* =========================
    EDIT MODEL (MAINTENANCE)
 ========================= */
 type MaintenanceEdit = {
@@ -139,6 +92,47 @@ type Line = {
   parM3: number; // DH/m3
   pctCa: number; // %
 };
+
+// Volume + CA restent nécessaires ici car utilisés par DH/m3 et %CA
+const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
+const volumeTotal = computed(() =>
+  formules.value.reduce((s: number, vf: any) => s + toNum(vf?.volumeM3), 0)
+);
+
+const transportPrixMoyen = computed(() => toNum((variant.value as any)?.transport?.prixMoyen));
+
+function mpPriceUsed(mpId: string): number {
+  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find(
+    (x: any) => String(x.mpId) === String(mpId)
+  );
+  if (!vmp) return 0;
+  if (vmp?.prix != null) return toNum(vmp.prix);
+  return toNum(vmp?.mp?.prix);
+}
+
+type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
+function compositionFor(formule: any): CompRow[] {
+  const items = (formule?.items ?? []) as any[];
+  return items.map((it: any) => {
+    const mpId = String(it.mpId);
+    const qty = toNum(it.qty); // kg/m3
+    const prix = mpPriceUsed(mpId); // DH/tonne
+    return { mpId, qty, prix, coutParM3: (qty / 1000) * prix };
+  });
+}
+function cmpParM3For(vf: any): number {
+  return compositionFor(vf?.formule).reduce((s: number, x) => s + toNum(x.coutParM3), 0);
+}
+
+const caTotal = computed(() => {
+  return formules.value.reduce((s: number, vf: any) => {
+    const vol = toNum(vf?.volumeM3);
+    const momd = toNum(vf?.momd);
+    const cmp = cmpParM3For(vf);
+    const pv = cmp + transportPrixMoyen.value + momd;
+    return s + pv * vol;
+  }, 0);
+});
 
 const mensuelTotal = computed(() => {
   return (
@@ -288,21 +282,8 @@ function askReset() {
       </div>
 
       <template v-else>
-        <!-- KPIs -->
+        <!-- KPIs (sans Volume/CA/PV moyen) -->
         <div class="kpis">
-          <div class="kpi">
-            <div class="kLbl">PV moyen</div>
-            <div class="kVal">{{ n(pvMoy, 2) }} <span>DH/m³</span></div>
-          </div>
-          <div class="kpi">
-            <div class="kLbl">CA</div>
-            <div class="kVal">{{ money(caTotal, 2) }}</div>
-          </div>
-          <div class="kpi">
-            <div class="kLbl">Volume total</div>
-            <div class="kVal">{{ n(volumeTotal, 2) }} <span>m³</span></div>
-          </div>
-
           <div class="kpi">
             <div class="kLbl">Maintenance / mois</div>
             <div class="kVal">{{ n(mensuelTotal, 2) }} <span>DH/mois</span></div>
@@ -441,11 +422,10 @@ function askReset() {
 /* KPIs */
 .kpis{
   display:grid;
-  grid-template-columns: repeat(7, minmax(150px, 1fr));
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
   gap:8px;
 }
-@media (max-width: 1400px){ .kpis{ grid-template-columns: repeat(4, minmax(150px, 1fr)); } }
-@media (max-width: 900px){ .kpis{ grid-template-columns: repeat(2, minmax(150px, 1fr)); } }
+@media (max-width: 900px){ .kpis{ grid-template-columns: repeat(2, minmax(170px, 1fr)); } }
 
 .kpi{
   background:#fff;

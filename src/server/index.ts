@@ -411,6 +411,61 @@ app.put("/pnls/:id", async (req: Request, res: Response) => {
   }
 });
 
+// =========================================================
+// CONTRACT UPDATE (pour popup edit)
+// =========================================================
+app.put("/contracts/:id", async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const body = req.body ?? {};
+
+  try {
+    // ✅ Autoriser UNIQUEMENT les champs réellement existants dans Contract
+    // (d'après ton message Prisma)
+    const allowed = [
+      "dureeMois",
+      "terrain",
+      "installation",
+
+      "cab",
+      "genieCivil",
+      "transport",
+      "matierePremiere",
+      "maintenance",
+      "chargeuse",
+      "branchementEau",
+      "consoEau",
+      "branchementElec",
+      "consoElec",
+
+      "postes",
+      "sundayPrice",
+      "delayPenalty",
+      "chillerRent",
+    ];
+
+    const data: any = pick(body, allowed);
+
+    // casts propres (optionnel mais recommandé)
+    if (data.dureeMois !== undefined) data.dureeMois = numOr0(data.dureeMois);
+    if (data.postes !== undefined) data.postes = Math.trunc(numOr0(data.postes));
+
+    if (data.sundayPrice !== undefined) data.sundayPrice = Number(data.sundayPrice ?? 0);
+    if (data.delayPenalty !== undefined) data.delayPenalty = Number(data.delayPenalty ?? 0);
+    if (data.chillerRent !== undefined) data.chillerRent = Number(data.chillerRent ?? 0);
+
+    // 🔥 IMPORTANT : on ignore explicitement "status" si le front l'envoie
+    // (ça évite l'erreur Prisma)
+    delete data.status;
+
+    const updated = await prisma.contract.update({ where: { id }, data });
+    return res.json({ ok: true, contract: updated });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
+
 
 app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response) => {
   try {
@@ -455,15 +510,48 @@ app.post("/variants", async (req: Request, res: Response) => {
 
 // ✅ UPDATE VARIANT
 app.put("/variants/:id", async (req: Request, res: Response) => {
-  try {
-    const variantId = String(req.params.id);
-    const body = req.body ?? {};
+  const variantId = String(req.params.id);
+  const body = req.body ?? {};
 
+  try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // ---------------- TRANSPORT ----------------
+
+      /* =========================================================
+         VARIANT META (title / status / description)
+      ========================================================= */
+      if (
+        body.title !== undefined ||
+        body.status !== undefined ||
+        body.description !== undefined
+      ) {
+        const data: any = {};
+        if (body.title !== undefined) data.title = String(body.title ?? "");
+        if (body.status !== undefined) data.status = String(body.status ?? "");
+        if (body.description !== undefined) {
+          data.description =
+            body.description == null ? null : String(body.description);
+        }
+
+        await tx.variant.update({
+          where: { id: variantId },
+          data,
+        });
+      }
+
+      /* =========================================================
+         TRANSPORT
+      ========================================================= */
       if (body.transport) {
-        const allowed = ["category", "type", "prixMoyen", "volumePompePct", "prixAchatPompe", "prixVentePompe"];
+        const allowed = [
+          "category",
+          "type",
+          "prixMoyen",
+          "volumePompePct",
+          "prixAchatPompe",
+          "prixVentePompe",
+        ];
         const data = pick(body.transport, allowed);
+
         await upsertPartialSection({
           tx,
           model: tx.sectionTransport,
@@ -481,10 +569,13 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         });
       }
 
-      // ---------------- CAB ----------------
+      /* =========================================================
+         CAB
+      ========================================================= */
       if (body.cab) {
         const allowed = ["category", "etat", "mode", "capaciteM3", "amortMois"];
         const data = pick(body.cab, allowed);
+
         await upsertPartialSection({
           tx,
           model: tx.sectionCab,
@@ -501,25 +592,46 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         });
       }
 
-      // ---------------- MAINTENANCE ----------------
+      /* =========================================================
+         MAINTENANCE
+      ========================================================= */
       if (body.maintenance) {
-        const allowed = ["category", "cab", "elec", "chargeur", "generale", "bassins", "preventive"];
+        const allowed = [
+          "category",
+          "cab",
+          "elec",
+          "chargeur",
+          "generale",
+          "bassins",
+          "preventive",
+        ];
         const data = pick(body.maintenance, allowed);
+
         await upsertPartialSection({
           tx,
           model: tx.sectionMaintenance,
           variantId,
           categoryDefault: "COUTS_CHARGES",
-          defaults: { cab: 0, elec: 0, chargeur: 0, generale: 0, bassins: 0, preventive: 0 },
+          defaults: {
+            cab: 0,
+            elec: 0,
+            chargeur: 0,
+            generale: 0,
+            bassins: 0,
+            preventive: 0,
+          },
           data,
           logLabel: "maintenance",
         });
       }
 
-      // ---------------- COUT / M3 ----------------
+      /* =========================================================
+         COUT / M3
+      ========================================================= */
       if (body.coutM3) {
         const allowed = ["category", "eau", "qualite", "dechets"];
         const data = pick(body.coutM3, allowed);
+
         await upsertPartialSection({
           tx,
           model: tx.sectionCoutM3,
@@ -531,11 +643,16 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         });
       }
 
-      // ---------------- COUT MENSUEL (compat) ----------------
+      /* =========================================================
+         COUT MENSUEL
+      ========================================================= */
       if (body.coutMensuel) {
-        // compat UI -> DB
         const incoming = { ...(body.coutMensuel ?? {}) };
-        if (incoming.locationGroupes !== undefined && incoming.location === undefined) {
+
+        if (
+          incoming.locationGroupes !== undefined &&
+          incoming.location === undefined
+        ) {
           incoming.location = incoming.locationGroupes;
         }
         delete incoming.locationGroupes;
@@ -558,8 +675,6 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         ];
 
         const data = pick(incoming, allowed);
-
-        // cast numbers
         for (const k of Object.keys(data)) {
           if (k !== "category") (data as any)[k] = numOr0((data as any)[k]);
         }
@@ -589,10 +704,16 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         });
       }
 
-      // ---------------- COUT OCCASIONNEL (compat) ----------------
+      /* =========================================================
+         COUT OCCASIONNEL
+      ========================================================= */
       if (body.coutOccasionnel) {
         const incoming = { ...(body.coutOccasionnel ?? {}) };
-        if (incoming.installationCab !== undefined && incoming.installation === undefined) {
+
+        if (
+          incoming.installationCab !== undefined &&
+          incoming.installation === undefined
+        ) {
           incoming.installation = incoming.installationCab;
         }
         delete incoming.installationCab;
@@ -634,39 +755,11 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         });
       }
 
-      // ---------------- EMPLOYES (TOUS CHAMPS) ----------------
+      /* =========================================================
+         EMPLOYES
+      ========================================================= */
       if (body.employes) {
-        const allowed = [
-          "category",
-
-          "responsableNb",
-          "responsableCout",
-          "centralistesNb",
-          "centralistesCout",
-
-          "manoeuvreNb",
-          "manoeuvreCout",
-
-          "coordinateurExploitationNb",
-          "coordinateurExploitationCout",
-
-          "technicienLaboNb",
-          "technicienLaboCout",
-
-          "femmeMenageNb",
-          "femmeMenageCout",
-
-          "gardienNb",
-          "gardienCout",
-
-          "maintenancierNb",
-          "maintenancierCout",
-
-          "panierRepasNb",
-          "panierRepasCout",
-        ];
-
-        const data = pick(body.employes, allowed);
+        const data = pick(body.employes, Object.keys(body.employes));
         for (const k of Object.keys(data)) {
           if (k !== "category") (data as any)[k] = numOr0((data as any)[k]);
         }
@@ -676,39 +769,15 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
           model: tx.sectionEmployes,
           variantId,
           categoryDefault: "COUTS_CHARGES",
-          defaults: {
-            responsableNb: 0,
-            responsableCout: 0,
-            centralistesNb: 0,
-            centralistesCout: 0,
-
-            manoeuvreNb: 0,
-            manoeuvreCout: 0,
-
-            coordinateurExploitationNb: 0,
-            coordinateurExploitationCout: 0,
-
-            technicienLaboNb: 0,
-            technicienLaboCout: 0,
-
-            femmeMenageNb: 0,
-            femmeMenageCout: 0,
-
-            gardienNb: 0,
-            gardienCout: 0,
-
-            maintenancierNb: 0,
-            maintenancierCout: 0,
-
-            panierRepasNb: 0,
-            panierRepasCout: 0,
-          },
+          defaults: {},
           data,
           logLabel: "employes",
         });
       }
 
-      // ---------------- AUTRES COUTS: replace items ----------------
+      /* =========================================================
+         AUTRES COUTS
+      ========================================================= */
       if (body.autresCouts?.items) {
         const sec = await tx.sectionAutresCouts.upsert({
           where: { variantId },
@@ -718,7 +787,12 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
 
         await tx.autreCoutItem.deleteMany({ where: { variantId } });
 
-        const items = body.autresCouts.items as Array<{ label: string; unite: string; valeur: number }>;
+        const items = body.autresCouts.items as Array<{
+          label: string;
+          unite: string;
+          valeur: number;
+        }>;
+
         if (items.length) {
           await tx.autreCoutItem.createMany({
             data: items.map((it) => ({
@@ -732,22 +806,19 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         }
       }
 
-      // ---------------- FORMULES: update volumes/momd ----------------
+      /* =========================================================
+         FORMULES
+      ========================================================= */
       if (body.formules?.items) {
-        const items = body.formules.items as Array<{
-          id: string;
-          volumeM3: number;
-          momd: number;
-          cmpOverride?: number | null;
-        }>;
-
-        for (const it of items) {
+        for (const it of body.formules.items) {
           await tx.variantFormule.update({
             where: { id: String(it.id) },
             data: {
               volumeM3: Number(it.volumeM3 ?? 0),
               momd: Number(it.momd ?? 0),
-              ...(it.cmpOverride !== undefined ? { cmpOverride: it.cmpOverride } : {}),
+              ...(it.cmpOverride !== undefined
+                ? { cmpOverride: it.cmpOverride }
+                : {}),
             } as any,
           });
         }
@@ -756,13 +827,16 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       }
     });
 
-    const updated = await getFullVariant(variantId);
-    res.json(updated);
+    // ✅ UNE SEULE REPONSE, ICI
+    const variant = await getFullVariant(variantId);
+    return res.json({ ok: true, variant });
+
   } catch (err: any) {
     console.error(err);
-    res.status(400).json({ error: err?.message ?? "Bad Request" });
+    return res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
+
 
 // ✅ Add formule to variant (sync MP)
 app.post("/variants/:id/formules", async (req: Request, res: Response) => {

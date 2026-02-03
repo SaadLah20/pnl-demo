@@ -1,4 +1,4 @@
-<!-- src/pages/CoutMensuelPage.vue -->
+<!-- src/pages/CoutEmployesPage.vue -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -40,66 +40,88 @@ function clamp(x: any, min: number, max: number) {
 ========================= */
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
-
 const dureeMois = computed(() => toNum(contract.value?.dureeMois));
 
 /* =========================
-   DRAFT (Cout Mensuel)
+   DRAFT (Employés)
 ========================= */
 type Draft = {
-  electricite: number;
-  locationGroupes: number;
-  gasoil: number;
-  hebergements: number;
-  locationTerrain: number;
-  telephone: number;
-  troisG: number;
-  taxeProfessionnelle: number;
-  securite: number;
-  locationVehicule: number;
-  locationAmbulance: number;
-  locationBungalows: number;
-  epi: number;
+  responsableNb: number;
+  responsableCout: number;
 
-  // compat DB (si existe)
-  location: number;
+  centralistesNb: number;
+  centralistesCout: number;
+
+  manoeuvreNb: number;
+  manoeuvreCout: number;
+
+  coordinateurExploitationNb: number;
+  coordinateurExploitationCout: number;
+
+  technicienLaboNb: number;
+  technicienLaboCout: number;
+
+  femmeMenageNb: number;
+  femmeMenageCout: number;
+
+  gardienNb: number;
+  gardienCout: number;
+
+  maintenancierNb: number;
+  maintenancierCout: number;
+
+  panierRepasNb: number;
+  panierRepasCout: number;
 };
 
 const draft = reactive<Draft>({
-  electricite: 0,
-  locationGroupes: 0,
-  gasoil: 0,
-  hebergements: 0,
-  locationTerrain: 0,
-  telephone: 0,
-  troisG: 0,
-  taxeProfessionnelle: 0,
-  securite: 0,
-  locationVehicule: 0,
-  locationAmbulance: 0,
-  locationBungalows: 0,
-  epi: 0,
-  location: 0,
+  responsableNb: 0,
+  responsableCout: 0,
+
+  centralistesNb: 0,
+  centralistesCout: 0,
+
+  manoeuvreNb: 0,
+  manoeuvreCout: 0,
+
+  coordinateurExploitationNb: 0,
+  coordinateurExploitationCout: 0,
+
+  technicienLaboNb: 0,
+  technicienLaboCout: 0,
+
+  femmeMenageNb: 0,
+  femmeMenageCout: 0,
+
+  gardienNb: 0,
+  gardienCout: 0,
+
+  maintenancierNb: 0,
+  maintenancierCout: 0,
+
+  panierRepasNb: 0,
+  panierRepasCout: 0,
 });
 
-function loadFromVariant() {
-  const s: any = (variant.value as any)?.coutMensuel ?? {};
-  draft.electricite = clamp(s?.electricite, 0, 1e12);
-  draft.locationGroupes = clamp(s?.locationGroupes, 0, 1e12);
-  draft.gasoil = clamp(s?.gasoil, 0, 1e12);
-  draft.hebergements = clamp(s?.hebergements, 0, 1e12);
-  draft.locationTerrain = clamp(s?.locationTerrain, 0, 1e12);
-  draft.telephone = clamp(s?.telephone, 0, 1e12);
-  draft.troisG = clamp(s?.troisG, 0, 1e12);
-  draft.taxeProfessionnelle = clamp(s?.taxeProfessionnelle, 0, 1e12);
-  draft.securite = clamp(s?.securite, 0, 1e12);
-  draft.locationVehicule = clamp(s?.locationVehicule, 0, 1e12);
-  draft.locationAmbulance = clamp(s?.locationAmbulance, 0, 1e12);
-  draft.locationBungalows = clamp(s?.locationBungalows, 0, 1e12);
-  draft.epi = clamp(s?.epi, 0, 1e12);
+const GROUPS = [
+  { key: "responsable", label: "Responsable" },
+  { key: "centralistes", label: "Centralistes" },
+  { key: "manoeuvre", label: "Manœuvre" },
+  { key: "coordinateurExploitation", label: "Coordinateur exploitation" },
+  { key: "technicienLabo", label: "Technicien labo" },
+  { key: "femmeMenage", label: "Femme ménage" },
+  { key: "gardien", label: "Gardien" },
+  { key: "maintenancier", label: "Maintenancier" },
+  { key: "panierRepas", label: "Panier repas" },
+] as const;
 
-  // compat
-  draft.location = clamp(s?.location, 0, 1e12);
+function loadFromVariant() {
+  const s: any = (variant.value as any)?.employes ?? {};
+
+  for (const g of GROUPS) {
+    (draft as any)[`${g.key}Nb`] = clamp(s?.[`${g.key}Nb`], 0, 1e12);
+    (draft as any)[`${g.key}Cout`] = clamp(s?.[`${g.key}Cout`], 0, 1e12);
+  }
 }
 
 watch(
@@ -111,28 +133,13 @@ watch(
 /* =========================
    KPIs
 ========================= */
+// ✅ total mensuel = somme(nb * cout) pour chaque poste
 const mensuelTotal = computed(() => {
-  // ✅ somme des champs mensuels "modernes"
-  const sumModern =
-    toNum(draft.electricite) +
-    toNum(draft.locationGroupes) +
-    toNum(draft.gasoil) +
-    toNum(draft.hebergements) +
-    toNum(draft.locationTerrain) +
-    toNum(draft.telephone) +
-    toNum(draft.troisG) +
-    toNum(draft.taxeProfessionnelle) +
-    toNum(draft.securite) +
-    toNum(draft.locationVehicule) +
-    toNum(draft.locationAmbulance) +
-    toNum(draft.locationBungalows) +
-    toNum(draft.epi);
-
-  // ✅ fallback legacy "location" si jamais locationGroupes n'est pas utilisé
-  // (on l'ajoute seulement si locationGroupes=0 mais location > 0)
-  const legacy = toNum(draft.locationGroupes) === 0 ? toNum(draft.location) : 0;
-
-  return sumModern + legacy;
+  return GROUPS.reduce((sum, g) => {
+    const nb = toNum((draft as any)[`${g.key}Nb`]);
+    const cout = toNum((draft as any)[`${g.key}Cout`]);
+    return sum + nb * cout;
+  }, 0);
 });
 
 const total = computed(() => mensuelTotal.value * dureeMois.value);
@@ -176,27 +183,14 @@ const saving = ref(false);
 const err = ref<string | null>(null);
 
 function buildPayload(): any {
-  const existing: any = (variant.value as any)?.coutMensuel ?? {};
-  return {
-    category: existing?.category ?? "COUTS_CHARGES",
+  const existing: any = (variant.value as any)?.employes ?? {};
+  const payload: any = { category: existing?.category ?? "COUTS_CHARGES" };
 
-    electricite: Number(draft.electricite),
-    locationGroupes: Number(draft.locationGroupes),
-    gasoil: Number(draft.gasoil),
-    hebergements: Number(draft.hebergements),
-    locationTerrain: Number(draft.locationTerrain),
-    telephone: Number(draft.telephone),
-    troisG: Number(draft.troisG),
-    taxeProfessionnelle: Number(draft.taxeProfessionnelle),
-    securite: Number(draft.securite),
-    locationVehicule: Number(draft.locationVehicule),
-    locationAmbulance: Number(draft.locationAmbulance),
-    locationBungalows: Number(draft.locationBungalows),
-    epi: Number(draft.epi),
-
-    // compat
-    location: Number(draft.location),
-  };
+  for (const g of GROUPS) {
+    payload[`${g.key}Nb`] = Number(toNum((draft as any)[`${g.key}Nb`]));
+    payload[`${g.key}Cout`] = Number(toNum((draft as any)[`${g.key}Cout`]));
+  }
+  return payload;
 }
 
 async function save() {
@@ -205,8 +199,8 @@ async function save() {
   saving.value = true;
 
   try {
-    await (store as any).updateVariant(variant.value.id, { coutMensuel: buildPayload() });
-    openInfo("Enregistré", "La section Coût au mois a été mise à jour.");
+    await (store as any).updateVariant(variant.value.id, { employes: buildPayload() });
+    openInfo("Enregistré", "La section Coût employés a été mise à jour.");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     openInfo("Erreur", String(err.value));
@@ -216,7 +210,7 @@ async function save() {
 }
 
 function askSave() {
-  openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts mensuels ?", async () => {
+  openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts employés ?", async () => {
     closeModal();
     await save();
   });
@@ -234,10 +228,10 @@ function askReset() {
   <div class="page">
     <div class="top">
       <div class="title">
-        <div class="h1">Coût au mois</div>
+        <div class="h1">Coût employés</div>
         <div class="muted" v-if="variant">
           Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
+          <span v-if="dureeMois"> — Durée {{ n(dureeMois, 0) }} mois</span>
         </div>
         <div class="muted" v-else>Aucune variante active.</div>
       </div>
@@ -281,79 +275,32 @@ function askReset() {
           </div>
         </div>
 
-        <!-- ✅ FORM -->
+        <!-- ✅ TABLE/GRID -->
         <div class="panel">
           <div class="grid">
-            <div class="field">
-              <div class="label">Électricité</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.electricite" />
-            </div>
+            <template v-for="g in GROUPS" :key="g.key">
+              <div class="card">
+                <div class="cardHead">
+                  <b class="cardTitle">{{ g.label }}</b>
+                  <span class="cardMini">
+                    Mensuel :
+                    <b>{{ money(toNum((draft as any)[`${g.key}Nb`]) * toNum((draft as any)[`${g.key}Cout`])) }}</b>
+                  </span>
+                </div>
 
-            <div class="field">
-              <div class="label">Location groupes</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.locationGroupes" />
-            </div>
+                <div class="row2">
+                  <div class="field">
+                    <div class="label">Nb</div>
+                    <input class="input r" type="number" step="0.1" min="0" v-model.number="(draft as any)[`${g.key}Nb`]" />
+                  </div>
 
-            <div class="field">
-              <div class="label">Gasoil</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.gasoil" />
-            </div>
-
-            <div class="field">
-              <div class="label">Hébergements</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.hebergements" />
-            </div>
-
-            <div class="field">
-              <div class="label">Location terrain</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.locationTerrain" />
-            </div>
-
-            <div class="field">
-              <div class="label">Téléphone</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.telephone" />
-            </div>
-
-            <div class="field">
-              <div class="label">3G</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.troisG" />
-            </div>
-
-            <div class="field">
-              <div class="label">Taxe professionnelle</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.taxeProfessionnelle" />
-            </div>
-
-            <div class="field">
-              <div class="label">Sécurité</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.securite" />
-            </div>
-
-            <div class="field">
-              <div class="label">Location véhicule</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.locationVehicule" />
-            </div>
-
-            <div class="field">
-              <div class="label">Location ambulance</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.locationAmbulance" />
-            </div>
-
-            <div class="field">
-              <div class="label">Location bungalows</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.locationBungalows" />
-            </div>
-
-            <div class="field">
-              <div class="label">EPI</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.epi" />
-            </div>
-
-            <!-- compat -->
-            <div class="field">
-              <div class="label muted">DB: location (legacy)</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.location" />
-            </div>
+                  <div class="field">
+                    <div class="label">Coût / pers / mois</div>
+                    <input class="input r" type="number" step="0.01" min="0" v-model.number="(draft as any)[`${g.key}Cout`]" />
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </template>
@@ -424,16 +371,40 @@ function askReset() {
 .kVal{ font-size:13px; font-weight:900; white-space:nowrap; }
 .kVal span{ font-weight:700; color:#6b7280; margin-left:6px; }
 
+/* cards */
 .grid{
   display:grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(3, minmax(240px, 1fr));
   gap:10px;
 }
 @media (max-width: 1200px){
-  .grid{ grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+  .grid{ grid-template-columns: repeat(2, minmax(240px, 1fr)); }
 }
-@media (max-width: 700px){
+@media (max-width: 750px){
   .grid{ grid-template-columns: 1fr; }
+}
+
+.card{
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:10px;
+  background:#fcfcfd;
+}
+
+.cardHead{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:baseline;
+  margin-bottom:8px;
+}
+.cardTitle{ font-size:13px; }
+.cardMini{ font-size:11px; color:#6b7280; white-space:nowrap; }
+
+.row2{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
 }
 
 .field{ display:flex; flex-direction:column; gap:6px; }
