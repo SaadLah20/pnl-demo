@@ -15,6 +15,8 @@ import MaintenancePage from "@/pages/MaintenancePage.vue";
 import CoutM3 from "@/pages/CoutM3Page.vue";
 import CoutMensuelPage from "@/pages/CoutMensuelPage.vue";
 import CoutEmployesPage from "@/pages/CoutEmployesPage.vue";
+import CoutsOccasionnelsPage from "@/pages/CoutsOccasionnelsPage.vue";
+import AutresCoutsPage from "@/pages/AutresCoutsPage.vue";
 
 
 
@@ -38,11 +40,11 @@ const routes = [
 { path: "/cout-m3", name: "cout au m3", component: CoutM3 },
 { path: "/cout-mois", name: "CoutMensuel", component: CoutMensuelPage },
 { path: "/cout-employes", name: "CoutEmployes", component: CoutEmployesPage },
+{ path: "/couts-occasionnels", name: "CoutsOccasionnels", component: CoutsOccasionnelsPage },
+{ path: "/autres-couts", name: "AutresCouts", component: AutresCoutsPage },
 
 
         
-
-
 
   // ✅ Répertoire MP
   {

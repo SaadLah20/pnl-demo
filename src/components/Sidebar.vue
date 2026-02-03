@@ -3,6 +3,9 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePnlStore } from "@/stores/pnl.store";
 
+// ✅ Logo (assure-toi que le fichier existe)
+import holcimLogoUrl from "@/assets/holcim_logo.png";
+
 // Heroicons
 import {
   ChartBarIcon,
@@ -11,17 +14,14 @@ import {
   ArchiveBoxIcon,
   ArrowsRightLeftIcon,
   DocumentPlusIcon,
-
   DocumentTextIcon,
   Squares2X2Icon,
   ChevronRightIcon,
   ChevronDownIcon,
-
   CubeIcon,
   TruckIcon,
   BeakerIcon,
   ScaleIcon,
-
   BuildingLibraryIcon,
   WrenchIcon,
   CalendarIcon,
@@ -40,16 +40,18 @@ const store = usePnlStore();
 ===================== */
 const activeItem = ref("Mes P&L");
 
+// ✅ Sections fermées au démarrage (dans "Variante active")
 const open = ref({
   general: true,
-
   varianteActive: true,
-  sections: true,
 
-  appro: true,
-  formules: true,
-  couts: true,
-  devis: true,
+  // tree
+  sections: false,
+
+  appro: false,
+  formules: false,
+  couts: false,
+  devis: false,
 });
 
 /* =====================
@@ -64,31 +66,29 @@ const routeByItem: Record<string, string> = {
   "Détails": "Details",
   "P&L archivés": "PnlArchives",
 
-  "CAB": "CAB",
-  "MP": "Mp",
-  "Transport": "Transport",
-    "Formules": "Formules",
-"Qté et MOMD": "MomdAndQuantity",
-"Maintenance": "Maintenance",
-"Cout au m3":"cout au m3",
-"Cout au mois": "CoutMensuel",
-"Cout employés" : "CoutEmployes",
-
-
+  CAB: "CAB",
+  MP: "Mp",
+  Transport: "Transport",
+  Formules: "Formules",
+  "Qté et MOMD": "MomdAndQuantity",
+  Maintenance: "Maintenance",
+  "Cout au m3": "cout au m3",
+  "Cout au mois": "CoutMensuel",
+  "Cout employés": "CoutEmployes",
+  "Couts occasionnels": "CoutsOccasionnels",
+  "Autres couts": "AutresCouts",
 };
-
 
 function goToPage(item: string) {
   activeItem.value = item;
 
-  // known routes
   const rn = routeByItem[item];
   if (rn) {
     router.push({ name: rn });
     return;
   }
 
-  // fallback PageView with a stable name
+  // fallback PageView
   const pageNameMap: Record<string, string> = {
     "Récapitulatif": "Variante/Récapitulatif",
 
@@ -125,11 +125,12 @@ watch(
     else if (route.name === "Transport") activeItem.value = "Transport";
     else if (route.name === "Formules") activeItem.value = "Formules";
     else if (route.name === "MomdAndQuantity") activeItem.value = "Qté et MOMD";
-else if (route.name === "Maintenance") activeItem.value = "Maintenance";
-else if (route.name === "cout au m3") activeItem.value = "cout au m3";
-else if (route.name === "CoutMensuel") activeItem.value = "Cout au mois";
-else if (route.name === "CoutEmployes") activeItem.value = "Cout employés";
-
+    else if (route.name === "Maintenance") activeItem.value = "Maintenance";
+    else if (route.name === "cout au m3") activeItem.value = "Cout au m3";
+    else if (route.name === "CoutMensuel") activeItem.value = "Cout au mois";
+    else if (route.name === "CoutEmployes") activeItem.value = "Cout employés";
+    else if (route.name === "CoutsOccasionnels") activeItem.value = "Couts occasionnels";
+    else if (route.name === "AutresCouts") activeItem.value = "Autres couts";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 
@@ -156,7 +157,6 @@ else if (route.name === "CoutEmployes") activeItem.value = "Cout employés";
       ];
 
       const hit = reverse.find(([k]) => k === n);
-      // si la page n'est pas mappée, on ne force pas "Mes P&L"
       if (hit) activeItem.value = hit[1];
     } else {
       activeItem.value = "Mes P&L";
@@ -199,9 +199,6 @@ const icons: Record<string, any> = {
   "Majorations": PlusIcon,
 };
 
-/* =====================
-   GENERAL ITEMS
-===================== */
 const generalItems = computed(() => [
   "Mes P&L",
   "Répertoire MP",
@@ -212,7 +209,7 @@ const generalItems = computed(() => [
 ]);
 
 /* =====================
-   VARIANT SELECTOR (REAL)
+   VARIANT SELECTOR
 ===================== */
 const activePnl = computed(() => store.activePnl);
 
@@ -230,12 +227,7 @@ const variantOptions = computed<VariantOption[]>(() => {
   const out: VariantOption[] = [];
   for (const c of pnl.contracts ?? []) {
     const cId = String(c.id ?? "");
-    const cLabel = c?.title
-      ? String(c.title)
-      : cId
-      ? `Contrat ${cId.slice(0, 6)}`
-      : "Contrat";
-
+    const cLabel = c?.title ? String(c.title) : cId ? `Contrat ${cId.slice(0, 6)}` : "Contrat";
     for (const v of c.variants ?? []) {
       out.push({
         contractId: cId,
@@ -249,20 +241,12 @@ const variantOptions = computed<VariantOption[]>(() => {
 });
 
 const activeVariantId = computed(() => String(store.activeVariantId ?? ""));
-const activeVariantLabel = computed(() => store.activeVariant?.title ?? "—");
 
 function setActiveVariant(id: string) {
-  // ✅ préfère une action explicite si tu l'as dans le store
   const anyStore: any = store as any;
-
-  if (typeof anyStore.setActiveVariant === "function") {
-    anyStore.setActiveVariant(id);
-  } else if (typeof anyStore.setActiveVariantId === "function") {
-    anyStore.setActiveVariantId(id);
-  } else {
-    // fallback direct state
-    anyStore.activeVariantId = id;
-  }
+  if (typeof anyStore.setActiveVariant === "function") anyStore.setActiveVariant(id);
+  else if (typeof anyStore.setActiveVariantId === "function") anyStore.setActiveVariantId(id);
+  else anyStore.activeVariantId = id;
 }
 
 /* =====================
@@ -274,288 +258,563 @@ function toggle(key: keyof typeof open.value) {
 </script>
 
 <template>
-  <aside class="sidebar">
-    <div class="logo-section">
-      <h1>PnL Creator</h1>
-    </div>
+  <aside class="sb">
+    <div class="sb__top">
+      <div class="sb__brand">
+        <!-- ✅ LOGO -->
+        <div class="sb__logoWrap">
+          <img class="sb__logo" :src="holcimLogoUrl" alt="Holcim" />
+        </div>
 
-    <div class="profile-section">
-      <img
-        class="profile-img"
-        src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-        alt="Profil"
-      />
-      <div class="profile-info">
-        <div class="name">Saad Lahlimi</div>
-        <div class="role">Responsable P&L</div>
+        <div class="sb__title">P&L Creator</div>
+        <div class="sb__subtitle">Analyse & marges</div>
       </div>
-    </div>
 
-    <!-- ✅ GENERAL -->
-    <div class="group-block general-block">
-      <div class="section">
-        <h2 class="section-title" @click="toggle('general')">
-          Général <span>{{ open.general ? "▾" : "▸" }}</span>
-        </h2>
-
-        <nav v-show="open.general" class="nav-items">
-          <div
-            v-for="item in generalItems"
-            :key="item"
-            class="item"
-            :class="{ active: activeItem === item }"
-            @click="goToPage(item)"
-          >
-            <component :is="icons[item] || ChartBarIcon" class="icon" />
-            {{ item }}
-          </div>
-        </nav>
-      </div>
-    </div>
-
-    <!-- ✅ VARIANTE ACTIVE -->
-    <div class="group-block edition-block">
-      <div class="section">
-        <h2 class="section-title" @click="toggle('varianteActive')">
-          Variante Active <span>{{ open.varianteActive ? "▾" : "▸" }}</span>
-        </h2>
-
-        <div v-show="open.varianteActive">
-          <!-- ✅ REAL SELECTOR -->
-          <div class="selectors" style="margin-bottom: 10px;">
-            <div class="selector" style="cursor: default;">
-              <div class="muted" style="font-size: 0.75rem; margin-bottom: 6px;">
-                Variante sélectionnée
-              </div>
-
-              <select
-                class="input"
-                :value="activeVariantId"
-                @change="setActiveVariant(($event.target as HTMLSelectElement).value)"
-              >
-                <option value="" disabled>— Choisir une variante —</option>
-
-                <!-- group by contract (simple grouping) -->
-                <template v-for="c in Array.from(new Set(variantOptions.map(v => v.contractLabel)))" :key="c">
-                  <optgroup :label="c">
-                    <option
-                      v-for="v in variantOptions.filter(x => x.contractLabel === c)"
-                      :key="v.variantId"
-                      :value="v.variantId"
-                    >
-                      {{ v.variantLabel }}
-                    </option>
-                  </optgroup>
-                </template>
-              </select>
-
-              <div class="muted" style="margin-top: 6px; font-size: 0.8rem;">
-                Active : <b>{{ activeVariantLabel }}</b>
-              </div>
-            </div>
-          </div>
-
-          <!-- ✅ Tree block -->
-          <div class="tree">
-            <!-- level 1 -->
-            <div class="tree-node">
-              <div
-                class="tree-leaf"
-                :class="{ active: activeItem === 'Détails' }"
-                @click="goToPage('Détails')"
-              >
-                <component :is="icons['Détails']" class="icon" />
-                Détails
-              </div>
-
-              <div
-                class="tree-leaf"
-                :class="{ active: activeItem === 'Récapitulatif' }"
-                @click="goToPage('Récapitulatif')"
-              >
-                <component :is="icons['Récapitulatif']" class="icon" />
-                Récapitulatif
-              </div>
-
-              <!-- Sections (parent) -->
-              <div class="tree-parent" @click="toggle('sections')">
-                <div class="tree-parent-left">
-                  <component :is="open.sections ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-                  <span class="tree-parent-title">Sections</span>
-                </div>
-              </div>
-
-              <!-- level 2 -->
-              <div v-show="open.sections" class="tree-children">
-                <!-- Approvisionnement -->
-                <div class="tree-parent lvl2" @click="toggle('appro')">
-                  <div class="tree-parent-left">
-                    <component :is="open.appro ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-                    <component :is="icons['Approvisionnement']" class="icon" />
-                    <span class="tree-parent-title">Approvisionnement</span>
-                  </div>
-                </div>
-                <div v-show="open.appro" class="tree-children lvl3">
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'MP' }" @click="goToPage('MP')">
-                    <component :is="icons['MP']" class="icon" /> MP
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Transport' }" @click="goToPage('Transport')">
-                    <component :is="icons['Transport']" class="icon" /> Transport
-                  </div>
-                </div>
-
-                <!-- Formules -->
-                <div class="tree-parent lvl2" @click="toggle('formules')">
-                  <div class="tree-parent-left">
-                    <component :is="open.formules ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-                    <component :is="icons['Formules']" class="icon" />
-                    <span class="tree-parent-title">Formules</span>
-                  </div>
-                </div>
-                <div v-show="open.formules" class="tree-children lvl3">
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Formules' }" @click="goToPage('Formules')">
-                    <component :is="icons['Formules']" class="icon" /> Formules
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Qté et MOMD' }" @click="goToPage('Qté et MOMD')">
-                    <component :is="icons['Qté et MOMD']" class="icon" /> Qté et MOMD
-                  </div>
-                </div>
-
-                <!-- Coûts -->
-                <div class="tree-parent lvl2" @click="toggle('couts')">
-                  <div class="tree-parent-left">
-                    <component :is="open.couts ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-                    <component :is="icons['Coûts']" class="icon" />
-                    <span class="tree-parent-title">Coûts</span>
-                  </div>
-                </div>
-                <div v-show="open.couts" class="tree-children lvl3">
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'CAB' }" @click="goToPage('CAB')">
-                    <component :is="icons['CAB']" class="icon" /> CAB
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Maintenance' }" @click="goToPage('Maintenance')">
-                    <component :is="icons['Maintenance']" class="icon" /> Maintenance
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Cout au m3' }" @click="goToPage('Cout au m3')">
-                    <component :is="icons['Cout au m3']" class="icon" /> Cout au m3
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Cout au mois' }" @click="goToPage('Cout au mois')">
-                    <component :is="icons['Cout au mois']" class="icon" /> Cout au mois
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Cout employés' }" @click="goToPage('Cout employés')">
-                    <component :is="icons['Cout employés']" class="icon" /> Cout employés
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Couts occasionnels' }" @click="goToPage('Couts occasionnels')">
-                    <component :is="icons['Couts occasionnels']" class="icon" /> Couts occasionnels
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Autres couts' }" @click="goToPage('Autres couts')">
-                    <component :is="icons['Autres couts']" class="icon" /> Autres couts
-                  </div>
-                </div>
-
-                <!-- Devis -->
-                <div class="tree-parent lvl2" @click="toggle('devis')">
-                  <div class="tree-parent-left">
-                    <component :is="open.devis ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-                    <component :is="icons['Devis']" class="icon" />
-                    <span class="tree-parent-title">Devis</span>
-                  </div>
-                </div>
-                <div v-show="open.devis" class="tree-children lvl3">
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Majorations' }" @click="goToPage('Majorations')">
-                    <component :is="icons['Majorations']" class="icon" /> Majorations
-                  </div>
-                  <div class="tree-leaf small" :class="{ active: activeItem === 'Devis' }" @click="goToPage('Devis')">
-                    <component :is="DocumentPlusIcon" class="icon" /> Devis
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <!-- /tree -->
+      <div class="sb__profile">
+        <img
+          class="sb__avatar"
+          src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+          alt="Profil"
+        />
+        <div class="sb__who">
+          <div class="sb__name">Saad Lahlimi</div>
+          <div class="sb__role">Responsable P&L</div>
         </div>
       </div>
     </div>
+
+    <!-- GENERAL -->
+    <section class="sb__block">
+      <header class="sb__blockHead" @click="toggle('general')">
+        <div class="sb__blockTitle">Général</div>
+        <span class="sb__chev">{{ open.general ? "▾" : "▸" }}</span>
+      </header>
+
+      <nav v-show="open.general" class="sb__nav">
+        <button
+          v-for="item in generalItems"
+          :key="item"
+          type="button"
+          class="sb__item"
+          :class="{ 'is-active': activeItem === item }"
+          @click="goToPage(item)"
+        >
+          <component :is="icons[item] || ChartBarIcon" class="sb__icon" />
+          <span class="sb__label">{{ item }}</span>
+        </button>
+      </nav>
+    </section>
+
+    <!-- VARIANTE ACTIVE -->
+    <section class="sb__block sb__block--accent">
+      <header class="sb__blockHead" @click="toggle('varianteActive')">
+        <div class="sb__blockTitle">Variante active</div>
+        <span class="sb__chev">{{ open.varianteActive ? "▾" : "▸" }}</span>
+      </header>
+
+      <div v-show="open.varianteActive" class="sb__content">
+        <!-- ✅ seulement le selector -->
+        <div class="sb__card">
+          <select
+            class="sb__select"
+            :value="activeVariantId"
+            @change="setActiveVariant(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="" disabled>— Choisir une variante —</option>
+
+            <template v-for="c in Array.from(new Set(variantOptions.map(v => v.contractLabel)))" :key="c">
+              <optgroup :label="c">
+                <option
+                  v-for="v in variantOptions.filter(x => x.contractLabel === c)"
+                  :key="v.variantId"
+                  :value="v.variantId"
+                >
+                  {{ v.variantLabel }}
+                </option>
+              </optgroup>
+            </template>
+          </select>
+        </div>
+
+        <!-- TREE -->
+        <div class="sb__tree">
+          <button
+            type="button"
+            class="sb__leaf"
+            :class="{ 'is-active': activeItem === 'Détails' }"
+            @click="goToPage('Détails')"
+          >
+            <component :is="icons['Détails']" class="sb__icon" />
+            <span class="sb__label">Détails</span>
+          </button>
+
+          <button
+            type="button"
+            class="sb__leaf"
+            :class="{ 'is-active': activeItem === 'Récapitulatif' }"
+            @click="goToPage('Récapitulatif')"
+          >
+            <component :is="icons['Récapitulatif']" class="sb__icon" />
+            <span class="sb__label">Récapitulatif</span>
+          </button>
+
+          <!-- ✅ Fermé au démarrage -->
+          <button type="button" class="sb__parent" @click="toggle('sections')">
+            <component :is="open.sections ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
+            <span class="sb__parentTitle">Sections</span>
+          </button>
+
+          <div v-show="open.sections" class="sb__children">
+            <!-- Approvisionnement -->
+            <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('appro')">
+              <component :is="open.appro ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
+              <component :is="icons['Approvisionnement']" class="sb__icon" />
+              <span class="sb__parentTitle">Approvisionnement</span>
+            </button>
+            <div v-show="open.appro" class="sb__children sb__children--lvl3">
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'MP' }"
+                @click="goToPage('MP')"
+              >
+                <component :is="icons['MP']" class="sb__icon" />
+                <span class="sb__label">MP</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Transport' }"
+                @click="goToPage('Transport')"
+              >
+                <component :is="icons['Transport']" class="sb__icon" />
+                <span class="sb__label">Transport</span>
+              </button>
+            </div>
+
+            <!-- Formules -->
+            <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('formules')">
+              <component :is="open.formules ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
+              <component :is="icons['Formules']" class="sb__icon" />
+              <span class="sb__parentTitle">Formules</span>
+            </button>
+            <div v-show="open.formules" class="sb__children sb__children--lvl3">
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Formules' }"
+                @click="goToPage('Formules')"
+              >
+                <component :is="icons['Formules']" class="sb__icon" />
+                <span class="sb__label">Formules</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Qté et MOMD' }"
+                @click="goToPage('Qté et MOMD')"
+              >
+                <component :is="icons['Qté et MOMD']" class="sb__icon" />
+                <span class="sb__label">Qté et MOMD</span>
+              </button>
+            </div>
+
+            <!-- Coûts -->
+            <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('couts')">
+              <component :is="open.couts ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
+              <component :is="icons['Coûts']" class="sb__icon" />
+              <span class="sb__parentTitle">Coûts</span>
+            </button>
+            <div v-show="open.couts" class="sb__children sb__children--lvl3">
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'CAB' }"
+                @click="goToPage('CAB')"
+              >
+                <component :is="icons['CAB']" class="sb__icon" />
+                <span class="sb__label">CAB</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Maintenance' }"
+                @click="goToPage('Maintenance')"
+              >
+                <component :is="icons['Maintenance']" class="sb__icon" />
+                <span class="sb__label">Maintenance</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Cout au m3' }"
+                @click="goToPage('Cout au m3')"
+              >
+                <component :is="icons['Cout au m3']" class="sb__icon" />
+                <span class="sb__label">Cout au m3</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Cout au mois' }"
+                @click="goToPage('Cout au mois')"
+              >
+                <component :is="icons['Cout au mois']" class="sb__icon" />
+                <span class="sb__label">Cout au mois</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Cout employés' }"
+                @click="goToPage('Cout employés')"
+              >
+                <component :is="icons['Cout employés']" class="sb__icon" />
+                <span class="sb__label">Cout employés</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Couts occasionnels' }"
+                @click="goToPage('Couts occasionnels')"
+              >
+                <component :is="icons['Couts occasionnels']" class="sb__icon" />
+                <span class="sb__label">Couts occasionnels</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Autres couts' }"
+                @click="goToPage('Autres couts')"
+              >
+                <component :is="icons['Autres couts']" class="sb__icon" />
+                <span class="sb__label">Autres couts</span>
+              </button>
+            </div>
+
+            <!-- Devis -->
+            <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('devis')">
+              <component :is="open.devis ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
+              <component :is="icons['Devis']" class="sb__icon" />
+              <span class="sb__parentTitle">Devis</span>
+            </button>
+            <div v-show="open.devis" class="sb__children sb__children--lvl3">
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Majorations' }"
+                @click="goToPage('Majorations')"
+              >
+                <component :is="icons['Majorations']" class="sb__icon" />
+                <span class="sb__label">Majorations</span>
+              </button>
+              <button
+                type="button"
+                class="sb__leaf sb__leaf--small"
+                :class="{ 'is-active': activeItem === 'Devis' }"
+                @click="goToPage('Devis')"
+              >
+                <component :is="DocumentPlusIcon" class="sb__icon" />
+                <span class="sb__label">Devis</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- /TREE -->
+      </div>
+    </section>
   </aside>
 </template>
 
 <style scoped>
-/* ✅ CSS EXISTANT (inchangé) */
-.sidebar { width: 280px; background: #f8f9fa; padding: 16px; height: 100vh; overflow-y: auto; font-family: "Inter", sans-serif; box-shadow: 2px 0 8px rgba(0,0,0,0.05); }
-.logo-section h1 { background: linear-gradient(135deg,#007a33,#009ee0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 16px; font-size: 1.5rem; font-weight: 700; }
-.profile-section { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.profile-img { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #ccc; }
-.profile-info .name { font-weight: 600; font-size: 0.95rem; }
-.profile-info .role { font-size: 0.8rem; color: #666; }
-.group-block { margin-bottom: 16px; padding: 10px; border-radius: 8px; }
-.general-block { background: #f1f3f5; }
-.edition-block { background: #e8f5e9; }
-.variante-block { background: #ffffff; border: 1px solid #ddd; }
-.selectors { background: #ffffff; border-radius: 8px; padding: 8px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
-.selector { background: #f8f9fa; padding: 6px 8px; border-radius: 6px; font-size: 0.85rem; border: 1px solid #ddd; }
-.section-title { font-weight: 600; font-size: 0.95rem; cursor: pointer; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(90deg,#007a33,#009ee0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.nav-items { display: flex; flex-direction: column; margin-bottom: 10px; }
-.item { padding: 6px 10px; cursor: pointer; border-radius: 6px; transition: all 0.2s; font-size: 0.9rem; color: #333; display: flex; align-items: center; gap: 8px; }
-.item:hover { background: #e0f2f1; transform: translateX(2px); }
-.item.active { background: #007a33; color: white; }
-.icon { width: 16px; height: 16px; }
+.sb {
+  --navy: #184070;
+  --cyan: #20b8e8;
+  --green: #90c028;
 
-/* ✅ AJOUTS MINIMAUX pour hiérarchie propre (tree) */
-.input {
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  background: #fff;
-  font-size: 0.85rem;
+  --bg: #ffffff;
+  --panel: #f7f8fb;
+  --border: rgba(16, 24, 40, 0.10);
+  --text: #0f172a;
+  --muted: rgba(15, 23, 42, 0.62);
+
+  width: 292px;
+  height: 100vh;
+  overflow: auto;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  padding: 14px;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-.muted { color: #6b7280; }
+.sb__top {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
 
-/* Tree layout */
-.tree { background: #ffffff; border: 1px solid #d1d5db; border-radius: 10px; padding: 8px; }
-.tree-node { display: flex; flex-direction: column; gap: 6px; }
+.sb__brand {
+  display: grid;
+  gap: 6px;
+}
 
-.tree-leaf {
+.sb__logoWrap {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 3px;
+}
+
+.sb__logo {
+  display: block;
+  width: 100%;
+  height: 50px;
+  object-fit: contain;
+}
+
+.sb__title {
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  color: var(--navy);
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+.sb__subtitle {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.sb__profile {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 0.88rem;
-  color: #111827;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
 }
-.tree-leaf:hover { background: #e0f2f1; }
-.tree-leaf.active { background: #007a33; color: #fff; }
 
-.tree-parent {
+.sb__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.sb__who {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.sb__name {
+  font-weight: 700;
+  font-size: 0.90rem;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.sb__role {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.sb__block {
+  margin-top: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.sb__block--accent {
+  box-shadow: 0 0 0 1px rgba(32, 184, 232, 0.12) inset;
+}
+
+.sb__blockHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.6);
   cursor: pointer;
-  background: rgba(255,255,255,0.6);
-  border: 1px solid rgba(0,0,0,0.06);
+  user-select: none;
 }
-.tree-parent:hover { background: #eef2ff; }
-.tree-parent-left { display: flex; align-items: center; gap: 8px; }
-.tree-parent-title { font-size: 0.88rem; font-weight: 650; color: #111827; }
 
-/* levels */
-.tree-children {
-  margin-left: 10px;
-  padding-left: 10px;
-  border-left: 2px solid rgba(0,0,0,0.08);
+.sb__blockTitle {
+  font-weight: 800;
+  font-size: 0.86rem;
+  color: var(--navy);
+}
+
+.sb__chev {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.sb__nav {
+  display: grid;
+  gap: 6px;
+  padding: 10px 10px 12px;
+}
+
+.sb__item {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.1;
+}
+
+.sb__item:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.14);
+}
+
+.sb__item.is-active {
+  background: var(--navy);
+  color: #fff;
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.sb__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.sb__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb__content {
+  padding: 10px 10px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.sb__card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.sb__select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.86rem;
+  outline: none;
+}
+
+.sb__select:focus {
+  border-color: rgba(32, 184, 232, 0.55);
+  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.18);
+}
+
+.sb__tree {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  display: grid;
   gap: 6px;
 }
-.tree-children.lvl3 { margin-left: 14px; padding-left: 10px; border-left-style: dashed; }
 
-.lvl2 .tree-parent-title { font-weight: 600; font-size: 0.86rem; } /* plus petit que "Sections" */
-.tree-leaf.small { font-size: 0.85rem; padding: 5px 8px; }
+.sb__leaf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.88rem;
+  text-align: left;
+  line-height: 1.1;
+}
 
-.chev { width: 16px; height: 16px; color: #6b7280; }
+.sb__leaf:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.14);
+}
+
+.sb__leaf.is-active {
+  background: var(--navy);
+  color: #fff;
+}
+
+.sb__leaf--small {
+  padding: 7px 10px;
+  font-size: 0.85rem;
+}
+
+.sb__parent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: rgba(15, 23, 42, 0.02);
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+}
+
+.sb__parent:hover {
+  background: rgba(32, 184, 232, 0.07);
+  border-color: rgba(32, 184, 232, 0.16);
+}
+
+.sb__parent--lvl2 {
+  margin-top: 4px;
+}
+
+.sb__parentTitle {
+  font-weight: 800;
+  font-size: 0.86rem;
+  color: var(--text);
+}
+
+.sb__chevIcon {
+  width: 16px;
+  height: 16px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.sb__children {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(16, 24, 40, 0.08);
+  display: grid;
+  gap: 6px;
+}
+
+.sb__children--lvl3 {
+  margin-left: 12px;
+  border-left-style: dashed;
+}
 </style>

@@ -3,7 +3,19 @@ import { computed, onMounted, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 // Heroicons
-import { MagnifyingGlassIcon, EyeIcon, PencilSquareIcon } from "@heroicons/vue/24/outline";
+import {
+  MagnifyingGlassIcon,
+  EyeIcon,
+  PencilSquareIcon,
+  ChevronDownIcon,
+  Squares2X2Icon,
+  DocumentDuplicateIcon,
+  PlusCircleIcon,
+  BuildingOffice2Icon,
+  CalendarDaysIcon,
+  CubeIcon,
+  CheckBadgeIcon,
+} from "@heroicons/vue/24/outline";
 
 type KpiName =
   | "ASP"
@@ -30,15 +42,11 @@ onMounted(() => {
   if (store.pnls.length === 0) store.loadPnls();
 });
 
-/* =========================
-   ACTIVE ENTITIES
-========================= */
 const pnls = computed<any[]>(() => store.pnls ?? []);
 const activePnl = computed<any | null>(() => store.activePnl ?? null);
 const activeVariant = computed<any | null>(() => store.activeVariant ?? null);
 const headerKpis = computed<any>(() => store.activeHeaderKPIs);
 
-/** Contrat actif basé sur activeVariantId */
 const activeContract = computed<any | null>(() => {
   const pnl = activePnl.value;
   const vId = store.activeVariantId;
@@ -63,7 +71,6 @@ const pnlOpen = ref(false);
 const filteredPnls = computed(() => {
   const q = pnlQuery.value.trim().toLowerCase();
   if (!q) return pnls.value;
-
   return pnls.value.filter((p: any) => {
     const blob = `${p.title ?? ""} ${p.client ?? ""} ${p.id ?? ""}`.toLowerCase();
     return blob.includes(q);
@@ -78,26 +85,22 @@ function setActivePnlId(id: string) {
   if (typeof s.setActivePnl === "function") s.setActivePnl(id);
   else s.activePnlId = id;
 }
-
 function setActiveContractId(id: string) {
   const s: any = store as any;
   if (typeof s.setActiveContract === "function") s.setActiveContract(id);
   else s.activeContractId = id;
 }
-
 function setActiveVariantId(id: string) {
   const s: any = store as any;
   if (typeof s.setActiveVariant === "function") s.setActiveVariant(id);
   else s.activeVariantId = id;
 }
 
-/** util: retourne la 1ère variante d’un contrat */
 function firstVariantIdOfContract(contract: any): string | null {
   const v = (contract?.variants ?? [])[0];
   return v?.id ? String(v.id) : null;
 }
 
-/** quand P&L change: activePnl + contrat1 + variante1 */
 function onPickPnl(pnlId: string) {
   pnlOpen.value = false;
   pnlQuery.value = "";
@@ -114,7 +117,6 @@ function onPickPnl(pnlId: string) {
   if (v0) setActiveVariantId(v0);
 }
 
-/** quand Contrat change: contrat + variante1 */
 function onPickContract(contractId: string) {
   const c = contractsOfActivePnl.value.find((x: any) => String(x.id) === String(contractId));
   if (!c) return;
@@ -129,11 +131,7 @@ function onPickContract(contractId: string) {
    HEADER FIELDS
 ========================= */
 const projectName = computed(() => activePnl.value?.title ?? "—");
-const contractName = computed(() =>
-  activeContract.value ? `Contrat ${String(activeContract.value.id).slice(0, 6)}` : "—"
-);
 const variantName = computed(() => activeVariant.value?.title ?? "—");
-
 const durationMonths = computed(() => activeContract.value?.dureeMois ?? 0);
 const status = computed(() => activeVariant.value?.status ?? "—");
 const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
@@ -176,16 +174,9 @@ const metrics = computed<Metrics>(() => {
   };
 });
 
-const kpiOrder: KpiName[] = [
-  "ASP",
-  "CMP",
-  "MOMD",
-  "Transport",
-  "Production",
-  "EBITDA",
-  "EBIT",
-  "Amortissement",
-];
+/* ✅ 2 lignes, EBIT toujours en 2ème position */
+const kpiLeftRow1: KpiName[] = ["ASP", "EBIT", "CMP", "MOMD"];
+const kpiLeftRow2: KpiName[] = ["Transport", "Production", "EBITDA", "Amortissement"];
 
 /* =========================
    Buttons (placeholders)
@@ -194,438 +185,693 @@ function viewPnl() {}
 function editPnl() {}
 function viewContract() {}
 function editContract() {}
+function duplicateVariant() {}
+function newVariant() {}
+function editVariant() {}
 
 /* =========================
    UI HELPERS
 ========================= */
+function fmtMoney(v: number, digits = 0) {
+  return Number(v || 0).toLocaleString("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: 2,
+  });
+}
+function fmtPct(v: number) {
+  return Number(v || 0).toLocaleString("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
 function kpiClass(key: KpiName) {
   return {
-    highlight: ["ASP", "EBITDA", "EBIT"].includes(key),
     ebit: key === "EBIT",
+    asp: key === "ASP",
+    soft1: ["CMP", "MOMD"].includes(key),
+    soft2: ["Transport", "Production"].includes(key),
+    soft3: ["EBITDA", "Amortissement"].includes(key),
   };
 }
+
+const statusTone = computed(() => {
+  const s = String(status.value ?? "").toUpperCase();
+  if (["CLOSED", "ADJUGE", "ADJUGÉ"].includes(s)) return "ok";
+  if (["PERDU", "LOST"].includes(s)) return "bad";
+  if (["ENCOURS", "EN_COURS", "OPEN"].includes(s)) return "warn";
+  return "neutral";
+});
 </script>
 
 <template>
-  <header class="header-dashboard">
-    <!-- Ligne principale -->
-    <div class="top-row">
-      <div class="left-info">
-        <!-- ✅ P&L selector + search -->
-        <div class="select-pill pnl">
-          <div class="pill-head" @click="pnlOpen = !pnlOpen">
-            <span class="pill-label">P&L :</span>
-            <span class="pill-value">{{ projectName }}</span>
+  <header class="hd">
+    <!-- ✅ BARRE FULL WIDTH (3 blocs qui couvrent 100%) -->
+    <div class="bar">
+      <!-- P&L selector -->
+      <div class="pill pnl" @keydown.esc="pnlOpen = false">
+        <button type="button" class="pill__head" @click="pnlOpen = !pnlOpen">
+          <span class="pill__label">P&L</span>
+          <span class="pill__value" :title="projectName">{{ projectName }}</span>
+          <ChevronDownIcon class="pill__chev" />
+        </button>
 
-            <div class="mini-actions">
-              <button class="mini-btn" title="Voir" @click.stop="viewPnl">
-                <EyeIcon class="mini-ic" />
-              </button>
-              <button class="mini-btn" title="Éditer" @click.stop="editPnl">
-                <PencilSquareIcon class="mini-ic" />
-              </button>
-            </div>
-          </div>
-
-          <div v-if="pnlOpen" class="dropdown">
-            <div class="searchbar">
-              <MagnifyingGlassIcon class="s-ic" />
-              <input class="s-in" v-model="pnlQuery" placeholder="Rechercher un P&L (titre, client, id...)" />
-            </div>
-
-            <div class="dd-list">
-              <button
-                v-for="p in filteredPnls"
-                :key="p.id"
-                class="dd-item"
-                :class="{ active: String(p.id) === String(activePnl?.id) }"
-                @click="onPickPnl(String(p.id))"
-              >
-                <div class="dd-main">
-                  <b class="dd-title">{{ p.title ?? `P&L ${String(p.id).slice(0, 6)}` }}</b>
-                  <div class="dd-sub">{{ p.client ?? "—" }}</div>
-                </div>
-                <div class="dd-id">{{ String(p.id).slice(0, 6) }}</div>
-              </button>
-
-              <div v-if="filteredPnls.length === 0" class="dd-empty">Aucun P&L trouvé.</div>
-            </div>
-          </div>
+        <div class="pill__actions">
+          <button class="iconbtn" title="Voir" @click.stop="viewPnl"><EyeIcon class="ic" /></button>
+          <button class="iconbtn" title="Éditer" @click.stop="editPnl"><PencilSquareIcon class="ic" /></button>
         </div>
 
-        <!-- ✅ Contrat selector -->
-        <div class="select-pill contract">
-          <div class="pill-head">
-            <span class="pill-label">Contrat :</span>
+        <!-- ✅ Dropdown corrigé (plus de loupe géante) -->
+        <div v-if="pnlOpen" class="dd" @click.stop>
+          <div class="dd__search">
+            <MagnifyingGlassIcon class="dd__ic" />
+            <input class="dd__in" v-model="pnlQuery" placeholder="Rechercher un P&L..." />
+          </div>
 
-            <select
-              class="pill-select"
-              :value="activeContract?.id ? String(activeContract.id) : ''"
-              @change="onPickContract(($event.target as HTMLSelectElement).value)"
+          <div class="dd__list">
+            <button
+              v-for="p in filteredPnls"
+              :key="p.id"
+              class="dd__item"
+              :class="{ active: String(p.id) === String(activePnl?.id) }"
+              @click="onPickPnl(String(p.id))"
             >
-              <option value="" disabled>—</option>
-              <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
-                {{ c.title ? String(c.title) : `Contrat ${String(c.id).slice(0, 6)}` }}
-              </option>
-            </select>
+              <div class="dd__main">
+                <div class="dd__title">{{ p.title ?? `P&L ${String(p.id).slice(0, 6)}` }}</div>
+                <div class="dd__sub">{{ p.client ?? "—" }}</div>
+              </div>
+              <div class="dd__id">{{ String(p.id).slice(0, 6) }}</div>
+            </button>
 
-            <div class="mini-actions">
-              <button class="mini-btn" title="Voir" @click.stop="viewContract">
-                <EyeIcon class="mini-ic" />
-              </button>
-              <button class="mini-btn" title="Éditer" @click.stop="editContract">
-                <PencilSquareIcon class="mini-ic" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Variante -->
-        <div class="variant-block">
-          <div class="edit-item variant">Variante : {{ variantName }}</div>
-
-          <div class="actions-block">
-            <button class="action-btn">📄 Dupliquer</button>
-            <button class="action-btn">➕ Nouvelle variante</button>
-            <button class="action-btn">🗄️ Archiver</button>
-            <button class="action-btn">✏️ Éditer</button>
-            <button class="action-btn">🗑️ Supprimer</button>
+            <div v-if="filteredPnls.length === 0" class="dd__empty">Aucun P&L trouvé.</div>
           </div>
         </div>
       </div>
 
-      <div class="right-info">
-        <span>Durée : {{ durationMonths }} mois</span>
-        <span>Volume : {{ volumeTotal.toLocaleString("fr-FR") }} m³</span>
-        <span>Client : {{ client }}</span>
-        <span>Status : {{ status }}</span>
+      <!-- Contrat selector -->
+      <div class="pill contract">
+        <div class="pill__head static">
+          <span class="pill__label">Contrat</span>
+          <select
+            class="pill__select"
+            :value="activeContract?.id ? String(activeContract.id) : ''"
+            @change="onPickContract(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="" disabled>—</option>
+            <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
+              {{ c.title ? String(c.title) : `Contrat ${String(c.id).slice(0, 6)}` }}
+            </option>
+          </select>
+        </div>
+
+        <div class="pill__actions">
+          <button class="iconbtn" title="Voir" @click.stop="viewContract"><EyeIcon class="ic" /></button>
+          <button class="iconbtn" title="Éditer" @click.stop="editContract"><PencilSquareIcon class="ic" /></button>
+        </div>
+      </div>
+
+      <!-- ✅ Variante = INFO (pas selector) -->
+      <div class="pill variant info">
+        <div class="pill__head static">
+          <Squares2X2Icon class="pill__miniic" />
+          <span class="pill__label">Variante</span>
+          <span class="pill__value" :title="variantName">{{ variantName }}</span>
+        </div>
+
+        <div class="pill__actions">
+          <button class="iconbtn" title="Dupliquer" @click.stop="duplicateVariant">
+            <DocumentDuplicateIcon class="ic" />
+          </button>
+          <button class="iconbtn" title="Nouvelle variante" @click.stop="newVariant">
+            <PlusCircleIcon class="ic" />
+          </button>
+          <button class="iconbtn" title="Éditer variante" @click.stop="editVariant">
+            <PencilSquareIcon class="ic" />
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- KPI GRID -->
-    <div class="kpi-grid">
-      <div v-for="key in kpiOrder" :key="key" class="kpi-column" :class="kpiClass(key)">
-        <div class="kpi-title">{{ key }}</div>
+    <!-- KPI + Summary -->
+    <div class="cockpit">
+      <div class="kpis-left">
+        <div class="kpi-row">
+          <div v-for="key in kpiLeftRow1" :key="key" class="kpi" :class="kpiClass(key)">
+            <div class="kpi__top">
+              <span class="kpi__name">{{ key }}</span>
 
-        <div class="kpi-box">
-          <div class="kpi-percent">
-            {{
-              Number(metrics[key].percent || 0).toLocaleString("fr-FR", {
-                minimumFractionDigits: 0,
-                maximumFractionDigits: 2,
-              })
-            }}%
+              <!-- ✅ % cohérent + EBIT plus visible -->
+              <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">
+                {{ fmtPct(metrics[key].percent) }}%
+              </span>
+            </div>
+
+            <div class="kpi__valRow">
+              <!-- ✅ chiffres uniformes (sauf EBIT) -->
+              <span class="kpi__num" :class="{ big: key === 'EBIT' }">
+                {{ fmtMoney(metrics[key].total, 0) }}
+              </span>
+              <span class="kpi__unit">DH</span>
+            </div>
+
+            <!-- ✅ mini-ligne compacte & stable -->
+            <div
+              class="kpi__mini"
+              :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
+            >
+              <span class="kmini">{{ fmtMoney(metrics[key].m3, 2) }}</span>
+              <span class="u">DH/m3</span>
+              <span class="dot">•</span>
+              <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
+              <span class="u">DH/mo</span>
+            </div>
           </div>
+        </div>
 
-          <div class="kpi-values">
-            <span>
-              {{
-                Number(metrics[key].total || 0).toLocaleString("fr-FR", {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 2,
-                })
-              }}
-              DH
-            </span>
+        <div class="kpi-row">
+          <div v-for="key in kpiLeftRow2" :key="key" class="kpi" :class="kpiClass(key)">
+            <div class="kpi__top">
+              <span class="kpi__name">{{ key }}</span>
+              <span class="kpi__pct">{{ fmtPct(metrics[key].percent) }}%</span>
+            </div>
 
-            <span>
-              {{
-                Number(metrics[key].m3 || 0).toLocaleString("fr-FR", {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 2,
-                })
-              }}
-              DH/m³
-            </span>
+            <div class="kpi__valRow">
+              <span class="kpi__num">{{ fmtMoney(metrics[key].total, 0) }}</span>
+              <span class="kpi__unit">DH</span>
+            </div>
 
-            <span>
-              {{
-                Number(metrics[key].month || 0).toLocaleString("fr-FR", {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 2,
-                })
-              }}
-              DH/mois
-            </span>
+            <div
+              class="kpi__mini"
+              :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
+            >
+              <span class="kmini">{{ fmtMoney(metrics[key].m3, 2) }}</span>
+              <span class="u">DH/m3</span>
+              <span class="dot">•</span>
+              <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
+              <span class="u">DH/mo</span>
+            </div>
           </div>
         </div>
       </div>
+
+      <aside class="summary" :class="statusTone">
+        <div class="summary__title">Résumé</div>
+
+        <div class="summary__grid">
+          <div class="sum">
+            <BuildingOffice2Icon class="sum__ic" />
+            <div class="sum__txt">
+              <div class="sum__k">Client</div>
+              <div class="sum__v" :title="client">{{ client }}</div>
+            </div>
+          </div>
+
+          <div class="sum">
+            <CalendarDaysIcon class="sum__ic" />
+            <div class="sum__txt">
+              <div class="sum__k">Durée</div>
+              <div class="sum__v">{{ durationMonths }} mois</div>
+            </div>
+          </div>
+
+          <div class="sum">
+            <CubeIcon class="sum__ic" />
+            <div class="sum__txt">
+              <div class="sum__k">Volume</div>
+              <div class="sum__v">{{ Number(volumeTotal || 0).toLocaleString("fr-FR") }} m³</div>
+            </div>
+          </div>
+
+          <div class="sum">
+            <CheckBadgeIcon class="sum__ic" />
+            <div class="sum__txt">
+              <div class="sum__k">Statut</div>
+              <div class="sum__v">{{ status }}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
     </div>
   </header>
 </template>
 
 <style scoped>
-/* =========================
-   Ton CSS existant (gardé)
-========================= */
-.header-dashboard {
+/* ===== Header ===== */
+.hd {
+  --navy: #184070;
+  --text: #0f172a;
+  --muted: rgba(15, 23, 42, 0.65);
+  --border: rgba(16, 24, 40, 0.12);
+  --bg: linear-gradient(180deg, #eef1f6 0%, #e6eaf1 100%);
+
   position: sticky;
   top: 0;
-  z-index: 100;
-  font-family: "Inter", sans-serif;
-  background: rgba(15, 23, 42, 0.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.8);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  z-index: 9999;
+  isolation: isolate;
+
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+
   padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 8px;
-}
-.top-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-.left-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 280px; }
-
-.edit-item {
-  width: auto; max-width: 420px;
-  font-size: 11px; font-weight: 750; color: #e2e8f0;
-  padding: 4px 8px; border-radius: 999px;
-  border: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(2, 6, 23, 0.55);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
-}
-.edit-item.variant {
-  border-color: rgba(34, 197, 94, 0.35);
-  background: rgba(2, 6, 23, 0.65);
-  color: #86efac;
-  font-weight: 800;
+  overflow-x: hidden;
 }
 
-.variant-block {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 5px 7px; border-radius: 12px;
-  border: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(2, 6, 23, 0.55);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
-}
-.actions-block { display: flex; gap: 6px; flex-wrap: wrap; }
-.action-btn {
-  border: 1px solid rgba(51, 65, 85, 0.9);
-  background: rgba(15, 23, 42, 0.55);
-  color: #cbd5e1;
-  font-size: 10.2px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 999px;
-  cursor: pointer;
-  white-space: nowrap;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease,
-    border-color 0.12s ease, color 0.12s ease;
-}
-.action-btn:hover {
-  transform: translateY(-1px);
-  background: rgba(0, 158, 224, 0.18);
-  border-color: rgba(0, 158, 224, 0.35);
-  color: #e2e8f0;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.32);
+/* ===== Top bar full width ===== */
+.bar {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
-.right-info {
-  display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center;
-  font-size: 10.5px; font-weight: 750;
-  color: rgba(253, 230, 138, 0.98);
-  padding: 5px 8px;
-  border-radius: 12px;
-  border: 1px solid rgba(245, 158, 11, 0.30);
-  background: rgba(245, 158, 11, 0.06);
+@media (max-width: 1100px) {
+  .bar {
+    grid-template-columns: 1fr;
+  }
 }
 
-/* KPI grid */
-.kpi-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
-@media (max-width: 1200px) { .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-
-.kpi-column { display: flex; flex-direction: column; gap: 5px; position: relative; }
-.kpi-title { font-size: 9.5px; font-weight: 750; letter-spacing: 0.45px; text-transform: uppercase; color: #94a3b8; text-align: center; line-height: 1.1; }
-
-.kpi-box {
-  position: relative; border-radius: 14px; padding: 8px 8px;
-  background: rgba(2, 6, 23, 0.62);
-  border: 1px solid rgba(51, 65, 85, 0.9);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
-}
-.kpi-box::before {
-  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
-  border-radius: 14px 14px 0 0; opacity: 0.95;
-  background: linear-gradient(90deg, #009ee0, #22c55e);
-}
-.kpi-box:hover { transform: translateY(-1px); box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45); border-color: rgba(148, 163, 184, 0.55); }
-.kpi-percent { font-size: 14px; font-weight: 750; line-height: 1.1; color: #e2e8f0; text-align: center; margin-bottom: 6px; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
-.kpi-values span {
-  display: block; text-align: center;
-  font-size: 10px; font-weight: 600; line-height: 1.35;
-  font-variant-numeric: tabular-nums; letter-spacing: -0.1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.kpi-values span:nth-child(1) { color: #e2e8f0; font-weight: 650; }
-.kpi-values span:nth-child(2) { color: #7dd3fc; font-weight: 600; opacity: 0.95; }
-.kpi-values span:nth-child(3) { color: #86efac; font-weight: 600; opacity: 0.95; }
-
-/* accents */
-.kpi-column:nth-child(1) .kpi-box::before { background: linear-gradient(90deg, #009ee0, #22c55e); }
-.kpi-column:nth-child(2) .kpi-box::before { background: linear-gradient(90deg, #f59e0b, #ef4444); }
-.kpi-column:nth-child(3) .kpi-box::before { background: linear-gradient(90deg, #22c55e, #16a34a); }
-.kpi-column:nth-child(4) .kpi-box::before { background: linear-gradient(90deg, #3b82f6, #06b6d4); }
-.kpi-column:nth-child(5) .kpi-box::before { background: linear-gradient(90deg, #a855f7, #ec4899); }
-.kpi-column:nth-child(6) .kpi-box::before { background: linear-gradient(90deg, #10b981, #0ea5e9); }
-.kpi-column:nth-child(7) .kpi-box::before { background: linear-gradient(90deg, #0f172a, #64748b); }
-.kpi-column:nth-child(8) .kpi-box::before { background: linear-gradient(90deg, #94a3b8, #64748b); }
-
-/* =========================
-   ✅ EBIT SPECIAL (sans badge)
-========================= */
-.kpi-column.ebit .kpi-title {
-  color: rgba(254, 240, 138, 0.98);
-  font-weight: 900;
-  letter-spacing: 0.7px;
-}
-.kpi-column.ebit .kpi-box {
-  border-color: rgba(245, 158, 11, 0.55);
-  box-shadow:
-    0 18px 48px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(245, 158, 11, 0.18) inset;
-  filter: saturate(1.15);
-}
-.kpi-column.ebit .kpi-box::before {
-  height: 4px;
-  opacity: 1;
-  background: linear-gradient(90deg, #f59e0b, #fde68a);
-}
-.kpi-column.ebit .kpi-percent {
-  font-size: 16px;
-  font-weight: 900;
-  letter-spacing: -0.35px;
-  color: rgba(254, 240, 138, 0.98);
-  text-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
-}
-.kpi-column.ebit .kpi-values span:nth-child(1) {
-  font-weight: 900;
-  color: rgba(254, 240, 138, 0.98);
-}
-.kpi-column.ebit .kpi-box:hover {
-  transform: translateY(-2px);
-  border-color: rgba(245, 158, 11, 0.8);
-  box-shadow:
-    0 26px 60px rgba(0, 0, 0, 0.65),
-    0 0 0 1px rgba(245, 158, 11, 0.22) inset;
-}
-
-/* =========================
-   ✅ selectors UI
-========================= */
-.select-pill {
+/* ===== Pills ===== */
+.pill {
   position: relative;
-  border-radius: 999px;
-  padding: 4px 8px;
-  border: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(2, 6, 23, 0.55);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+
+  width: 100%;
+  background: rgba(255, 255, 255, 0.90);
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 14px;
+  padding: 6px 8px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  min-width: 0;
+}
+
+.pill__head {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
 }
-.select-pill.pnl { border-color: rgba(0, 158, 224, 0.35); background: rgba(2, 6, 23, 0.65); }
-.select-pill.contract { border-color: rgba(245, 158, 11, 0.35); background: rgba(2, 6, 23, 0.65); }
+.pill__head.static {
+  cursor: default;
+}
 
-.pill-head {
+.pill__label {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.55);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.pill__value {
+  font-size: 12px;
+  font-weight: 950;
+  color: var(--text);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill__chev {
+  width: 16px;
+  height: 16px;
+  color: rgba(15, 23, 42, 0.55);
+  flex: 0 0 auto;
+}
+
+.pill__miniic {
+  width: 16px;
+  height: 16px;
+  color: rgba(24, 64, 112, 0.75);
+  flex: 0 0 auto;
+}
+
+.pill__actions {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  user-select: none;
+  gap: 6px;
+  flex: 0 0 auto;
 }
-.pill-label { font-size: 11px; font-weight: 800; color: #cbd5e1; }
-.pill-value {
-  font-size: 11px; font-weight: 850;
-  color: #e2e8f0;
-  max-width: 260px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.select-pill.pnl .pill-value { color: #7dd3fc; }
-.select-pill.contract .pill-value { color: #fdba74; }
 
-.mini-actions { display: inline-flex; gap: 4px; margin-left: 2px; }
-.mini-btn {
-  width: 24px; height: 24px;
-  border-radius: 999px;
-  border: 1px solid rgba(51, 65, 85, 0.9);
-  background: rgba(15, 23, 42, 0.55);
-  cursor: pointer;
+.iconbtn {
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.04);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
-.mini-btn:hover { background: rgba(0, 158, 224, 0.16); }
-.mini-ic { width: 14px; height: 14px; color: #cbd5e1; }
+.iconbtn:hover {
+  background: rgba(32, 184, 232, 0.12);
+  border-color: rgba(32, 184, 232, 0.18);
+}
+.ic {
+  width: 16px;
+  height: 16px;
+  color: rgba(15, 23, 42, 0.75);
+}
 
-.pill-select {
+.pill__select {
   border: none;
   outline: none;
   background: transparent;
-  color: #fdba74;
-  font-weight: 850;
-  font-size: 11px;
-  max-width: 220px;
-  cursor: pointer;
+  color: var(--text);
+  font-weight: 950;
+  font-size: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
-.pill-select option { color: #111827; }
 
-.dropdown {
+/* Variante info: pas d'apparence "selector" */
+.pill.variant.info {
+  background: rgba(255, 255, 255, 0.88);
+}
+.pill.variant.info .pill__head {
+  cursor: default;
+}
+
+/* ===== Dropdown (FIX) ===== */
+.dd {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  width: min(520px, 72vw);
-  background: rgba(2, 6, 23, 0.92);
-  border: 1px solid rgba(51, 65, 85, 0.9);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  width: min(560px, 96vw);
+  background: #fff;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
   padding: 10px;
-  z-index: 200;
+  z-index: 10000;
 }
 
-.searchbar {
+.dd__search {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(15, 23, 42, 0.75);
-  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid rgba(16, 24, 40, 0.10);
   border-radius: 12px;
   padding: 8px 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
-.s-ic { width: 16px; height: 16px; color: #94a3b8; }
-.s-in {
+
+.dd__ic {
+  width: 16px;
+  height: 16px;
+  color: rgba(15, 23, 42, 0.55);
+  flex: 0 0 auto;
+}
+
+.dd__in {
   width: 100%;
   border: none;
   outline: none;
   background: transparent;
-  color: #e2e8f0;
   font-size: 12px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.88);
 }
 
-.dd-list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-.dd-item {
-  border: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(15, 23, 42, 0.55);
-  border-radius: 12px;
-  padding: 8px 10px;
+.dd__list {
+  max-height: 260px;
+  overflow: auto;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dd__item {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
   justify-content: space-between;
   gap: 10px;
   cursor: pointer;
   text-align: left;
 }
-.dd-item:hover { background: rgba(0, 158, 224, 0.14); border-color: rgba(0, 158, 224, 0.35); }
-.dd-item.active { background: rgba(34, 197, 94, 0.14); border-color: rgba(34, 197, 94, 0.35); }
-.dd-title { color: #e2e8f0; font-size: 12px; }
-.dd-sub { color: #94a3b8; font-size: 11px; margin-top: 2px; }
-.dd-id { color: #94a3b8; font-size: 11px; font-variant-numeric: tabular-nums; }
-.dd-empty { color: #94a3b8; font-size: 12px; padding: 10px; text-align: center; }
-
-@media (max-width: 900px) {
-  .dropdown { width: min(520px, 92vw); }
+.dd__item:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.18);
 }
+.dd__item.active {
+  background: rgba(144, 192, 40, 0.10);
+  border-color: rgba(144, 192, 40, 0.22);
+}
+
+.dd__title {
+  font-size: 12px;
+  font-weight: 950;
+  color: var(--text);
+}
+.dd__sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.dd__id {
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+.dd__empty {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  padding: 10px;
+  text-align: center;
+}
+
+/* ===== Cockpit layout ===== */
+.cockpit {
+  display: grid;
+  grid-template-columns: 1fr 210px;
+  gap: 10px;
+  align-items: stretch;
+  min-width: 0;
+}
+@media (max-width: 1100px) {
+  .cockpit {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kpis-left {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  .kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ===== KPI cards ===== */
+.kpi {
+  background: #ffffff;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  border-radius: 14px;
+  padding: 9px 10px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 10px 22px rgba(15, 23, 42, 0.10);
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* légères teintes (sobres) pour distinguer */
+.kpi.soft1 { background: linear-gradient(180deg, rgba(32,184,232,0.06), #fff 60%); }
+.kpi.soft2 { background: linear-gradient(180deg, rgba(24,64,112,0.06), #fff 60%); }
+.kpi.soft3 { background: linear-gradient(180deg, rgba(148,163,184,0.12), #fff 60%); }
+
+.kpi__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.kpi__name {
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.kpi__pct {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.58);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(15, 23, 42, 0.02);
+}
+.kpi__pct.hot {
+  color: rgba(180, 83, 9, 0.98);
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.10);
+}
+
+.kpi__valRow {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.kpi__num {
+  font-size: 16px;          /* ✅ plus lisible */
+  font-weight: 950;
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+.kpi__num.big {
+  font-size: 19px;          /* ✅ EBIT héro */
+  letter-spacing: 0.2px;
+}
+
+.kpi__unit {
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.50);
+}
+
+.kpi__mini {
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.70);
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kmini { font-size: 10px; font-weight: 950; color: rgba(15, 23, 42, 0.80); }
+.u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.45); }
+.dot { color: rgba(15, 23, 42, 0.26); }
+
+/* ASP accent (même taille, mais effet) */
+.kpi.asp {
+  border-color: rgba(32, 184, 232, 0.30);
+  box-shadow:
+    0 0 0 1px rgba(32, 184, 232, 0.10) inset,
+    0 12px 24px rgba(15, 23, 42, 0.10);
+}
+.kpi.asp .kpi__num {
+  color: rgba(24, 64, 112, 1);
+}
+
+/* ✅ EBIT premium (glass + gradient + shine) */
+.kpi.ebit {
+  border-color: rgba(245, 158, 11, 0.55);
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(245,158,11,0.22), transparent 55%),
+    linear-gradient(180deg, rgba(245,158,11,0.14), #fff 58%);
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.18) inset,
+    0 16px 34px rgba(15, 23, 42, 0.14);
+  transform: translateY(-1px);
+  position: relative;
+}
+.kpi.ebit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.55), transparent 40%);
+  pointer-events: none;
+  opacity: 0.55;
+}
+.kpi.ebit .kpi__name {
+  color: rgba(180, 83, 9, 0.98);
+}
+.kpi.ebit .kpi__num {
+  color: rgba(180, 83, 9, 0.98);
+}
+
+/* ===== Summary ===== */
+.summary {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 16px;
+  padding: 10px 10px 8px;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.summary__title {
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  color: rgba(15, 23, 42, 0.68);
+  margin-bottom: 8px;
+}
+
+.summary__grid {
+  display: grid;
+  gap: 8px;
+}
+
+.sum {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.sum__ic {
+  width: 18px;
+  height: 18px;
+  color: rgba(24, 64, 112, 0.70);
+}
+.sum__k {
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.55);
+}
+.sum__v {
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary.ok { box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.10) inset, 0 10px 26px rgba(15, 23, 42, 0.10); }
+.summary.ok .sum__ic { color: rgba(34, 197, 94, 0.70); }
+.summary.warn { box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12) inset, 0 10px 26px rgba(15, 23, 42, 0.10); }
+.summary.warn .sum__ic { color: rgba(245, 158, 11, 0.75); }
+.summary.bad { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.12) inset, 0 10px 26px rgba(15, 23, 42, 0.10); }
+.summary.bad .sum__ic { color: rgba(239, 68, 68, 0.75); }
+.summary.neutral .sum__ic { color: rgba(24, 64, 112, 0.70); }
 </style>

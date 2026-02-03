@@ -1,6 +1,6 @@
 <!-- src/pages/MesPnlPage.vue -->
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, onBeforeUnmount } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 const API = "http://localhost:3001";
@@ -34,92 +34,56 @@ async function apiJson(url: string, opts?: RequestInit) {
 const store = usePnlStore();
 
 /* =========================================================
-   ENUMS (UI)
+   ENUMS (Contrat)
 ========================================================= */
-// P&L
-const PNL_MODELS = [
-  { value: "CAB_FIXE_EXISTANT", label: "CAB Fixe existant" },
-  { value: "CAB_FIXE_NOUVELLE", label: "CAB Fixe nouvelle" },
-  { value: "CAB_MOBILE_CLIENT", label: "CAB Mobile client" },
-] as const;
+type Opt = { value: any; label: string };
 
-const PNL_STATUS = [
-  { value: "ENCOURS", label: "Encours" },
-  { value: "PERDU", label: "Perdu" },
-  { value: "ADJUGE", label: "Adjugé" },
-] as const;
-
-// Variante
-const VARIANT_STATUS = [
-  { value: "INITIALISEE", label: "Initialisée" },
-  { value: "ENCOURS", label: "Encours" },
-  { value: "ANNULEE", label: "Annulée" },
-  { value: "CLOTUREE", label: "Clôturée" },
-] as const;
-
-// Contrat (tous les enums demandés)
-const CHARGE_3 = [
+const CHARGE_3: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
   { value: "EXISTANTE", label: "Existante" },
-] as const;
+];
 
-const GENIE_CIVIL_4 = [
+const GENIE_CIVIL_4: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
   { value: "EXISTANTE", label: "Existante" },
   { value: "PARTAGE", label: "Partagé" },
-] as const;
+];
 
-const TERRAIN_4 = [
+const TERRAIN_4: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
   { value: "EXISTANTE", label: "Existante" },
   { value: "PARTAGE", label: "Partagé" },
-] as const;
+];
 
-const MATIERE_3 = [
+const MATIERE_3: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
   { value: "PRESTATAIRE", label: "Prestataire" },
-] as const;
+];
 
-const MAINTENANCE_4 = [
+const MAINTENANCE_4: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
   { value: "PARTAGE_STANDARD", label: "Partage standard" },
   { value: "PARTAGE_PARTICULIER", label: "Partage particulier" },
-] as const;
+];
 
-const EAU_ELEC_BRANCH_3 = CHARGE_3;
-
-const CONSOMMATION_2 = [
+const CONSOMMATION_2: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-] as const;
+];
 
-const POSTES_2 = [
-  { value: "POSTE_1", label: "1 poste" },
-  { value: "POSTE_2", label: "2 postes" },
-] as const;
+const POSTES_2: Opt[] = [
+  { value: 1, label: "1 poste" },
+  { value: 2, label: "2 postes" },
+];
 
-/* =========================================================
-   UI STATE
-========================================================= */
-const q = ref("");
-const sortKey = ref<"title" | "city" | "status" | "createdAt">("createdAt");
-const sortDir = ref<"asc" | "desc">("desc");
-const open = reactive<Record<string, boolean>>({});
-
-function isOpen(pnlId: string) {
-  if (open[pnlId] === undefined) open[pnlId] = false;
-  return open[pnlId];
-}
-function togglePnl(pnlId: string) {
-  open[pnlId] = !isOpen(pnlId);
-}
-function collapseAll() {
-  for (const p of store.pnls ?? []) open[p.id] = false;
+function labelFrom(opts: Opt[], value: any) {
+  const f = opts.find((o) => String(o.value) === String(value));
+  return f?.label ?? (value === null || value === undefined || value === "" ? "-" : String(value));
 }
 
 /* =========================================================
@@ -137,52 +101,38 @@ function fmtDate(v: any) {
     return "-";
   }
 }
-function toIsoDateInput(v: any) {
-  try {
-    if (!v) return "";
-    const d = new Date(v);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  } catch {
-    return "";
-  }
-}
 function idShort(id: any) {
   const s = String(id ?? "");
   if (!s) return "";
   return s.length > 10 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
 }
+function statusKey(raw: any): string {
+  const s = String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!s) return "";
+  if (s === "ADJUGE" || s === "ADJUGEE") return "ADJUGE";
+  if (s === "EN COURS") return "ENCOURS";
+  if (s === "INITIALISEE") return "INITIALISEE";
+  if (s === "ANNULEE") return "ANNULEE";
+  if (s === "CLOTUREE") return "CLOTUREE";
+  if (s === "ARCHIVE") return "ARCHIVED";
+  return s;
+}
 function tagClass(status?: string) {
-  const s = String(status ?? "").toUpperCase();
-  if (s.includes("ARCH") || s.includes("PERDU") || s.includes("ANNUL")) return "tag tag--arch";
-  if (s.includes("CLOT") || s.includes("CLOSE")) return "tag tag--off";
-  if (s.includes("ENCO") || s.includes("ADJ") || s.includes("ACT")) return "tag tag--on";
+  const s = statusKey(status);
+  if (s.includes("ARCH")) return "tag tag--arch";
+  if (s.includes("TERM") || s.includes("CLOT") || s.includes("CLOSED")) return "tag tag--off";
+  if (s.includes("ENCO") || s.includes("ACT") || s.includes("ADJ")) return "tag tag--on";
   return "tag";
-}
-function numOr0(v: any) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function money(v: any) {
-  const n = numOr0(v);
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "MAD", maximumFractionDigits: 2 }).format(n);
-}
-function pick<T extends Record<string, any>>(obj: T, keys: string[]) {
-  const out: any = {};
-  for (const k of keys) if (obj?.[k] !== undefined) out[k] = obj[k];
-  return out;
-}
-function labelFromEnum(opts: readonly { value: string; label: string }[], value: any) {
-  const v = String(value ?? "");
-  const found = (opts as any[]).find((x) => x.value === v);
-  return found?.label ?? (v ? v : "-");
 }
 
 /* =========================================================
-   Active ids
+   Data
 ========================================================= */
+const pnls = computed<any[]>(() => store.pnls ?? []);
 const activePnlId = computed(() => (store as any).activePnlId ?? null);
 const activeVariantId = computed(() => (store as any).activeVariantId ?? null);
 
@@ -197,43 +147,104 @@ const activeContractId = computed(() => {
 });
 
 /* =========================================================
-   Data
+   UI state
 ========================================================= */
-const pnls = computed<any[]>(() => store.pnls ?? []);
+const q = ref(""); // search P&L only
+const openPnl = reactive<Record<string, boolean>>({});
+function isOpenPnl(id: string) {
+  if (openPnl[id] === undefined) openPnl[id] = false;
+  return openPnl[id];
+}
+function togglePnl(id: string) {
+  openPnl[id] = !isOpenPnl(id);
+}
+function collapseAllPnls() {
+  for (const p of pnls.value) openPnl[p.id] = false;
+}
 
-const filtered = computed<any[]>(() => {
-  const query = normalize(q.value);
+/* =========================================================
+   FILTERS/ SORT (P&L ONLY)
+========================================================= */
+const filterOpen = ref(false);
+
+const pnlStatusFilter = ref<string>("");
+const pnlCityFilter = ref<string>("");
+const pnlClientFilter = ref<string>("");
+const pnlModelFilter = ref<string>("");
+
+const sortPnlKey = ref<"status" | "city" | "client" | "model">("status");
+const sortPnlDir = ref<"asc" | "desc">("asc");
+
+const pnlCityOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const c = String(p?.city ?? "").trim();
+    if (c) set.add(c);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+const pnlClientOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const c = String(p?.client ?? "").trim();
+    if (c) set.add(c);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+const pnlModelOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const m = String(p?.model ?? "").trim();
+    if (m) set.add(m);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+const pnlStatusOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const s = statusKey(p?.status);
+    if (s) set.add(s);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+
+function resetPnlFilters() {
+  q.value = "";
+  pnlStatusFilter.value = "";
+  pnlCityFilter.value = "";
+  pnlClientFilter.value = "";
+  pnlModelFilter.value = "";
+  sortPnlKey.value = "status";
+  sortPnlDir.value = "asc";
+}
+
+const filteredPnls = computed<any[]>(() => {
   let rows = pnls.value;
 
+  if (pnlStatusFilter.value) rows = rows.filter((p) => statusKey(p?.status) === pnlStatusFilter.value);
+  if (pnlCityFilter.value) rows = rows.filter((p) => String(p?.city ?? "") === pnlCityFilter.value);
+  if (pnlClientFilter.value) rows = rows.filter((p) => String(p?.client ?? "") === pnlClientFilter.value);
+  if (pnlModelFilter.value) rows = rows.filter((p) => String(p?.model ?? "") === pnlModelFilter.value);
+
+  const query = normalize(q.value);
   if (query) {
     rows = rows.filter((p) => {
-      const title = normalize(p.title);
-      const model = normalize(p.model);
-      const city = normalize(p.city);
-      const status = normalize(p.status);
-      const client = normalize(p.client);
-      const region = normalize(p.region);
-      return (
-        title.includes(query) ||
-        model.includes(query) ||
-        city.includes(query) ||
-        status.includes(query) ||
-        client.includes(query) ||
-        region.includes(query)
-      );
+      const title = normalize(p?.title);
+      const client = normalize(p?.client);
+      const model = normalize(p?.model);
+      const city = normalize(p?.city);
+      const status = normalize(p?.status);
+      const id = normalize(p?.id);
+      return title.includes(query) || client.includes(query) || model.includes(query) || city.includes(query) || status.includes(query) || id.includes(query);
     });
   }
 
-  const dir = sortDir.value === "asc" ? 1 : -1;
+  const dir = sortPnlDir.value === "asc" ? 1 : -1;
   rows = [...rows].sort((a, b) => {
-    const ka = a?.[sortKey.value];
-    const kb = b?.[sortKey.value];
-    if (sortKey.value === "createdAt") {
-      const ta = ka ? new Date(ka).getTime() : 0;
-      const tb = kb ? new Date(kb).getTime() : 0;
-      return (ta - tb) * dir;
-    }
-    return String(ka ?? "").localeCompare(String(kb ?? ""), "fr") * dir;
+    const k = sortPnlKey.value;
+    const av = k === "status" ? statusKey(a?.status) : String(a?.[k] ?? "");
+    const bv = k === "status" ? statusKey(b?.status) : String(b?.[k] ?? "");
+    return av.localeCompare(bv, "fr") * dir;
   });
 
   const ap = activePnlId.value;
@@ -248,8 +259,18 @@ const filtered = computed<any[]>(() => {
   return rows;
 });
 
+/* click-outside popover */
+function onDocDown(e: MouseEvent) {
+  const t = e.target as HTMLElement | null;
+  if (!t) return;
+  if (t.closest?.("[data-filter-anchor]")) return;
+  filterOpen.value = false;
+}
+document.addEventListener("mousedown", onDocDown);
+onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
+
 /* =========================================================
-   NAV open variant
+   Actions
 ========================================================= */
 function openVariant(pnlId: string, contractId: string, variantId: string) {
   if ((store as any).setActivePnl) (store as any).setActivePnl(pnlId);
@@ -276,7 +297,7 @@ function closeView() {
 }
 
 /* =========================================================
-   EDIT MODAL
+   EDIT/CREATE MODAL
 ========================================================= */
 type EditMode = "pnl" | "contract" | "variant";
 const editOpen = ref(false);
@@ -284,21 +305,24 @@ const editMode = ref<EditMode>("pnl");
 const editBusy = ref(false);
 const editErr = ref<string | null>(null);
 
+/** create flags */
+const isCreate = ref(false);
+const createPnlId = ref<string | null>(null);      // for creating contract
+const createContractId = ref<string | null>(null); // for creating variant
+
 const draft = reactive<any>({
   id: "",
 
-  // P&L
+  // pnl
   title: "",
-  model: "CAB_FIXE_EXISTANT",
-  createdAt: "",
   client: "",
-  status: "ENCOURS",
-  startDatePlanned: "", // date prévue (affichée)
+  model: "",
   city: "",
-  region: "",
+  status: "",
+  createdAt: "",
 
-  // Contrat
-  ref: "",
+  // contract
+  ref: "", // non modifiable
   dureeMois: 0,
   cab: "LHM",
   installation: "LHM",
@@ -312,30 +336,28 @@ const draft = reactive<any>({
   consoEau: "LHM",
   branchementElec: "LHM",
   consoElec: "LHM",
-  postes: "POSTE_1",
+  postes: 1,
   sundayPrice: 0,
   delayPenalty: 0,
   chillerRent: 0,
 
-  // Variante
-  vTitle: "",
-  vDescription: "",
-  vStatus: "INITIALISEE",
+  // variant
+  description: "",
 });
 
 function resetDraft() {
   editErr.value = null;
+  isCreate.value = false;
+  createPnlId.value = null;
+  createContractId.value = null;
 
   draft.id = "";
-
   draft.title = "";
-  draft.model = "CAB_FIXE_EXISTANT";
-  draft.createdAt = "";
   draft.client = "";
-  draft.status = "ENCOURS";
-  draft.startDatePlanned = "";
+  draft.model = "";
   draft.city = "";
-  draft.region = "";
+  draft.status = "";
+  draft.createdAt = "";
 
   draft.ref = "";
   draft.dureeMois = 0;
@@ -351,14 +373,12 @@ function resetDraft() {
   draft.consoEau = "LHM";
   draft.branchementElec = "LHM";
   draft.consoElec = "LHM";
-  draft.postes = "POSTE_1";
+  draft.postes = 1;
   draft.sundayPrice = 0;
   draft.delayPenalty = 0;
   draft.chillerRent = 0;
 
-  draft.vTitle = "";
-  draft.vDescription = "";
-  draft.vStatus = "INITIALISEE";
+  draft.description = "";
 }
 
 function openEdit(mode: EditMode, data: any) {
@@ -369,13 +389,11 @@ function openEdit(mode: EditMode, data: any) {
   if (mode === "pnl") {
     draft.id = String(data.id);
     draft.title = String(data.title ?? "");
-    draft.model = String(data.model ?? "CAB_FIXE_EXISTANT");
-    draft.createdAt = String(data.createdAt ?? "");
     draft.client = String(data.client ?? "");
-    draft.status = String(data.status ?? "ENCOURS");
-    draft.startDatePlanned = toIsoDateInput(data.startDatePlanned ?? data.startDate ?? "");
+    draft.model = String(data.model ?? "");
     draft.city = String(data.city ?? "");
-    draft.region = String(data.region ?? "");
+    draft.status = String(data.status ?? "");
+    draft.createdAt = String(data.createdAt ?? "");
   }
 
   if (mode === "contract") {
@@ -383,7 +401,6 @@ function openEdit(mode: EditMode, data: any) {
     draft.ref = String(data.ref ?? "");
     draft.dureeMois = Number(data.dureeMois ?? 0);
 
-    // enums
     draft.cab = String(data.cab ?? "LHM");
     draft.installation = String(data.installation ?? "LHM");
     draft.genieCivil = String(data.genieCivil ?? "LHM");
@@ -392,13 +409,13 @@ function openEdit(mode: EditMode, data: any) {
     draft.matierePremiere = String(data.matierePremiere ?? "LHM");
     draft.maintenance = String(data.maintenance ?? "LHM");
     draft.chargeuse = String(data.chargeuse ?? "LHM");
+
     draft.branchementEau = String(data.branchementEau ?? "LHM");
     draft.consoEau = String(data.consoEau ?? "LHM");
     draft.branchementElec = String(data.branchementElec ?? "LHM");
     draft.consoElec = String(data.consoElec ?? "LHM");
-    draft.postes = String(data.postes ?? "POSTE_1");
 
-    // numbers
+    draft.postes = Number(data.postes ?? 1);
     draft.sundayPrice = Number(data.sundayPrice ?? 0);
     draft.delayPenalty = Number(data.delayPenalty ?? 0);
     draft.chillerRent = Number(data.chillerRent ?? 0);
@@ -406,10 +423,37 @@ function openEdit(mode: EditMode, data: any) {
 
   if (mode === "variant") {
     draft.id = String(data.id);
-    draft.vTitle = String(data.title ?? "");
-    draft.vDescription = String(data.description ?? "");
-    draft.vStatus = String(data.status ?? "INITIALISEE");
+    draft.title = String(data.title ?? "");
+    draft.status = String(data.status ?? "");
+    draft.description = String(data.description ?? "");
   }
+}
+
+/** CREATE Contract under P&L */
+function openCreateContract(pnlId: string) {
+  resetDraft();
+  editMode.value = "contract";
+  editOpen.value = true;
+  isCreate.value = true;
+  createPnlId.value = pnlId;
+
+  // defaults “raisonnables”
+  draft.ref = "";         // auto
+  draft.dureeMois = 0;
+  draft.postes = 1;
+}
+
+/** CREATE Variant under Contract */
+function openCreateVariant(contractId: string) {
+  resetDraft();
+  editMode.value = "variant";
+  editOpen.value = true;
+  isCreate.value = true;
+  createContractId.value = contractId;
+
+  draft.title = "Variante";
+  draft.status = "INITIALISEE";
+  draft.description = "";
 }
 
 function closeEdit() {
@@ -423,62 +467,86 @@ async function saveEdit() {
   editBusy.value = true;
 
   try {
+    // -------- PNL UPDATE
     if (editMode.value === "pnl") {
-      // SAFE payload (pour éviter erreurs backend si champs non gérés)
-      // Quand ton API supporte startDatePlanned/region => on activera l'envoi.
-      const payload = {
-        title: draft.title,
-        client: draft.client,
-        city: draft.city,
-        status: draft.status,
-        model: draft.model,
-        // startDatePlanned: draft.startDatePlanned || null,
-        // region: draft.region || null,
-      };
       await apiJson(`/pnls/${draft.id}`, {
         method: "PUT",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          title: draft.title,
+          client: draft.client,
+          city: draft.city,
+          status: draft.status,
+        }),
       });
     }
 
+    // -------- CONTRACT CREATE / UPDATE
     if (editMode.value === "contract") {
-      // enums -> string
-      await apiJson(`/contracts/${draft.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          ref: draft.ref,
-          dureeMois: Number(draft.dureeMois ?? 0),
+      const payload = {
+        // ref non modifiable et auto -> on n’envoie jamais "ref"
+        dureeMois: Number(draft.dureeMois ?? 0),
 
-          cab: draft.cab,
-          installation: draft.installation,
-          genieCivil: draft.genieCivil,
-          transport: draft.transport,
-          terrain: draft.terrain,
-          matierePremiere: draft.matierePremiere,
-          maintenance: draft.maintenance,
-          chargeuse: draft.chargeuse,
-          branchementEau: draft.branchementEau,
-          consoEau: draft.consoEau,
-          branchementElec: draft.branchementElec,
-          consoElec: draft.consoElec,
-          postes: draft.postes,
+        cab: draft.cab,
+        installation: draft.installation,
+        genieCivil: draft.genieCivil,
+        transport: draft.transport,
+        terrain: draft.terrain,
+        matierePremiere: draft.matierePremiere,
+        maintenance: draft.maintenance,
+        chargeuse: draft.chargeuse,
 
-          sundayPrice: Number(draft.sundayPrice ?? 0),
-          delayPenalty: Number(draft.delayPenalty ?? 0),
-          chillerRent: Number(draft.chillerRent ?? 0),
-        }),
-      });
+        branchementEau: draft.branchementEau,
+        consoEau: draft.consoEau,
+        branchementElec: draft.branchementElec,
+        consoElec: draft.consoElec,
+
+        postes: Number(draft.postes ?? 1),
+
+        sundayPrice: Number(draft.sundayPrice ?? 0),
+        delayPenalty: Number(draft.delayPenalty ?? 0),
+        chillerRent: Number(draft.chillerRent ?? 0),
+      };
+
+      if (isCreate.value) {
+        if (!createPnlId.value) throw new Error("pnlId manquant pour créer un contrat.");
+        await apiJson(`/contracts`, {
+          method: "POST",
+          body: JSON.stringify({
+            pnlId: createPnlId.value,
+            ...payload,
+          }),
+        });
+      } else {
+        await apiJson(`/contracts/${draft.id}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+      }
     }
 
+    // -------- VARIANT CREATE / UPDATE
     if (editMode.value === "variant") {
-      await apiJson(`/variants/${draft.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          title: draft.vTitle,
-          description: draft.vDescription,
-          status: draft.vStatus,
-        }),
-      });
+      if (isCreate.value) {
+        if (!createContractId.value) throw new Error("contractId manquant pour créer une variante.");
+        await apiJson(`/variants`, {
+          method: "POST",
+          body: JSON.stringify({
+            contractId: createContractId.value,
+            title: draft.title,
+            status: draft.status,
+            description: draft.description,
+          }),
+        });
+      } else {
+        await apiJson(`/variants/${draft.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            title: draft.title,
+            status: draft.status,
+            description: draft.description,
+          }),
+        });
+      }
     }
 
     const keepPnl = activePnlId.value;
@@ -496,77 +564,82 @@ async function saveEdit() {
     editBusy.value = false;
   }
 }
-
-/* =========================================================
-   Action placeholders
-========================================================= */
-function createPnl() {
-  console.log("TODO: create P&L (wizard pnl -> contract -> variant)");
-}
-function pnlArchive(pnlId: string) {
-  console.log("TODO: archive pnl", pnlId);
-}
-function contractArchive(contractId: string) {
-  console.log("TODO: archive contract", contractId);
-}
-function variantArchive(variantId: string) {
-  console.log("TODO: archive variant", variantId);
-}
 </script>
 
 <template>
   <div class="page">
+    <!-- HEADER -->
     <div class="header">
       <div class="titleBlock">
         <h1>Mes P&amp;L</h1>
-        <div class="sub">Hiérarchie : P&amp;L → Contrats → Variantes</div>
       </div>
 
       <div class="headerActions">
-        <button class="btn btn--ghost" @click="collapseAll">Tout réduire</button>
+        <button class="btn btn--ghost" @click="collapseAllPnls">Tout réduire</button>
         <button class="btn btn--ghost" @click="store.loadPnls?.()">Recharger</button>
-        <button class="btn btn--primary" @click="createPnl">+ Créer un P&amp;L</button>
       </div>
     </div>
 
-    <div class="toolbar card">
-      <div class="search">
+    <!-- ONE-LINE COMPACT SEARCH + FILTER BUTTON (P&L ONLY) -->
+    <div class="toolbarOneLine card">
+      <div class="searchMini">
         <span class="icon">⌕</span>
-        <input class="input" v-model="q" placeholder="Rechercher (titre, client, modèle, ville, statut)…" />
+        <input class="input" v-model="q" placeholder="Rechercher P&L…" />
       </div>
 
-      <div class="sort">
-        <div class="field">
-          <div class="label">Trier par</div>
-          <select class="select" v-model="sortKey">
-            <option value="createdAt">Date</option>
-            <option value="title">Titre</option>
-            <option value="city">Ville</option>
-            <option value="status">Statut</option>
-          </select>
-        </div>
+      <div class="filterWrap" data-filter-anchor>
+        <button class="btn btn--soft btn--mini" @click="filterOpen = !filterOpen" title="Filtres">⚙</button>
 
-        <div class="field">
-          <div class="label">Ordre</div>
-          <select class="select" v-model="sortDir">
-            <option value="desc">Desc</option>
-            <option value="asc">Asc</option>
-          </select>
+        <div v-if="filterOpen" class="popover">
+          <div class="popGrid">
+            <select class="sel" v-model="pnlStatusFilter" title="Statut">
+              <option value="">Statut: Tous</option>
+              <option v-for="s in pnlStatusOptions" :key="s" :value="s">{{ s }}</option>
+            </select>
+
+            <select class="sel" v-model="pnlCityFilter" title="Ville">
+              <option value="">Ville: Toutes</option>
+              <option v-for="c in pnlCityOptions" :key="c" :value="c">{{ c }}</option>
+            </select>
+
+            <select class="sel" v-model="pnlClientFilter" title="Client">
+              <option value="">Client: Tous</option>
+              <option v-for="c in pnlClientOptions" :key="c" :value="c">{{ c }}</option>
+            </select>
+
+            <select class="sel" v-model="pnlModelFilter" title="Modèle">
+              <option value="">Modèle: Tous</option>
+              <option v-for="m in pnlModelOptions" :key="m" :value="m">{{ m }}</option>
+            </select>
+
+            <select class="sel" v-model="sortPnlKey" title="Trier par">
+              <option value="status">Tri: Statut</option>
+              <option value="city">Tri: Ville</option>
+              <option value="client">Tri: Client</option>
+              <option value="model">Tri: Modèle</option>
+            </select>
+
+            <select class="sel" v-model="sortPnlDir" title="Ordre">
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+
+            <button class="btn btn--ghost btn--mini" @click="resetPnlFilters">Reset</button>
+          </div>
         </div>
       </div>
     </div>
 
+    <!-- LIST -->
     <div v-if="store.loading" class="card">Chargement…</div>
     <div v-else-if="store.error" class="card card--error"><b>Erreur :</b> {{ store.error }}</div>
 
     <div v-else class="list">
-      <div v-if="filtered.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
+      <div v-if="filteredPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
 
-      <div v-for="p in filtered" :key="p.id" class="card pnl" :class="{ activePnl: p.id === activePnlId }">
+      <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: p.id === activePnlId }">
         <div class="row pnlRow">
-          <button class="disclosure" @click="togglePnl(p.id)" :title="isOpen(p.id) ? 'Réduire' : 'Déplier'">
-            {{ isOpen(p.id) ? "▾" : "▸" }}
-          </button>
+          <button class="disclosure" @click="togglePnl(p.id)">{{ isOpenPnl(p.id) ? "▾" : "▸" }}</button>
 
           <div class="main">
             <div class="line1">
@@ -578,7 +651,7 @@ function variantArchive(variantId: string) {
             <div class="line2">
               <span class="meta"><span class="k">Client :</span> <b>{{ p.client ?? "-" }}</b></span>
               <span class="dot">•</span>
-              <span class="meta"><span class="k">Modèle :</span> <b>{{ labelFromEnum(PNL_MODELS as any, p.model) }}</b></span>
+              <span class="meta"><span class="k">Modèle :</span> <b>{{ p.model ?? "-" }}</b></span>
               <span class="dot">•</span>
               <span class="meta"><span class="k">Ville :</span> <b>{{ p.city ?? "-" }}</b></span>
               <span class="dot">•</span>
@@ -590,19 +663,25 @@ function variantArchive(variantId: string) {
           <div class="actions">
             <button class="btn btn--soft" @click="openView('pnl', p)">Visualiser</button>
             <button class="btn btn--soft" @click="openEdit('pnl', p)">Modifier</button>
-            <button class="btn btn--ghost danger" @click="pnlArchive(p.id)">Archiver</button>
           </div>
         </div>
 
-        <div v-show="isOpen(p.id)" class="children">
+        <div v-show="isOpenPnl(p.id)" class="children">
+          <div class="childrenHead">
+            <div class="muted">Contrats</div>
+            <button class="btn btn--primary btn--mini" @click="openCreateContract(p.id)">+ Nouveau Contrat</button>
+          </div>
+
           <div v-if="(p.contracts ?? []).length === 0" class="muted">Aucun contrat.</div>
 
-          <div v-for="c in (p.contracts ?? [])" :key="c.id" class="contract" :class="{ activeContract: c.id === activeContractId }">
+          <div
+            v-for="c in (p.contracts ?? [])"
+            :key="c.id"
+            class="contract"
+            :class="{ activeContract: c.id === activeContractId }"
+          >
             <div class="row contractRow">
-              <div class="tree">
-                <div class="branch"></div>
-                <div class="node"></div>
-              </div>
+              <div class="tree"><div class="branch"></div><div class="node"></div></div>
 
               <div class="main">
                 <div class="line1">
@@ -611,14 +690,15 @@ function variantArchive(variantId: string) {
                     <span class="k">Réf :</span> <b>{{ c.ref ?? "-" }}</b>
                     <span class="dot">•</span>
                     <span class="k">Durée :</span> <b>{{ c.dureeMois ?? 0 }}</b> mois
+                    <span class="dot">•</span>
+                    <span class="k">Postes :</span> <b>{{ labelFrom(POSTES_2, c.postes) }}</b>
                   </span>
-                  <span v-if="c.id === activeContractId" class="pill pill--blue">ACTIF</span>
                 </div>
 
                 <div class="line2">
-                  <span class="meta"><span class="k">Cab :</span> <b>{{ labelFromEnum(CHARGE_3 as any, c.cab) }}</b></span>
+                  <span class="meta"><span class="k">Cab :</span> <b>{{ labelFrom(CHARGE_3, c.cab) }}</b></span>
                   <span class="dot">•</span>
-                  <span class="meta"><span class="k">Transport :</span> <b>{{ labelFromEnum(CHARGE_3 as any, c.transport) }}</b></span>
+                  <span class="meta"><span class="k">Terrain :</span> <b>{{ labelFrom(TERRAIN_4, c.terrain) }}</b></span>
                   <span class="idTiny">ID : {{ idShort(c.id) }}</span>
                 </div>
               </div>
@@ -626,23 +706,29 @@ function variantArchive(variantId: string) {
               <div class="actions">
                 <button class="btn btn--soft" @click="openView('contract', c)">Visualiser</button>
                 <button class="btn btn--soft" @click="openEdit('contract', c)">Modifier</button>
-                <button class="btn btn--ghost danger" @click="contractArchive(c.id)">Archiver</button>
               </div>
             </div>
 
             <div class="variants">
+              <div class="variantsHead">
+                <div class="muted">Variantes</div>
+                <button class="btn btn--primary btn--mini" @click="openCreateVariant(c.id)">+ Nouvelle Variante</button>
+              </div>
+
               <div v-if="(c.variants ?? []).length === 0" class="muted indent2">Aucune variante.</div>
 
-              <div v-for="v in (c.variants ?? [])" :key="v.id" class="row variantRow" :class="{ activeVariant: v.id === activeVariantId }">
-                <div class="tree tree--deep">
-                  <div class="branch"></div>
-                  <div class="node"></div>
-                </div>
+              <div
+                v-for="v in (c.variants ?? [])"
+                :key="v.id"
+                class="row variantRow"
+                :class="{ activeVariant: v.id === activeVariantId }"
+              >
+                <div class="tree tree--deep"><div class="branch"></div><div class="node"></div></div>
 
                 <div class="main">
                   <div class="line1">
                     <div class="name name--xs">{{ v.title ?? "Variante" }}</div>
-                    <span :class="tagClass(v.status)">{{ labelFromEnum(VARIANT_STATUS as any, v.status) }}</span>
+                    <span :class="tagClass(v.status)">{{ v.status ?? "—" }}</span>
                     <span v-if="v.id === activeVariantId" class="pill pill--green">ACTIVE</span>
                   </div>
 
@@ -656,7 +742,6 @@ function variantArchive(variantId: string) {
                   <button class="btn btn--primary btn--mini" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
                   <button class="btn btn--soft" @click="openView('variant', v)">Visualiser</button>
                   <button class="btn btn--soft" @click="openEdit('variant', v)">Modifier</button>
-                  <button class="btn btn--ghost danger" @click="variantArchive(v.id)">Archiver</button>
                 </div>
               </div>
             </div>
@@ -668,7 +753,7 @@ function variantArchive(variantId: string) {
 
     <!-- MODALS -->
     <Teleport to="body">
-      <!-- VIEW -->
+      <!-- VIEW MODAL -->
       <div v-if="viewOpen" class="modalOverlay" @click.self="closeView()">
         <div class="modal">
           <div class="modalHead">
@@ -682,58 +767,69 @@ function variantArchive(variantId: string) {
           </div>
 
           <div class="modalBody">
-            <!-- PNL VIEW -->
             <div v-if="viewMode === 'pnl'" class="kv">
               <div class="rowKV"><div class="k">Titre</div><div class="v"><b>{{ viewData?.title ?? "-" }}</b></div></div>
               <div class="rowKV"><div class="k">Client</div><div class="v"><b>{{ viewData?.client ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Modèle</div><div class="v"><b>{{ labelFromEnum(PNL_MODELS as any, viewData?.model) }}</b></div></div>
-              <div class="rowKV"><div class="k">Statut</div><div class="v"><b>{{ labelFromEnum(PNL_STATUS as any, viewData?.status) }}</b></div></div>
+              <div class="rowKV"><div class="k">Modèle</div><div class="v"><b>{{ viewData?.model ?? "-" }}</b></div></div>
               <div class="rowKV"><div class="k">Ville</div><div class="v"><b>{{ viewData?.city ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Région</div><div class="v"><b>{{ viewData?.region ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Démarrage prévu</div><div class="v"><b>{{ fmtDate(viewData?.startDatePlanned ?? viewData?.startDate) }}</b></div></div>
-              <div class="rowKV"><div class="k">Créé le</div><div class="v"><b>{{ fmtDate(viewData?.createdAt) }}</b></div></div>
+              <div class="rowKV"><div class="k">Statut</div><div class="v"><span :class="tagClass(viewData?.status)">{{ viewData?.status ?? "—" }}</span></div></div>
+              <div class="rowKV"><div class="k">Date de création</div><div class="v"><b>{{ fmtDate(viewData?.createdAt) }}</b></div></div>
             </div>
 
-            <!-- CONTRACT VIEW (compact grid) -->
             <div v-else-if="viewMode === 'contract'" class="kv">
-              <div class="rowKV"><div class="k">Réf</div><div class="v"><b>{{ viewData?.ref ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Durée (mois)</div><div class="v"><b>{{ viewData?.dureeMois ?? 0 }}</b></div></div>
+              <div class="sectionBox">
+                <div class="sectionTitle">Synthèse</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Référence</div><div class="v"><b>{{ viewData?.ref ?? "-" }}</b></div></div>
+                  <div class="rowKV"><div class="k">Durée (mois)</div><div class="v"><b>{{ viewData?.dureeMois ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Postes</div><div class="v"><b>{{ labelFrom(POSTES_2, viewData?.postes) }}</b></div></div>
+                </div>
+              </div>
 
-              <div class="divider"></div>
+              <div class="sectionBox">
+                <div class="sectionTitle">Responsabilités</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Cab</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.cab) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Installation</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.installation) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Génie civil</div><div class="v"><b>{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Transport</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.transport) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Terrain</div><div class="v"><b>{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Matière première</div><div class="v"><b>{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Maintenance</div><div class="v"><b>{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Chargeuse</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</b></div></div>
+                </div>
+              </div>
 
-              <div class="grid2">
-                <div class="rowKV"><div class="k">Cab</div><div class="v"><b>{{ labelFromEnum(CHARGE_3 as any, viewData?.cab) }}</b></div></div>
-                <div class="rowKV"><div class="k">Installation</div><div class="v"><b>{{ labelFromEnum(CHARGE_3 as any, viewData?.installation) }}</b></div></div>
+              <div class="sectionBox">
+                <div class="sectionTitle">Eau</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Branchement eau</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Conso eau</div><div class="v"><b>{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</b></div></div>
+                </div>
+              </div>
 
-                <div class="rowKV"><div class="k">Génie civil</div><div class="v"><b>{{ labelFromEnum(GENIE_CIVIL_4 as any, viewData?.genieCivil) }}</b></div></div>
-                <div class="rowKV"><div class="k">Transport</div><div class="v"><b>{{ labelFromEnum(CHARGE_3 as any, viewData?.transport) }}</b></div></div>
+              <div class="sectionBox">
+                <div class="sectionTitle">Électricité</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Branchement élec</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Conso élec</div><div class="v"><b>{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</b></div></div>
+                </div>
+              </div>
 
-                <div class="rowKV"><div class="k">Terrain</div><div class="v"><b>{{ labelFromEnum(TERRAIN_4 as any, viewData?.terrain) }}</b></div></div>
-                <div class="rowKV"><div class="k">Matière 1ère</div><div class="v"><b>{{ labelFromEnum(MATIERE_3 as any, viewData?.matierePremiere) }}</b></div></div>
-
-                <div class="rowKV"><div class="k">Maintenance</div><div class="v"><b>{{ labelFromEnum(MAINTENANCE_4 as any, viewData?.maintenance) }}</b></div></div>
-                <div class="rowKV"><div class="k">Chargeuse</div><div class="v"><b>{{ labelFromEnum(CHARGE_3 as any, viewData?.chargeuse) }}</b></div></div>
-
-                <div class="rowKV"><div class="k">Br. Eau</div><div class="v"><b>{{ labelFromEnum(EAU_ELEC_BRANCH_3 as any, viewData?.branchementEau) }}</b></div></div>
-                <div class="rowKV"><div class="k">Conso Eau</div><div class="v"><b>{{ labelFromEnum(CONSOMMATION_2 as any, viewData?.consoEau) }}</b></div></div>
-
-                <div class="rowKV"><div class="k">Br. Élec</div><div class="v"><b>{{ labelFromEnum(EAU_ELEC_BRANCH_3 as any, viewData?.branchementElec) }}</b></div></div>
-                <div class="rowKV"><div class="k">Conso Élec</div><div class="v"><b>{{ labelFromEnum(CONSOMMATION_2 as any, viewData?.consoElec) }}</b></div></div>
-
-                <div class="rowKV"><div class="k">Postes</div><div class="v"><b>{{ labelFromEnum(POSTES_2 as any, viewData?.postes) }}</b></div></div>
-                <div class="rowKV"><div class="k">Dim./fériés</div><div class="v"><b>{{ money(viewData?.sundayPrice) }}</b></div></div>
-
-                <div class="rowKV"><div class="k">Pénalité délai</div><div class="v"><b>{{ money(viewData?.delayPenalty) }}</b></div></div>
-                <div class="rowKV"><div class="k">Location chiller</div><div class="v"><b>{{ money(viewData?.chillerRent) }}</b></div></div>
+              <div class="sectionBox">
+                <div class="sectionTitle">Paramètres financiers</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Dim./fériés</div><div class="v"><b>{{ viewData?.sundayPrice ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Pénalité délai</div><div class="v"><b>{{ viewData?.delayPenalty ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Location chiller</div><div class="v"><b>{{ viewData?.chillerRent ?? 0 }}</b></div></div>
+                </div>
               </div>
             </div>
 
-            <!-- VARIANT VIEW -->
             <div v-else class="kv">
               <div class="rowKV"><div class="k">Titre</div><div class="v"><b>{{ viewData?.title ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Statut</div><div class="v"><b>{{ labelFromEnum(VARIANT_STATUS as any, viewData?.status) }}</b></div></div>
-              <div class="rowKV"><div class="k">Description</div><div class="v"><b>{{ viewData?.description ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Contrat</div><div class="v"><b>{{ idShort(viewData?.contractId) }}</b></div></div>
+              <div class="rowKV"><div class="k">Statut</div><div class="v"><span :class="tagClass(viewData?.status)">{{ viewData?.status ?? "—" }}</span></div></div>
+              <div v-if="viewData?.description" class="rowKV"><div class="k">Description</div><div class="v"><b>{{ viewData?.description }}</b></div></div>
             </div>
           </div>
 
@@ -743,15 +839,16 @@ function variantArchive(variantId: string) {
         </div>
       </div>
 
-      <!-- EDIT -->
+      <!-- EDIT/CREATE MODAL -->
       <div v-if="editOpen" class="modalOverlay" @click.self="closeEdit()">
         <div class="modal">
           <div class="modalHead">
             <div class="modalTitle">
-              <b v-if="editMode === 'pnl'">Modifier — P&amp;L</b>
-              <b v-else-if="editMode === 'contract'">Modifier — Contrat</b>
-              <b v-else>Modifier — Variante</b>
-              <div class="modalSub idTiny">ID : {{ idShort(draft.id) }}</div>
+              <b v-if="editMode === 'pnl'">{{ isCreate ? "Créer" : "Modifier" }} — P&amp;L</b>
+              <b v-else-if="editMode === 'contract'">{{ isCreate ? "Créer" : "Modifier" }} — Contrat</b>
+              <b v-else>{{ isCreate ? "Créer" : "Modifier" }} — Variante</b>
+              <div class="modalSub idTiny" v-if="!isCreate">ID : {{ idShort(draft.id) }}</div>
+              <div class="modalSub idTiny" v-else>Création</div>
             </div>
             <button class="xBtn" @click="closeEdit()">✕</button>
           </div>
@@ -759,186 +856,180 @@ function variantArchive(variantId: string) {
           <div class="modalBody">
             <div v-if="editErr" class="alert"><b>Erreur :</b> {{ editErr }}</div>
 
-            <!-- PNL EDIT -->
+            <!-- PNL -->
             <div v-if="editMode === 'pnl'" class="formGrid">
-              <div class="f f--full">
+              <div class="f">
                 <div class="k">Titre</div>
                 <input class="in" v-model="draft.title" placeholder="Titre du P&L" />
               </div>
-
-              <div class="f">
-                <div class="k">Modèle</div>
-                <select class="in" v-model="draft.model">
-                  <option v-for="o in PNL_MODELS" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-
-              <div class="f">
-                <div class="k">Statut</div>
-                <select class="in" v-model="draft.status">
-                  <option v-for="o in PNL_STATUS" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-
               <div class="f">
                 <div class="k">Client</div>
-                <input class="in" v-model="draft.client" placeholder="Client" />
+                <input class="in" v-model="draft.client" placeholder="Nom du client" />
               </div>
-
               <div class="f">
                 <div class="k">Ville</div>
                 <input class="in" v-model="draft.city" placeholder="Ville" />
               </div>
-
               <div class="f">
-                <div class="k">Région</div>
-                <input class="in" v-model="draft.region" placeholder="Région" />
-                <div class="hint">Affiché ici. Active l’enregistrement côté API quand ta table/route est prête.</div>
+                <div class="k">Statut</div>
+                <select class="in" v-model="draft.status">
+                  <option value="ENCOURS">ENCOURS</option>
+                  <option value="PERDU">PERDU</option>
+                  <option value="ADJUGE">ADJUGÉ</option>
+                  <option value="ARCHIVED">ARCHIVED</option>
+                </select>
               </div>
-
               <div class="f">
-                <div class="k">Date prévue démarrage</div>
-                <input class="in" type="date" v-model="draft.startDatePlanned" />
-                <div class="hint">Affiché ici. Active l’enregistrement côté API quand prêt.</div>
+                <div class="k">Modèle (non modifiable)</div>
+                <input class="in in--disabled" v-model="draft.model" disabled />
               </div>
-
               <div class="f">
                 <div class="k">Date de création</div>
                 <input class="in in--disabled" :value="fmtDate(draft.createdAt)" disabled />
               </div>
             </div>
 
-            <!-- CONTRACT EDIT (ENUMS) -->
-            <div v-else-if="editMode === 'contract'" class="formGrid">
-              <div class="f">
-                <div class="k">Réf</div>
-                <input class="in" v-model="draft.ref" placeholder="Référence contrat" />
-              </div>
-              <div class="f">
-                <div class="k">Durée (mois)</div>
-                <input class="in r" type="number" step="1" v-model.number="draft.dureeMois" />
-              </div>
-
-              <div class="f">
-                <div class="k">Cab</div>
-                <select class="in" v-model="draft.cab">
-                  <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="f">
-                <div class="k">Installation</div>
-                <select class="in" v-model="draft.installation">
-                  <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
+            <!-- CONTRACT -->
+            <div v-else-if="editMode === 'contract'" class="stack">
+              <div class="sectionBox">
+                <div class="sectionTitle">Synthèse</div>
+                <div class="formGrid sectionForm">
+                  <div class="f">
+                    <div class="k">Référence (auto)</div>
+                    <input class="in in--disabled" :value="draft.ref || (isCreate ? 'Générée automatiquement' : '-')" disabled />
+                  </div>
+                  <div class="f">
+                    <div class="k">Durée (mois)</div>
+                    <input class="in r" type="number" step="1" v-model.number="draft.dureeMois" />
+                  </div>
+                  <div class="f">
+                    <div class="k">Nombre de postes</div>
+                    <select class="in" v-model.number="draft.postes">
+                      <option v-for="o in POSTES_2" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              <div class="f">
-                <div class="k">Génie civil</div>
-                <select class="in" v-model="draft.genieCivil">
-                  <option v-for="o in GENIE_CIVIL_4" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="f">
-                <div class="k">Transport jusqu’au chantier</div>
-                <select class="in" v-model="draft.transport">
-                  <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
+              <div class="sectionBox">
+                <div class="sectionTitle">Responsabilités</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Cab</div>
+                    <select class="in" v-model="draft.cab">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Installation</div>
+                    <select class="in" v-model="draft.installation">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Génie civil</div>
+                    <select class="in" v-model="draft.genieCivil">
+                      <option v-for="o in GENIE_CIVIL_4" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Transport jusqu’au chantier</div>
+                    <select class="in" v-model="draft.transport">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Terrain</div>
+                    <select class="in" v-model="draft.terrain">
+                      <option v-for="o in TERRAIN_4" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Matière première</div>
+                    <select class="in" v-model="draft.matierePremiere">
+                      <option v-for="o in MATIERE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Maintenance</div>
+                    <select class="in" v-model="draft.maintenance">
+                      <option v-for="o in MAINTENANCE_4" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Chargeuse</div>
+                    <select class="in" v-model="draft.chargeuse">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              <div class="f">
-                <div class="k">Terrain</div>
-                <select class="in" v-model="draft.terrain">
-                  <option v-for="o in TERRAIN_4" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="f">
-                <div class="k">Matière première</div>
-                <select class="in" v-model="draft.matierePremiere">
-                  <option v-for="o in MATIERE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-
-              <div class="f">
-                <div class="k">Maintenance</div>
-                <select class="in" v-model="draft.maintenance">
-                  <option v-for="o in MAINTENANCE_4" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="f">
-                <div class="k">Chargeuse</div>
-                <select class="in" v-model="draft.chargeuse">
-                  <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
+              <div class="sectionBox">
+                <div class="sectionTitle">Eau</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Branchement Eau</div>
+                    <select class="in" v-model="draft.branchementEau">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                  <div class="f"><div class="k">Consommation Eau</div>
+                    <select class="in" v-model="draft.consoEau">
+                      <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              <div class="f">
-                <div class="k">Branchement Eau</div>
-                <select class="in" v-model="draft.branchementEau">
-                  <option v-for="o in EAU_ELEC_BRANCH_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="f">
-                <div class="k">Consommation Eau</div>
-                <select class="in" v-model="draft.consoEau">
-                  <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-
-              <div class="f">
-                <div class="k">Branchement Électricité</div>
-                <select class="in" v-model="draft.branchementElec">
-                  <option v-for="o in EAU_ELEC_BRANCH_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="f">
-                <div class="k">Consommation Électricité</div>
-                <select class="in" v-model="draft.consoElec">
-                  <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
+              <div class="sectionBox">
+                <div class="sectionTitle">Électricité</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Branchement Électricité</div>
+                    <select class="in" v-model="draft.branchementElec">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                  <div class="f"><div class="k">Consommation Électricité</div>
+                    <select class="in" v-model="draft.consoElec">
+                      <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              <div class="f">
-                <div class="k">Nombre de postes</div>
-                <select class="in" v-model="draft.postes">
-                  <option v-for="o in POSTES_2" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-
-              <div class="f">
-                <div class="k">Prix complémentaire (dim./fériés)</div>
-                <input class="in r" type="number" step="0.01" v-model.number="draft.sundayPrice" />
-              </div>
-
-              <div class="f">
-                <div class="k">Forfait retard (délai dépassé)</div>
-                <input class="in r" type="number" step="0.01" v-model.number="draft.delayPenalty" />
-              </div>
-
-              <div class="f">
-                <div class="k">Location Chiller</div>
-                <input class="in r" type="number" step="0.01" v-model.number="draft.chillerRent" />
-              </div>
-
-              <div class="f f--full hint">
-                Articles supplémentaires : on les ajoutera après (table items ordonnée côté contrat).
+              <div class="sectionBox">
+                <div class="sectionTitle">Paramètres financiers</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Prix dimanches / fériés</div>
+                    <input class="in r" type="number" step="0.01" v-model.number="draft.sundayPrice" />
+                  </div>
+                  <div class="f"><div class="k">Forfait pénalité délai</div>
+                    <input class="in r" type="number" step="0.01" v-model.number="draft.delayPenalty" />
+                  </div>
+                  <div class="f"><div class="k">Location Chiller</div>
+                    <input class="in r" type="number" step="0.01" v-model.number="draft.chillerRent" />
+                  </div>
+                </div>
               </div>
             </div>
 
-            <!-- VARIANT EDIT -->
+            <!-- VARIANT -->
             <div v-else class="formGrid">
-              <div class="f f--full">
+              <div class="f">
                 <div class="k">Titre</div>
-                <input class="in" v-model="draft.vTitle" placeholder="Titre de la variante" />
+                <input class="in" v-model="draft.title" placeholder="Titre de la variante" />
               </div>
               <div class="f">
                 <div class="k">Statut</div>
-                <select class="in" v-model="draft.vStatus">
-                  <option v-for="o in VARIANT_STATUS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                <select class="in" v-model="draft.status">
+                  <option value="INITIALISEE">INITIALISÉE</option>
+                  <option value="ENCOURS">ENCOURS</option>
+                  <option value="ANNULEE">ANNULÉE</option>
+                  <option value="CLOTUREE">CLÔTURÉE</option>
                 </select>
               </div>
               <div class="f f--full">
                 <div class="k">Description</div>
-                <textarea class="in" rows="4" v-model="draft.vDescription" placeholder="Description"></textarea>
+                <textarea class="in" rows="4" v-model="draft.description" placeholder="Description (optionnelle)"></textarea>
               </div>
             </div>
           </div>
@@ -946,7 +1037,7 @@ function variantArchive(variantId: string) {
           <div class="modalFoot">
             <button class="btn btn--ghost" :disabled="editBusy" @click="closeEdit()">Annuler</button>
             <button class="btn btn--primary" :disabled="editBusy" @click="saveEdit()">
-              {{ editBusy ? "Enregistrement…" : "Enregistrer" }}
+              {{ editBusy ? "Enregistrement…" : (isCreate ? "Créer" : "Enregistrer") }}
             </button>
           </div>
         </div>
@@ -956,302 +1047,156 @@ function variantArchive(variantId: string) {
 </template>
 
 <style scoped>
-.page {
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: #f6f7f9;
-  min-height: 100%;
-}
+.page { padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #f6f7f9; min-height: 100%; box-sizing: border-box; }
 
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-.titleBlock h1 {
-  margin: 0;
-  font-size: 18px;
-  letter-spacing: 0.2px;
-}
-.sub { margin-top: 4px; font-size: 12px; color: #6b7280; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.titleBlock h1 { margin: 0; font-size: 18px; letter-spacing: 0.2px; }
 .headerActions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-.card {
-  background: #fff;
-  border: 1px solid #e6e8ee;
-  border-radius: 14px;
-  padding: 12px;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
-}
+.card { background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 12px; box-shadow: 0 1px 0 rgba(17,24,39,0.03); overflow: visible; }
 .card--error { border-color: #fecaca; background: #fff5f5; }
 .empty { text-align: center; color: #6b7280; }
 
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: stretch;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.search {
-  flex: 1;
-  min-width: 280px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #e6e8ee;
-  border-radius: 12px;
-  padding: 8px 10px;
-  background: #fafbfc;
-}
-.icon { color: #6b7280; font-size: 12px; }
-.input {
-  border: 0;
-  outline: 0;
-  background: transparent;
-  width: 100%;
-  font-size: 13px;
-}
-.sort { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-.field { display: flex; flex-direction: column; gap: 6px; }
-.label { font-size: 11px; color: #6b7280; }
-.select {
-  border: 1px solid #e6e8ee;
-  border-radius: 12px;
-  padding: 8px 10px;
-  font-size: 13px;
-  background: #fff;
-}
-
 .list { display: flex; flex-direction: column; gap: 10px; }
-.pnl { background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%); }
-.pnl.activePnl { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.10); }
 
 .row { display: flex; gap: 10px; align-items: center; }
 .pnlRow { align-items: stretch; }
 
-.disclosure {
-  width: 34px;
-  height: 34px;
-  border: 1px solid #e6e8ee;
-  border-radius: 10px;
-  background: #fff;
-  cursor: pointer;
-  color: #374151;
-}
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.line1 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.line2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.name { font-weight: 900; font-size: 13px; color: #111827; }
+.name--sm { font-size: 12.5px; font-weight: 900; }
+.name--xs { font-size: 12px; font-weight: 900; }
+
+.meta { font-size: 12px; color: #374151; }
+.k { color: #6b7280; font-weight: 600; }
+.muted { font-size: 12px; color: #6b7280; }
+.dot { color: #d1d5db; }
+.idTiny { font-size: 11px; color: #9ca3af; margin-left: 6px; }
+
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+.disclosure { width: 34px; height: 34px; border: 1px solid #e6e8ee; border-radius: 10px; background: #fff; cursor: pointer; color: #374151; }
 .disclosure:hover { background: #f9fafb; }
 
-.main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.line1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.name { font-weight: 700; font-size: 14px; color: #111827; }
-.name--sm { font-size: 13px; }
-.name--xs { font-size: 12.5px; }
-
-.line2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: #6b7280;
-}
-.meta .k { color: #6b7280; font-weight: 500; }
-.dot { color: #d1d5db; }
-.idTiny { margin-left: auto; color: #9ca3af; font-size: 11px; }
-
-.actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-}
-
-.btn {
-  border: 1px solid #e6e8ee;
-  background: #fff;
-  border-radius: 12px;
-  padding: 8px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
+.btn { border-radius: 12px; padding: 9px 12px; font-size: 13px; border: 1px solid #e6e8ee; background: #fff; cursor: pointer; }
 .btn:hover { background: #f9fafb; }
-.btn--primary { background: #111827; color: #fff; border-color: #111827; }
-.btn--primary:hover { background: #0b1220; }
+.btn--primary { background: #0b7a35; border-color: #0b7a35; color: #fff; }
+.btn--primary:hover { background: #096a2e; }
 .btn--ghost { background: transparent; }
-.btn--soft { background: #f3f4f6; border-color: #e5e7eb; }
-.btn--mini { padding: 7px 9px; }
-.danger { color: #b91c1c; border-color: #fecaca; background: #fff5f5; }
-.danger:hover { background: #ffecec; }
+.btn--ghost:hover { background: #ffffff; }
+.btn--soft { background: #f6f7f9; }
+.btn--soft:hover { background: #eef0f4; }
+.btn--mini { padding: 6px 9px; border-radius: 10px; font-size: 12px; line-height: 16px; }
 
-.pill {
-  font-size: 10px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
-  color: #111827;
-}
-.pill--blue { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
-.pill--green { background: #ecfdf5; border-color: #bbf7d0; color: #065f46; }
+.tag { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid #e6e8ee; color: #374151; background: #fafbfc; }
+.tag--on { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+.tag--arch, .tag--off { border-color: #e5e7eb; background: #f9fafb; color: #6b7280; }
 
-.tag {
-  font-size: 10px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #374151;
-}
-.tag--arch { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
-.tag--off { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
-.tag--on { background: #ecfdf5; border-color: #bbf7d0; color: #065f46; }
+.pill { font-size: 10.5px; font-weight: 900; letter-spacing: 0.2px; padding: 3px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; color: #111827; }
+.pill--green { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
 
-.children { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
-.contract { border: 1px dashed #e5e7eb; border-radius: 14px; padding: 10px; background: #fff; }
-.contract.activeContract { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.10); }
-.muted { color: #6b7280; font-size: 12px; }
-.indent2 { padding-left: 38px; }
+.pnl { background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%); }
+.pnl.activePnl { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(34,197,94,0.10); }
+
+.contract { border: 1px solid #eef0f4; border-radius: 12px; padding: 10px; background: #fcfcfd; }
+.contract.activeContract { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.10); }
+.contractRow { align-items: flex-start; }
+
+.variantRow { padding: 8px 10px; border: 1px solid #eef0f4; border-radius: 12px; background: #ffffff; }
+.variantRow.activeVariant { border-color: #bbf7d0; background: #fbfffb; }
+
+.children { margin-top: 10px; border-top: 1px dashed #e6e8ee; padding-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.childrenHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0 4px; }
 .variants { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-.variantRow { border: 1px solid #eef2f7; border-radius: 14px; padding: 10px; background: #fcfcfd; }
-.variantRow.activeVariant { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.10); }
+.variantsHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-left: 38px; margin-right: 2px; }
+.indent2 { margin-left: 38px; }
 
-.tree { width: 28px; position: relative; display: flex; align-items: center; justify-content: center; }
-.tree .branch {
-  position: absolute;
-  left: 50%;
-  top: -10px;
-  bottom: -10px;
-  width: 2px;
-  background: #e5e7eb;
-  transform: translateX(-50%);
-}
+.tree { width: 26px; position: relative; display: flex; align-items: center; justify-content: center; }
+.tree .branch { position: absolute; left: 50%; top: -10px; bottom: -10px; width: 2px; background: #e5e7eb; transform: translateX(-50%); }
 .tree .node { width: 10px; height: 10px; border-radius: 999px; background: #fff; border: 2px solid #d1d5db; }
 .tree--deep { width: 38px; }
+.tree--deep .branch { background: #e5e7eb; }
 
-/* =========================
-   MODAL: compact + scroll inside
-========================= */
-.modalOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(17, 24, 39, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14px;
-  z-index: 10000;
+/* ultra-compact one-line toolbar */
+.toolbarOneLine { padding: 6px 8px; display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow: visible; }
+.searchMini {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid #e6e8ee; border-radius: 10px;
+  padding: 4px 8px; background: #fafbfc;
 }
+.icon { font-size: 11px; line-height: 1; color: #6b7280; }
+.input { min-width: 0; border: 0; outline: 0; background: transparent; width: 100%; font-size: 12.5px; line-height: 16px; padding: 0; }
 
+.filterWrap { position: relative; flex: 0 0 auto; overflow: visible; }
+.popover {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  width: min(560px, calc(100% + 260px));
+  max-width: calc(100vw - 24px);
+  background: #fff; border: 1px solid #e6e8ee; border-radius: 12px;
+  box-shadow: 0 18px 45px rgba(0,0,0,0.12);
+  padding: 8px; z-index: 50;
+}
+.popGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; align-items: center; }
+.sel { min-width: 0; border: 1px solid #e6e8ee; border-radius: 10px; padding: 5px 8px; font-size: 12px; line-height: 16px; background: #fff; }
+
+/* Modal */
+.modalOverlay {
+  position: fixed; inset: 0;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px;
+  z-index: 9999;
+}
 .modal {
-  width: min(880px, 100%);
-  max-height: calc(100vh - 28px); /* ✅ prevents overflow top/bottom */
+  width: min(760px, 100%);
+  max-height: calc(100vh - 36px);
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 16px;
-  overflow: hidden; /* header/footer sticky works with body scroll */
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-  display: flex;
-  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  display: flex; flex-direction: column;
 }
-
-.modalHead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  background: #fafafa;
-  border-bottom: 1px solid #eef2f7;
-}
-
+.modalHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 14px; background: #fafafa; border-bottom: 1px solid #eef2f7; }
 .modalTitle { display: flex; flex-direction: column; gap: 3px; }
 .modalSub { color: #9ca3af; font-size: 11px; }
-
-.xBtn {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  border-radius: 12px;
-  width: 34px;
-  height: 34px;
-  cursor: pointer;
-}
+.xBtn { border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; width: 34px; height: 34px; cursor: pointer; }
 .xBtn:hover { background: #f9fafb; }
+.modalBody { padding: 14px; overflow: auto; flex: 1 1 auto; }
+.modalFoot { padding: 12px 14px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #eef2f7; background: #fcfcfd; }
 
-.modalBody {
-  padding: 12px 14px;
-  overflow: auto;         /* ✅ internal scroll */
-  flex: 1 1 auto;
-}
+.kv { display: flex; flex-direction: column; gap: 12px; }
+.rowKV { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: start; }
+.rowKV .k { font-size: 12px; color: #6b7280; font-weight: 700; }
+.rowKV .v { font-size: 12.5px; color: #111827; }
 
-.modalFoot {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  padding: 12px 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  border-top: 1px solid #eef2f7;
-  background: #fcfcfd;
-}
-
-/* View */
-.kv { display: flex; flex-direction: column; gap: 10px; }
-.rowKV {
-  display: grid;
-  grid-template-columns: 150px 1fr;
-  gap: 10px;
-  align-items: center;
-}
-.rowKV .k { font-size: 12px; color: #6b7280; }
-.rowKV .v { font-size: 13px; color: #111827; }
-.divider { height: 1px; background: #eef2f7; margin: 6px 0; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
-
-/* Edit form */
-.alert {
-  padding: 10px 12px;
-  border: 1px solid #fecaca;
-  background: #fff5f5;
-  border-radius: 12px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  color: #991b1b;
-}
-.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .f { display: flex; flex-direction: column; gap: 6px; }
 .f--full { grid-column: 1 / -1; }
-.f .k { font-size: 12px; color: #6b7280; }
-.in {
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 9px 10px;
-  font-size: 13px;
-  outline: none;
-  background: #fff;
-}
-.in:focus { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12); }
+.in { border: 1px solid #e5e7eb; border-radius: 12px; padding: 9px 10px; font-size: 13px; outline: none; background: #fff; }
+.in:focus { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99,102,241,0.10); }
 .in--disabled { background: #f9fafb; color: #6b7280; }
 .r { text-align: right; }
-.hint { font-size: 11px; color: #9ca3af; }
 
-@media (max-width: 920px) {
+.alert { border: 1px solid #fecaca; background: #fff5f5; color: #991b1b; border-radius: 12px; padding: 10px; margin-bottom: 12px; }
+
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.sectionBox { border: 1px solid #eef0f4; border-radius: 14px; background: #fcfcfd; padding: 10px; }
+.sectionTitle { font-size: 12px; font-weight: 900; color: #111827; margin-bottom: 8px; }
+.sectionGrid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.sectionForm { margin-top: 2px; }
+
+@media (max-width: 900px) {
+  .actions { justify-content: flex-start; }
+  .rowKV { grid-template-columns: 140px 1fr; }
   .formGrid { grid-template-columns: 1fr; }
-  .grid2 { grid-template-columns: 1fr; }
-  .rowKV { grid-template-columns: 130px 1fr; }
+  .toolbarOneLine { flex-wrap: wrap; }
+  .popover { right: auto; left: 0; }
+  .popGrid { grid-template-columns: 1fr; }
+  .variantsHead { margin-left: 0; }
 }
 </style>
