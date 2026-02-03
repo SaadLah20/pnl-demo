@@ -1,13 +1,9 @@
-<!-- src/pages/QteMomdPage.vue -->
+<!-- src/pages/MomdAndQuantityPage.vue -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 const store = usePnlStore();
-
-onMounted(async () => {
-  if ((store as any).pnls?.length === 0) await (store as any).loadPnls();
-});
 
 /* =========================
    HELPERS
@@ -38,11 +34,12 @@ function clamp(x: any, min: number, max: number) {
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => (store as any).activeVariant);
-const contract = computed<any>(() => (store as any).activeContract);
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
+const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
 
 /* =========================
-   DRAFTS (volume/momd)
+   DRAFTS
 ========================= */
 type Draft = { volumeM3: number; momd: number };
 const drafts = reactive<Record<string, Draft>>({});
@@ -53,8 +50,6 @@ function getDraft(id: string): Draft {
   return drafts[k];
 }
 
-const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
-
 function loadDraftsFromVariant() {
   for (const vf of formules.value) {
     const d = getDraft(vf.id);
@@ -62,12 +57,6 @@ function loadDraftsFromVariant() {
     d.momd = clamp(vf?.momd, 0, 1e12);
   }
 }
-
-watch(
-  () => variant.value?.id,
-  () => loadDraftsFromVariant(),
-  { immediate: true }
-);
 
 /* =========================
    TRANSPORT
@@ -78,9 +67,8 @@ const transportPrixMoyen = computed(() => toNum((variant.value as any)?.transpor
    CMP
 ========================= */
 function mpPriceUsed(mpId: string): number {
-  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find(
-    (x: any) => String(x.mpId) === String(mpId)
-  );
+  const items = (((variant.value as any)?.mp?.items ?? []) as any[]) || [];
+  const vmp = items.find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
   if (vmp?.prix != null) return toNum(vmp.prix);
   return toNum(vmp?.mp?.prix);
@@ -92,7 +80,7 @@ function compositionFor(formule: any): CompRow[] {
   const items = (formule?.items ?? []) as any[];
   return items.map((it: any) => {
     const mpId = String(it.mpId);
-    const qty = toNum(it.qty); // kg/m3
+    const qty = toNum(it.qty); // kg/m³
     const prix = mpPriceUsed(mpId); // DH/tonne
     return { mpId, qty, prix, coutParM3: (qty / 1000) * prix };
   });
@@ -103,57 +91,110 @@ function cmpParM3For(vf: any): number {
 }
 
 /* =========================
-   ROWS
+   BASE ROWS (non triées)
 ========================= */
 type Row = {
   id: string;
   designation: string;
-  cmp: number;
-  qte: number;
-  momd: number;
-  pv: number;
-  ca: number;
+  cmp: number;  // DH/m³
+  qte: number;  // m³
+  momd: number; // DH/m³
+  pv: number;   // DH/m³
+  ca: number;   // DH
 };
 
-const rows = computed<Row[]>(() => {
-  return formules.value
-    .map((vf: any) => {
-      const d = getDraft(vf.id);
+const baseRows = computed<Row[]>(() => {
+  return formules.value.map((vf: any) => {
+    const d = getDraft(vf.id);
 
-      const cmp = cmpParM3For(vf);
-      const qte = toNum(d.volumeM3);
-      const momd = toNum(d.momd);
+    const cmp = cmpParM3For(vf);
+    const qte = toNum(d.volumeM3);
+    const momd = toNum(d.momd);
 
-      const pv = cmp + transportPrixMoyen.value + momd;
-      const ca = pv * qte;
+    // PV (DH/m³) = CMP + Transport + MOMD
+    const pv = cmp + transportPrixMoyen.value + momd;
 
-      return {
-        id: String(vf.id),
-        designation: String(vf?.formule?.label ?? vf?.formule?.resistance ?? "Formule"),
-        cmp,
-        qte,
-        momd,
-        pv,
-        ca,
-      };
-    })
-    // ✅ tri PV décroissant
-    .sort((a, b) => toNum(b.pv) - toNum(a.pv));
+    // CA (DH) = PV * Qté
+    const ca = pv * qte;
+
+    return {
+      id: String(vf.id),
+      designation: String(vf?.formule?.label ?? vf?.formule?.resistance ?? "Formule"),
+      cmp,
+      qte,
+      momd,
+      pv,
+      ca,
+    };
+  });
 });
 
+/* =========================
+   ORDER STABLE (tri appliqué uniquement quand on le décide)
+========================= */
+const orderIds = ref<string[]>([]);
+const didInitialSort = ref(false);
+
+function setInitialOrderFromVariant() {
+  // ordre DB (variant.formules.items) si présent
+  orderIds.value = formules.value.map((vf: any) => String(vf.id));
+}
+
+function applySortNow() {
+  // Tri PV desc, mais on ne modifie QUE orderIds
+  const sorted = [...baseRows.value].sort((a, b) => toNum(b.pv) - toNum(a.pv));
+  orderIds.value = sorted.map((r) => r.id);
+}
+
+/* ✅ rows affichées = baseRows + orderIds */
+const rows = computed<Row[]>(() => {
+  const map = new Map(baseRows.value.map((r) => [r.id, r]));
+  const out: Row[] = [];
+
+  // 1) on respecte orderIds
+  for (const id of orderIds.value) {
+    const r = map.get(id);
+    if (r) out.push(r);
+  }
+
+  // 2) si nouveaux ids pas dans orderIds (cas rare), on les ajoute à la fin
+  for (const r of baseRows.value) {
+    if (!orderIds.value.includes(r.id)) out.push(r);
+  }
+
+  return out;
+});
+
+/* =========================
+   SYNC au changement de variante
+   - charge drafts
+   - fixe orderIds une fois
+   - tri initial UNE SEULE FOIS au chargement de la page
+========================= */
+watch(
+  () => variant.value?.id,
+  () => {
+    loadDraftsFromVariant();
+    setInitialOrderFromVariant();
+
+    // tri initial : uniquement au chargement initial de la page
+    if (!didInitialSort.value) {
+      applySortNow();
+      didInitialSort.value = true;
+    }
+  },
+  { immediate: true }
+);
 
 /* =========================
    KPIs
 ========================= */
 const volumeTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.qte), 0));
-
 const cmpTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.cmp) * toNum(r.qte), 0));
 const cmpMoy = computed(() => (volumeTotal.value > 0 ? cmpTotal.value / volumeTotal.value : 0));
 
 const momdTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.momd) * toNum(r.qte), 0));
 const momdMoy = computed(() => (volumeTotal.value > 0 ? momdTotal.value / volumeTotal.value : 0));
-
-const transportTotal = computed(() => transportPrixMoyen.value * volumeTotal.value);
 
 const caTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.ca), 0));
 const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
@@ -212,7 +253,11 @@ async function save() {
     });
 
     await (store as any).updateVariant(variant.value.id, { formules: { items } });
-    openInfo("Enregistré", "Quantités & MOMD mises à jour.");
+
+    // ✅ tri uniquement après enregistrement
+    applySortNow();
+
+    openInfo("Enregistré", "Quantités & MOMD mises à jour (tri PV appliqué).");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     openInfo("Erreur", String(err.value));
@@ -227,12 +272,26 @@ function askSave() {
     await save();
   });
 }
+
 function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
     loadDraftsFromVariant();
+
+    // ✅ pas de tri ici (tu as demandé : seulement initial + après save)
+    // si tu veux aussi trier après reset => ajoute: applySortNow()
   });
 }
+
+/* =========================
+   INIT DATA
+========================= */
+onMounted(async () => {
+  const pnls = (store as any).pnls ?? [];
+  if (pnls.length === 0 && (store as any).loadPnls) {
+    await (store as any).loadPnls();
+  }
+});
 </script>
 
 <template>
@@ -271,17 +330,15 @@ function askReset() {
           <div class="kpi"><div class="kLbl">CMP Tot</div><div class="kVal">{{ money(cmpTotal, 2) }}</div></div>
           <div class="kpi"><div class="kLbl">MOMD Moy</div><div class="kVal">{{ n(momdMoy, 2) }} <span>DH/m³</span></div></div>
           <div class="kpi"><div class="kLbl">MOMD Tot</div><div class="kVal">{{ money(momdTotal, 2) }}</div></div>
+          <div class="kpi"><div class="kLbl">Transport</div><div class="kVal">{{ n(transportPrixMoyen, 2) }} <span>DH/m³</span></div></div>
           <div class="kpi"><div class="kLbl">PV Moyen</div><div class="kVal">{{ n(pvMoy, 2) }} <span>DH/m³</span></div></div>
           <div class="kpi"><div class="kLbl">CA</div><div class="kVal">{{ money(caTotal, 2) }}</div></div>
-          <div class="kpi"><div class="kLbl">Transport</div><div class="kVal">{{ n(transportPrixMoyen, 2) }} <span>DH/m³</span></div></div>
           <div class="kpi"><div class="kLbl">Volume Total</div><div class="kVal">{{ n(volumeTotal, 2) }} <span>m³</span></div></div>
         </div>
 
         <div class="panel">
-          <!-- ✅ on enlève le scroll horizontal par défaut -->
           <div class="tableWrap">
             <table class="table">
-              <!-- ✅ colonnes compactes / sans scroll (desktop) -->
               <colgroup>
                 <col class="colDesignation" />
                 <col class="colCmp" />
@@ -293,11 +350,10 @@ function askReset() {
 
               <thead>
                 <tr>
-                  <!-- ✅ libellés centrés -->
                   <th class="th c">Désignation</th>
-                  <th class="th c">CMP</th>
-                  <th class="th c">Qté</th>
-                  <th class="th c">MOMD</th>
+                  <th class="th c">CMP (DH/m³)</th>
+                  <th class="th c">Qté (m³)</th>
+                  <th class="th c">MOMD (DH/m³)</th>
                   <th class="th c">PV (DH/m³)</th>
                   <th class="th c">CA (DH)</th>
                 </tr>
@@ -305,9 +361,7 @@ function askReset() {
 
               <tbody>
                 <tr v-for="r in rows" :key="r.id">
-                  <td class="designation">
-                    <b class="designationText">{{ r.designation }}</b>
-                  </td>
+                  <td class="designation"><b class="designationText">{{ r.designation }}</b></td>
 
                   <td class="mono rVal">{{ n(r.cmp, 2) }}</td>
 
@@ -339,17 +393,15 @@ function askReset() {
                     </div>
                   </td>
 
-                  <td class="cellPv">
-                    <span class="pvPill mono">{{ n(r.pv, 2) }}</span>
-                  </td>
+                  <td class="cellPv"><span class="pvPill mono">{{ n(r.pv, 2) }}</span></td>
 
-                  <td class="cellCa">
-                    <b class="mono">{{ money(r.ca, 2) }}</b>
-                  </td>
+                  <td class="cellCa"><b class="mono">{{ money(r.ca, 2) }}</b></td>
                 </tr>
               </tbody>
             </table>
           </div>
+
+          <div class="hint muted">Tri PV appliqué uniquement au chargement initial et après “Enregistrer”.</div>
         </div>
       </template>
     </template>
@@ -417,120 +469,97 @@ function askReset() {
 .kVal{ font-size:13px; font-weight:900; white-space:nowrap; }
 .kVal span{ font-weight:600; color:#6b7280; margin-left:6px; }
 
-/* =========================
-   TABLE (compact, no-scroll desktop)
-========================= */
-.tableWrap { overflow-x: hidden; } /* ✅ évite scroll horizontal “par défaut” */
-
+.tableWrap { overflow-x: hidden; }
 .table{
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  table-layout: fixed; /* ✅ headers alignés + colonnes stables */
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+  table-layout:fixed;
 }
+.colDesignation { width: 250px; }
+.colCmp { width: 120px; }
+.colQte { width: 140px; }
+.colMomd { width: 140px; }
+.colPv { width: 130px; }
+.colCa { width: 150px; }
 
-/* ✅ Largeurs compactes */
-.colDesignation { width: 250px; } /* ↓ réduite */
-.colCmp { width: 105px; }
-.colQte { width: 135px; }       /* ↓ réduite */
-.colMomd { width: 135px; }      /* ↓ réduite */
-.colPv { width: 120px; }
-.colCa { width: 135px; }        /* ↓ réduite */
-
-/* ✅ padding identique th/td */
 .th, .table td{
-  border-bottom: 1px solid #e5e7eb;
-  padding: 8px 6px;             /* ↓ un peu plus compact */
-  vertical-align: middle;
+  border-bottom:1px solid #e5e7eb;
+  padding:8px 6px;
+  vertical-align:middle;
 }
-
 .th{
   background:#fafafa;
   color:#6b7280;
   font-size:11px;
-  white-space: nowrap;
+  white-space:nowrap;
 }
-
-/* ✅ libellés centrés */
-.c { text-align: center; }
-
-/* valeurs */
+.c { text-align:center; }
 .mono{ font-variant-numeric: tabular-nums; }
-.r { text-align: right; }
+.r { text-align:right; }
 .rVal{ text-align:right; }
 
-/* désignation compact + ellipsis */
 .designation{ overflow:hidden; }
 .designationText{
   display:block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 
-/* inputs compact */
 .cellInput{ text-align:right; }
 .inCell{
   display:inline-flex;
   align-items:center;
   justify-content:flex-end;
-  gap:6px;     /* ↓ */
+  gap:6px;
   width:100%;
 }
 .inputSm{
   border:1px solid #d1d5db;
   border-radius:10px;
   font-size:12px;
-  padding:5px 7px;  /* ↓ */
-  width: 88px;      /* ↓ important */
+  padding:5px 7px;
+  width:90px;
 }
 .unit{
   color:#6b7280;
   font-size:11px;
-  min-width: 22px;
+  min-width:22px;
   text-align:right;
 }
 
-/* PV spécial */
 .cellPv{ text-align:right; }
 .pvPill{
   display:inline-block;
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid #c7f9d4;
-  background: #ecfdf3;
-  font-weight: 900;
-  letter-spacing: .2px;
-  white-space: nowrap;
+  padding:5px 9px;
+  border-radius:999px;
+  border:1px solid #c7f9d4;
+  background:#ecfdf3;
+  font-weight:900;
+  white-space:nowrap;
 }
 
-/* CA */
 .cellCa{ text-align:right; }
-
-/* ✅ si écran trop petit: on autorise scroll (sinon ça casse) */
-@media (max-width: 820px){
-  .tableWrap{ overflow-x: auto; }  /* fallback mobile */
-  .colDesignation{ width: 220px; }
-  .inputSm{ width: 84px; }
-}
+.hint{ margin-top:8px; font-size:12px; }
 
 /* modal */
-.modalMask {
+.modalMask{
   position:fixed; inset:0;
   background:rgba(0,0,0,.35);
   display:flex; align-items:center; justify-content:center;
   padding:16px;
-  z-index: 50;
+  z-index:50;
 }
-.modal {
+.modal{
   width:min(520px, 100%);
   background:#fff;
   border:1px solid #e5e7eb;
   border-radius:16px;
   padding:14px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.15);
+  box-shadow:0 10px 30px rgba(0,0,0,.15);
 }
-.modalTitle { font-weight:900; font-size:14px; margin-bottom:6px; }
-.modalMsg { color:#374151; font-size:13px; white-space:pre-wrap; }
-.modalActions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.modalTitle{ font-weight:900; font-size:14px; margin-bottom:6px; }
+.modalMsg{ color:#374151; font-size:13px; white-space:pre-wrap; }
+.modalActions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 </style>
