@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 // Heroicons
@@ -38,7 +38,22 @@ type Metrics = Record<KpiName, KpiValues>;
 
 const store = usePnlStore();
 
+/* =========================
+   HEADER COLLAPSE (user controlled)
+========================= */
+const collapsed = ref(false);
+
+function restoreCollapsedPref() {
+  collapsed.value = localStorage.getItem("hd_collapsed") === "1";
+}
+
+watch(collapsed, (v) => {
+  localStorage.setItem("hd_collapsed", v ? "1" : "0");
+  if (v) pnlOpen.value = false;
+});
+
 onMounted(() => {
+  restoreCollapsedPref();
   if (store.pnls.length === 0) store.loadPnls();
 });
 
@@ -67,6 +82,8 @@ const contractsOfActivePnl = computed<any[]>(() => activePnl.value?.contracts ??
 ========================= */
 const pnlQuery = ref("");
 const pnlOpen = ref(false);
+const pnlBtnRef = ref<HTMLElement | null>(null);
+const ddStyle = ref<Record<string, string>>({});
 
 const filteredPnls = computed(() => {
   const q = pnlQuery.value.trim().toLowerCase();
@@ -137,6 +154,12 @@ const status = computed(() => activeVariant.value?.status ?? "—");
 const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
 
+const contractName = computed(() => {
+  const c = activeContract.value;
+  if (!c) return "—";
+  return c.title ? String(c.title) : `Contrat ${String(c.id ?? "").slice(0, 6)}`;
+});
+
 /* =========================
    KPI METRICS
 ========================= */
@@ -174,9 +197,9 @@ const metrics = computed<Metrics>(() => {
   };
 });
 
-/* ✅ 2 lignes, EBIT toujours en 2ème position */
-const kpiLeftRow1: KpiName[] = ["ASP", "EBIT", "CMP", "MOMD"];
-const kpiLeftRow2: KpiName[] = ["Transport", "Production", "EBITDA", "Amortissement"];
+/* ✅ Ordre demandé */
+const kpiLeftRow1: KpiName[] = ["ASP", "CMP", "Transport", "MOMD"];
+const kpiLeftRow2: KpiName[] = ["Production", "EBITDA", "Amortissement", "EBIT"];
 
 /* =========================
    Buttons (placeholders)
@@ -204,75 +227,127 @@ function fmtPct(v: number) {
     maximumFractionDigits: 2,
   });
 }
+
+/* ✅ EBIT bucket logic (used for CSS coloring) */
+function ebitBucket(pct: number) {
+  if (pct < 0) return "neg";
+  if (pct < 2) return "low";
+  if (pct < 4) return "mid";
+  return "good";
+}
+const ebitClass = computed(() => `ebit-${ebitBucket(metrics.value.EBIT.percent)}`);
+
 function kpiClass(key: KpiName) {
   return {
     ebit: key === "EBIT",
     asp: key === "ASP",
-    soft1: ["CMP", "MOMD"].includes(key),
-    soft2: ["Transport", "Production"].includes(key),
-    soft3: ["EBITDA", "Amortissement"].includes(key),
+    cmp: key === "CMP",
+    transport: key === "Transport",
+    momd: key === "MOMD",
+    prod: key === "Production",
+    ebitda: key === "EBITDA",
+    amort: key === "Amortissement",
   };
 }
 
-const statusTone = computed(() => {
-  const s = String(status.value ?? "").toUpperCase();
-  if (["CLOSED", "ADJUGE", "ADJUGÉ"].includes(s)) return "ok";
-  if (["PERDU", "LOST"].includes(s)) return "bad";
-  if (["ENCOURS", "EN_COURS", "OPEN"].includes(s)) return "warn";
-  return "neutral";
+/* =========================
+   PNL Dropdown Teleport positioning
+========================= */
+function calcDropdownPosition() {
+  const btn = pnlBtnRef.value;
+  if (!btn) return;
+
+  const r = btn.getBoundingClientRect();
+  const gap = 8;
+  const maxW = 560;
+
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - 8);
+  const width = Math.min(maxW, window.innerWidth - 16);
+
+  ddStyle.value = {
+    position: "fixed",
+    top: `${Math.min(window.innerHeight - 12, r.bottom + gap)}px`,
+    left: `${Math.min(left, window.innerWidth - width - 8)}px`,
+    width: `${width}px`,
+    zIndex: "100000",
+  };
+}
+
+function openPnlDropdown() {
+  if (collapsed.value) collapsed.value = false;
+  pnlOpen.value = !pnlOpen.value;
+}
+
+function closePnlDropdown() {
+  pnlOpen.value = false;
+}
+
+function onDocClick(e: MouseEvent) {
+  if (!pnlOpen.value) return;
+  const target = e.target as Node | null;
+  const btn = pnlBtnRef.value;
+  const dd = document.getElementById("pnl-dd");
+  if (!target) return;
+
+  if (btn && btn.contains(target)) return;
+  if (dd && dd.contains(target)) return;
+
+  closePnlDropdown();
+}
+
+function onEsc(e: KeyboardEvent) {
+  if (e.key === "Escape") closePnlDropdown();
+}
+
+watch(pnlOpen, async (v) => {
+  if (!v) return;
+  await nextTick();
+  calcDropdownPosition();
+  const el = document.querySelector<HTMLInputElement>("#pnl-dd input.dd__in");
+  el?.focus();
+});
+
+onMounted(() => {
+  window.addEventListener("resize", calcDropdownPosition, { passive: true });
+  window.addEventListener("scroll", calcDropdownPosition, { passive: true, capture: true });
+  document.addEventListener("mousedown", onDocClick, true);
+  document.addEventListener("keydown", onEsc);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", calcDropdownPosition);
+  window.removeEventListener("scroll", calcDropdownPosition, true as any);
+  document.removeEventListener("mousedown", onDocClick, true);
+  document.removeEventListener("keydown", onEsc);
 });
 </script>
 
 <template>
-  <header class="hd">
-    <!-- ✅ BARRE FULL WIDTH (3 blocs qui couvrent 100%) -->
+  <header class="hd" :class="{ collapsed }">
     <div class="bar">
       <!-- P&L selector -->
-      <div class="pill pnl" @keydown.esc="pnlOpen = false">
-        <button type="button" class="pill__head" @click="pnlOpen = !pnlOpen">
+      <div class="pill pnl">
+        <button ref="pnlBtnRef" type="button" class="pill__head" @click="openPnlDropdown">
           <span class="pill__label">P&L</span>
           <span class="pill__value" :title="projectName">{{ projectName }}</span>
-          <ChevronDownIcon class="pill__chev" />
+          <ChevronDownIcon class="pill__chev" :class="{ rot: pnlOpen }" />
         </button>
 
         <div class="pill__actions">
           <button class="iconbtn" title="Voir" @click.stop="viewPnl"><EyeIcon class="ic" /></button>
           <button class="iconbtn" title="Éditer" @click.stop="editPnl"><PencilSquareIcon class="ic" /></button>
         </div>
-
-        <!-- ✅ Dropdown corrigé (plus de loupe géante) -->
-        <div v-if="pnlOpen" class="dd" @click.stop>
-          <div class="dd__search">
-            <MagnifyingGlassIcon class="dd__ic" />
-            <input class="dd__in" v-model="pnlQuery" placeholder="Rechercher un P&L..." />
-          </div>
-
-          <div class="dd__list">
-            <button
-              v-for="p in filteredPnls"
-              :key="p.id"
-              class="dd__item"
-              :class="{ active: String(p.id) === String(activePnl?.id) }"
-              @click="onPickPnl(String(p.id))"
-            >
-              <div class="dd__main">
-                <div class="dd__title">{{ p.title ?? `P&L ${String(p.id).slice(0, 6)}` }}</div>
-                <div class="dd__sub">{{ p.client ?? "—" }}</div>
-              </div>
-              <div class="dd__id">{{ String(p.id).slice(0, 6) }}</div>
-            </button>
-
-            <div v-if="filteredPnls.length === 0" class="dd__empty">Aucun P&L trouvé.</div>
-          </div>
-        </div>
       </div>
 
-      <!-- Contrat selector -->
+      <!-- Contrat -->
       <div class="pill contract">
-        <div class="pill__head static">
+        <div class="pill__head contractHead">
           <span class="pill__label">Contrat</span>
+          <span class="pill__value" :title="contractName">{{ contractName }}</span>
+          <ChevronDownIcon class="pill__chev" />
+
           <select
-            class="pill__select"
+            class="pill__selectOverlay"
             :value="activeContract?.id ? String(activeContract.id) : ''"
             @change="onPickContract(($event.target as HTMLSelectElement).value)"
           >
@@ -289,11 +364,12 @@ const statusTone = computed(() => {
         </div>
       </div>
 
-      <!-- ✅ Variante = INFO (pas selector) -->
+      <!-- Variante -->
       <div class="pill variant info">
         <div class="pill__head static">
           <Squares2X2Icon class="pill__miniic" />
           <span class="pill__label">Variante</span>
+          <span class="pill__tag" title="Information uniquement">INFO</span>
           <span class="pill__value" :title="variantName">{{ variantName }}</span>
         </div>
 
@@ -309,115 +385,158 @@ const statusTone = computed(() => {
           </button>
         </div>
       </div>
+
+      <!-- Fold button -->
+      <button class="foldBtn" type="button" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
+        <ChevronDownIcon class="foldIc" :class="{ up: collapsed }" />
+      </button>
     </div>
 
     <!-- KPI + Summary -->
-    <div class="cockpit">
-      <div class="kpis-left">
-        <div class="kpi-row">
-          <div v-for="key in kpiLeftRow1" :key="key" class="kpi" :class="kpiClass(key)">
-            <div class="kpi__top">
-              <span class="kpi__name">{{ key }}</span>
-
-              <!-- ✅ % cohérent + EBIT plus visible -->
-              <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">
-                {{ fmtPct(metrics[key].percent) }}%
-              </span>
-            </div>
-
-            <div class="kpi__valRow">
-              <!-- ✅ chiffres uniformes (sauf EBIT) -->
-              <span class="kpi__num" :class="{ big: key === 'EBIT' }">
-                {{ fmtMoney(metrics[key].total, 0) }}
-              </span>
-              <span class="kpi__unit">DH</span>
-            </div>
-
-            <!-- ✅ mini-ligne compacte & stable -->
+    <transition name="hdFold">
+      <div v-show="!collapsed" class="cockpit">
+        <div class="kpis-left">
+          <div class="kpi-row">
             <div
-              class="kpi__mini"
-              :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
+              v-for="key in kpiLeftRow1"
+              :key="key"
+              class="kpi"
+              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '']"
             >
-              <span class="kmini">{{ fmtMoney(metrics[key].m3, 2) }}</span>
-              <span class="u">DH/m3</span>
-              <span class="dot">•</span>
-              <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
-              <span class="u">DH/mo</span>
+              <div class="kpi__top">
+                <span class="kpi__name">{{ key }}</span>
+                <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">{{ fmtPct(metrics[key].percent) }}%</span>
+              </div>
+
+              <div class="kpi__valRow">
+                <span class="kpi__num" :class="{ big: key === 'EBIT' }">{{ fmtMoney(metrics[key].total, 0) }}</span>
+                <span class="kpi__unit">DH</span>
+              </div>
+
+              <div
+                class="kpi__mini"
+                :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
+              >
+                <span class="mini__left">
+                  <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
+                  <span class="u m3u">DH/m3</span>
+                </span>
+                <span class="dot">•</span>
+                <span class="mini__right">
+                  <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
+                  <span class="u">DH/mo</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-row">
+            <div
+              v-for="key in kpiLeftRow2"
+              :key="key"
+              class="kpi"
+              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '']"
+            >
+              <div class="kpi__top">
+                <span class="kpi__name">{{ key }}</span>
+                <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">{{ fmtPct(metrics[key].percent) }}%</span>
+              </div>
+
+              <div class="kpi__valRow">
+                <span class="kpi__num" :class="{ big: key === 'EBIT' }">{{ fmtMoney(metrics[key].total, 0) }}</span>
+                <span class="kpi__unit">DH</span>
+              </div>
+
+              <div
+                class="kpi__mini"
+                :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
+              >
+                <span class="mini__left">
+                  <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
+                  <span class="u m3u">DH/m3</span>
+                </span>
+                <span class="dot">•</span>
+                <span class="mini__right">
+                  <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
+                  <span class="u">DH/mo</span>
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="kpi-row">
-          <div v-for="key in kpiLeftRow2" :key="key" class="kpi" :class="kpiClass(key)">
-            <div class="kpi__top">
-              <span class="kpi__name">{{ key }}</span>
-              <span class="kpi__pct">{{ fmtPct(metrics[key].percent) }}%</span>
+        <aside class="summary">
+          <div class="summary__title">Résumé</div>
+
+          <div class="summary__grid">
+            <div class="sum">
+              <BuildingOffice2Icon class="sum__ic" />
+              <div class="sum__txt">
+                <div class="sum__k">Client</div>
+                <div class="sum__v" :title="client">{{ client }}</div>
+              </div>
             </div>
 
-            <div class="kpi__valRow">
-              <span class="kpi__num">{{ fmtMoney(metrics[key].total, 0) }}</span>
-              <span class="kpi__unit">DH</span>
+            <div class="sum">
+              <CalendarDaysIcon class="sum__ic" />
+              <div class="sum__txt">
+                <div class="sum__k">Durée</div>
+                <div class="sum__v">{{ durationMonths }} mois</div>
+              </div>
             </div>
 
-            <div
-              class="kpi__mini"
-              :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
-            >
-              <span class="kmini">{{ fmtMoney(metrics[key].m3, 2) }}</span>
-              <span class="u">DH/m3</span>
-              <span class="dot">•</span>
-              <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
-              <span class="u">DH/mo</span>
+            <div class="sum">
+              <CubeIcon class="sum__ic" />
+              <div class="sum__txt">
+                <div class="sum__k">Volume</div>
+                <div class="sum__v">{{ Number(volumeTotal || 0).toLocaleString("fr-FR") }} m³</div>
+              </div>
+            </div>
+
+            <div class="sum">
+              <CheckBadgeIcon class="sum__ic" />
+              <div class="sum__txt">
+                <div class="sum__k">Statut</div>
+                <div class="sum__v">{{ status }}</div>
+              </div>
             </div>
           </div>
+        </aside>
+      </div>
+    </transition>
+
+    <!-- Dropdown P&L -->
+    <teleport to="body">
+      <div v-if="pnlOpen" id="pnl-dd" class="dd" :style="ddStyle" @click.stop>
+        <div class="dd__search">
+          <MagnifyingGlassIcon class="dd__ic" />
+          <input class="dd__in" v-model="pnlQuery" placeholder="Rechercher un P&L..." />
+        </div>
+
+        <div class="dd__list">
+          <button
+            v-for="p in filteredPnls"
+            :key="p.id"
+            class="dd__item"
+            :class="{ active: String(p.id) === String(activePnl?.id) }"
+            @click="onPickPnl(String(p.id))"
+          >
+            <div class="dd__main">
+              <div class="dd__title">{{ p.title ?? `P&L ${String(p.id).slice(0, 6)}` }}</div>
+              <div class="dd__sub">{{ p.client ?? "—" }}</div>
+            </div>
+            <div class="dd__id">{{ String(p.id).slice(0, 6) }}</div>
+          </button>
+
+          <div v-if="filteredPnls.length === 0" class="dd__empty">Aucun P&L trouvé.</div>
         </div>
       </div>
-
-      <aside class="summary" :class="statusTone">
-        <div class="summary__title">Résumé</div>
-
-        <div class="summary__grid">
-          <div class="sum">
-            <BuildingOffice2Icon class="sum__ic" />
-            <div class="sum__txt">
-              <div class="sum__k">Client</div>
-              <div class="sum__v" :title="client">{{ client }}</div>
-            </div>
-          </div>
-
-          <div class="sum">
-            <CalendarDaysIcon class="sum__ic" />
-            <div class="sum__txt">
-              <div class="sum__k">Durée</div>
-              <div class="sum__v">{{ durationMonths }} mois</div>
-            </div>
-          </div>
-
-          <div class="sum">
-            <CubeIcon class="sum__ic" />
-            <div class="sum__txt">
-              <div class="sum__k">Volume</div>
-              <div class="sum__v">{{ Number(volumeTotal || 0).toLocaleString("fr-FR") }} m³</div>
-            </div>
-          </div>
-
-          <div class="sum">
-            <CheckBadgeIcon class="sum__ic" />
-            <div class="sum__txt">
-              <div class="sum__k">Statut</div>
-              <div class="sum__v">{{ status }}</div>
-            </div>
-          </div>
-        </div>
-      </aside>
-    </div>
+    </teleport>
   </header>
 </template>
 
 <style scoped>
-/* ===== Header ===== */
 .hd {
-  --navy: #184070;
   --text: #0f172a;
   --muted: rgba(15, 23, 42, 0.65);
   --border: rgba(16, 24, 40, 0.12);
@@ -431,72 +550,70 @@ const statusTone = computed(() => {
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 
-  padding: 8px 10px;
+  padding: 6px 8px;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   overflow-x: hidden;
 }
+.hd.collapsed { gap: 0; padding-bottom: 6px; }
 
-/* ===== Top bar full width ===== */
+/* top bar */
 .bar {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr;
+  display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  align-items: stretch;
   width: 100%;
   min-width: 0;
 }
 
-@media (max-width: 1100px) {
-  .bar {
-    grid-template-columns: 1fr;
-  }
+.pill.pnl { flex: 1 1 520px; }
+.pill.contract { flex: 1 1 420px; }
+.pill.variant { flex: 1 1 360px; }
+@media (max-width: 900px) {
+  .pill.pnl, .pill.contract, .pill.variant { flex: 1 1 100%; }
 }
 
-/* ===== Pills ===== */
 .pill {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  min-width: 0;
 
-  width: 100%;
   background: rgba(255, 255, 255, 0.90);
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 14px;
-  padding: 6px 8px;
+
+  padding: 3px 8px;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
-  min-width: 0;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .pill__head {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
   background: transparent;
   border: none;
   padding: 0;
-  cursor: pointer;
-  min-width: 0;
-  flex: 1;
 }
-.pill__head.static {
-  cursor: default;
-}
+.pill__head:not(.static) { cursor: pointer; }
 
 .pill__label {
   font-size: 10px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.55);
-  letter-spacing: 0.2px;
   white-space: nowrap;
 }
-
 .pill__value {
   font-size: 12px;
   font-weight: 950;
   color: var(--text);
   min-width: 0;
+  flex: 1 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -507,25 +624,22 @@ const statusTone = computed(() => {
   height: 16px;
   color: rgba(15, 23, 42, 0.55);
   flex: 0 0 auto;
+  transition: transform 140ms ease;
 }
-
-.pill__miniic {
-  width: 16px;
-  height: 16px;
-  color: rgba(24, 64, 112, 0.75);
-  flex: 0 0 auto;
-}
+.pill__chev.rot { transform: rotate(180deg); }
 
 .pill__actions {
   display: inline-flex;
   gap: 6px;
   flex: 0 0 auto;
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .iconbtn {
-  width: 30px;
-  height: 30px;
-  border-radius: 12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
   display: inline-flex;
@@ -533,49 +647,77 @@ const statusTone = computed(() => {
   justify-content: center;
   cursor: pointer;
 }
-.iconbtn:hover {
-  background: rgba(32, 184, 232, 0.12);
-  border-color: rgba(32, 184, 232, 0.18);
-}
-.ic {
-  width: 16px;
-  height: 16px;
-  color: rgba(15, 23, 42, 0.75);
-}
+.iconbtn:hover { background: rgba(32, 184, 232, 0.12); border-color: rgba(32, 184, 232, 0.18); }
+.ic { width: 15px; height: 15px; color: rgba(15, 23, 42, 0.75); }
 
-.pill__select {
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text);
-  font-weight: 950;
-  font-size: 12px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* Variante info: pas d'apparence "selector" */
-.pill.variant.info {
-  background: rgba(255, 255, 255, 0.88);
-}
-.pill.variant.info .pill__head {
-  cursor: default;
-}
-
-/* ===== Dropdown (FIX) ===== */
-.dd {
+/* Contract overlay select clickable */
+.contractHead { position: relative; min-height: 24px; }
+.pill__selectOverlay {
   position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  width: min(560px, 96vw);
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background: transparent;
+}
+
+/* Variant info */
+.pill.variant.info {
+  background: linear-gradient(180deg, rgba(24, 64, 112, 0.06), rgba(255,255,255,0.92));
+  border-style: dashed;
+  border-color: rgba(24, 64, 112, 0.22);
+}
+.pill__miniic { width: 16px; height: 16px; color: rgba(24, 64, 112, 0.75); flex: 0 0 auto; }
+.pill__tag {
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.35px;
+  color: rgba(24, 64, 112, 0.75);
+  background: rgba(24, 64, 112, 0.10);
+  border: 1px solid rgba(24, 64, 112, 0.18);
+  padding: 2px 6px;
+  border-radius: 999px;
+  line-height: 1;
+}
+
+/* fold button */
+.foldBtn{
+  width: 34px;
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.75);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  flex: 0 0 auto;
+}
+.foldBtn:hover{
+  background: rgba(32,184,232,0.12);
+  border-color: rgba(32,184,232,0.18);
+}
+.foldIc{
+  width: 18px;
+  height: 18px;
+  transition: transform 160ms ease;
+  color: rgba(15,23,42,0.75);
+}
+.foldIc.up{ transform: rotate(180deg); }
+
+/* Dropdown */
+.dd {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 16px;
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
   padding: 10px;
-  z-index: 10000;
 }
-
 .dd__search {
   display: flex;
   align-items: center;
@@ -586,14 +728,7 @@ const statusTone = computed(() => {
   padding: 8px 10px;
   margin-bottom: 8px;
 }
-
-.dd__ic {
-  width: 16px;
-  height: 16px;
-  color: rgba(15, 23, 42, 0.55);
-  flex: 0 0 auto;
-}
-
+.dd__ic { width: 16px; height: 16px; color: rgba(15, 23, 42, 0.55); }
 .dd__in {
   width: 100%;
   border: none;
@@ -603,15 +738,7 @@ const statusTone = computed(() => {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.88);
 }
-
-.dd__list {
-  max-height: 260px;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+.dd__list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .dd__item {
   border: 1px solid rgba(16, 24, 40, 0.10);
   background: #fff;
@@ -623,100 +750,146 @@ const statusTone = computed(() => {
   cursor: pointer;
   text-align: left;
 }
-.dd__item:hover {
-  background: rgba(32, 184, 232, 0.08);
-  border-color: rgba(32, 184, 232, 0.18);
-}
-.dd__item.active {
-  background: rgba(144, 192, 40, 0.10);
-  border-color: rgba(144, 192, 40, 0.22);
-}
+.dd__item:hover { background: rgba(32, 184, 232, 0.08); border-color: rgba(32, 184, 232, 0.18); }
+.dd__item.active { background: rgba(144, 192, 40, 0.10); border-color: rgba(144, 192, 40, 0.22); }
+.dd__title { font-size: 12px; font-weight: 950; color: var(--text); }
+.dd__sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.dd__id { font-size: 11px; color: rgba(15, 23, 42, 0.55); }
+.dd__empty { font-size: 12px; color: rgba(15, 23, 42, 0.55); padding: 10px; text-align: center; }
 
-.dd__title {
-  font-size: 12px;
-  font-weight: 950;
-  color: var(--text);
-}
-.dd__sub {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 2px;
-}
-.dd__id {
-  font-size: 11px;
-  color: rgba(15, 23, 42, 0.55);
-  font-variant-numeric: tabular-nums;
-}
-.dd__empty {
-  font-size: 12px;
-  color: rgba(15, 23, 42, 0.55);
-  padding: 10px;
-  text-align: center;
-}
-
-/* ===== Cockpit layout ===== */
+/* Cockpit */
 .cockpit {
   display: grid;
-  grid-template-columns: 1fr 210px;
-  gap: 10px;
+  grid-template-columns: 1fr 185px;
+  gap: 8px;
   align-items: stretch;
   min-width: 0;
 }
-@media (max-width: 1100px) {
-  .cockpit {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 1100px) { .cockpit { grid-template-columns: 1fr; } }
+
+/* transition fold */
+.hdFold-enter-active,
+.hdFold-leave-active{
+  transition: max-height 200ms ease, opacity 160ms ease, transform 160ms ease;
+  overflow: hidden;
+}
+.hdFold-enter-from,
+.hdFold-leave-to{
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.hdFold-enter-to,
+.hdFold-leave-from{
+  max-height: 900px;
+  opacity: 1;
+  transform: translateY(0);
 }
 
-.kpis-left {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.kpi-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-@media (max-width: 900px) {
-  .kpi-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
+.kpis-left { display: grid; gap: 6px; min-width: 0; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-/* ===== KPI cards ===== */
+/* KPI */
 .kpi {
-  background: #ffffff;
+  background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.10);
   border-radius: 14px;
-  padding: 9px 10px;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.65) inset,
-    0 10px 22px rgba(15, 23, 42, 0.10);
-  min-width: 0;
+  padding: 8px 9px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.65) inset, 0 10px 22px rgba(15, 23, 42, 0.10);
   overflow: hidden;
 }
 
-/* légères teintes (sobres) pour distinguer */
-.kpi.soft1 { background: linear-gradient(180deg, rgba(32,184,232,0.06), #fff 60%); }
-.kpi.soft2 { background: linear-gradient(180deg, rgba(24,64,112,0.06), #fff 60%); }
-.kpi.soft3 { background: linear-gradient(180deg, rgba(148,163,184,0.12), #fff 60%); }
-
-.kpi__top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
+/* ASP */
+.kpi.asp {
+  border-color: rgba(14, 165, 233, 0.45);
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(14,165,233,0.24), transparent 55%),
+    linear-gradient(180deg, rgba(14,165,233,0.14), #fff 60%);
+  box-shadow:
+    0 0 0 1px rgba(14,165,233,0.14) inset,
+    0 18px 40px rgba(15, 23, 42, 0.14);
 }
 
-.kpi__name {
-  font-size: 10px;
-  font-weight: 950;
-  text-transform: uppercase;
-  letter-spacing: 0.35px;
-  color: rgba(15, 23, 42, 0.72);
+/* other KPI colors */
+.kpi.cmp { background: linear-gradient(180deg, rgba(24,64,112,0.07), #fff 62%); border-color: rgba(24, 64, 112, 0.22); }
+.kpi.transport { background: linear-gradient(180deg, rgba(148,163,184,0.14), #fff 62%); border-color: rgba(148, 163, 184, 0.30); }
+.kpi.momd { background: linear-gradient(180deg, rgba(59,130,246,0.08), #fff 62%); border-color: rgba(59, 130, 246, 0.20); }
+.kpi.prod { background: linear-gradient(180deg, rgba(16,185,129,0.08), #fff 62%); border-color: rgba(16, 185, 129, 0.22); }
+.kpi.ebitda { background: linear-gradient(180deg, rgba(99,102,241,0.08), #fff 62%); border-color: rgba(99, 102, 241, 0.22); }
+.kpi.amort { background: linear-gradient(180deg, rgba(245,158,11,0.06), #fff 62%); border-color: rgba(245, 158, 11, 0.22); }
+
+/* ✅ EBIT premium + bucket colors */
+.kpi.ebit { position: relative; transform: translateY(-1px); }
+.kpi.ebit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.55), transparent 40%);
+  pointer-events: none;
+  opacity: 0.55;
 }
+
+/* bucket backgrounds */
+.kpi.ebit.ebit-neg {
+  border-color: rgba(220, 38, 38, 0.55);
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(220,38,38,0.22), transparent 55%),
+    linear-gradient(180deg, rgba(220,38,38,0.12), #fff 60%);
+}
+.kpi.ebit.ebit-neg .kpi__name,
+.kpi.ebit.ebit-neg .kpi__num { color: rgba(185, 28, 28, 0.98); }
+.kpi.ebit.ebit-neg .kpi__pct.hot {
+  color: rgba(185, 28, 28, 0.98);
+  border-color: rgba(220, 38, 38, 0.55);
+  background: rgba(220, 38, 38, 0.14);
+}
+
+.kpi.ebit.ebit-low {
+  border-color: rgba(245, 158, 11, 0.55);
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(245,158,11,0.22), transparent 55%),
+    linear-gradient(180deg, rgba(245,158,11,0.14), #fff 60%);
+}
+.kpi.ebit.ebit-low .kpi__name,
+.kpi.ebit.ebit-low .kpi__num { color: rgba(180, 83, 9, 0.98); }
+.kpi.ebit.ebit-low .kpi__pct.hot {
+  color: rgba(180, 83, 9, 0.98);
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.kpi.ebit.ebit-mid {
+  border-color: rgba(37, 99, 235, 0.50);
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(37,99,235,0.20), transparent 55%),
+    linear-gradient(180deg, rgba(37,99,235,0.10), #fff 60%);
+}
+.kpi.ebit.ebit-mid .kpi__name,
+.kpi.ebit.ebit-mid .kpi__num { color: rgba(29, 78, 216, 0.98); }
+.kpi.ebit.ebit-mid .kpi__pct.hot {
+  color: rgba(29, 78, 216, 0.98);
+  border-color: rgba(37, 99, 235, 0.50);
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.kpi.ebit.ebit-good {
+  border-color: rgba(16, 185, 129, 0.52);
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(16,185,129,0.20), transparent 55%),
+    linear-gradient(180deg, rgba(16,185,129,0.10), #fff 60%);
+}
+.kpi.ebit.ebit-good .kpi__name,
+.kpi.ebit.ebit-good .kpi__num { color: rgba(5, 150, 105, 0.98); }
+.kpi.ebit.ebit-good .kpi__pct.hot {
+  color: rgba(5, 150, 105, 0.98);
+  border-color: rgba(16, 185, 129, 0.52);
+  background: rgba(16, 185, 129, 0.14);
+}
+
+/* KPI content */
+.kpi__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.kpi__name { font-size: 10px; font-weight: 950; text-transform: uppercase; letter-spacing: 0.35px; color: rgba(15, 23, 42, 0.72); }
 
 .kpi__pct {
   font-size: 10px;
@@ -728,150 +901,56 @@ const statusTone = computed(() => {
   background: rgba(15, 23, 42, 0.02);
 }
 .kpi__pct.hot {
-  color: rgba(180, 83, 9, 0.98);
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.10);
-}
-
-.kpi__valRow {
-  display: flex;
-  justify-content: center;
-  align-items: baseline;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.kpi__num {
-  font-size: 16px;          /* ✅ plus lisible */
-  font-weight: 950;
-  color: var(--navy);
-  font-variant-numeric: tabular-nums;
-}
-.kpi__num.big {
-  font-size: 19px;          /* ✅ EBIT héro */
+  font-size: 14px;
+  padding: 4px 12px;
   letter-spacing: 0.2px;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.10);
 }
 
-.kpi__unit {
-  font-size: 10px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.50);
-}
+.kpi__valRow { display: flex; justify-content: center; align-items: baseline; gap: 6px; margin-top: 5px; }
+.kpi__num { font-size: 16px; font-weight: 950; color: #184070; font-variant-numeric: tabular-nums; }
+.kpi__num.big { font-size: 19px; letter-spacing: 0.2px; }
+.kpi__unit { font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.50); }
 
 .kpi__mini {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
-  justify-content: center;
   align-items: baseline;
-  gap: 4px;
+  justify-content: center;
+  gap: 6px;
   font-size: 10px;
   font-weight: 900;
   color: rgba(15, 23, 42, 0.70);
   font-variant-numeric: tabular-nums;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-
-.kmini { font-size: 10px; font-weight: 950; color: rgba(15, 23, 42, 0.80); }
-.u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.45); }
+.mini__left { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.mini__right { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dot { color: rgba(15, 23, 42, 0.26); }
+.kmini { font-size: 10px; font-weight: 950; color: rgba(15, 23, 42, 0.80); }
+.kmini.m3 { color: rgba(24, 64, 112, 0.95); font-weight: 950; }
+.u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.45); }
+.u.m3u { color: rgba(24, 64, 112, 0.60); font-weight: 950; }
 
-/* ASP accent (même taille, mais effet) */
-.kpi.asp {
-  border-color: rgba(32, 184, 232, 0.30);
-  box-shadow:
-    0 0 0 1px rgba(32, 184, 232, 0.10) inset,
-    0 12px 24px rgba(15, 23, 42, 0.10);
-}
-.kpi.asp .kpi__num {
-  color: rgba(24, 64, 112, 1);
-}
-
-/* ✅ EBIT premium (glass + gradient + shine) */
-.kpi.ebit {
-  border-color: rgba(245, 158, 11, 0.55);
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(245,158,11,0.22), transparent 55%),
-    linear-gradient(180deg, rgba(245,158,11,0.14), #fff 58%);
-  box-shadow:
-    0 0 0 1px rgba(245, 158, 11, 0.18) inset,
-    0 16px 34px rgba(15, 23, 42, 0.14);
-  transform: translateY(-1px);
-  position: relative;
-}
-.kpi.ebit::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255,255,255,0.55), transparent 40%);
-  pointer-events: none;
-  opacity: 0.55;
-}
-.kpi.ebit .kpi__name {
-  color: rgba(180, 83, 9, 0.98);
-}
-.kpi.ebit .kpi__num {
-  color: rgba(180, 83, 9, 0.98);
-}
-
-/* ===== Summary ===== */
+/* Summary */
 .summary {
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 16px;
-  padding: 10px 10px 8px;
+  padding: 9px 9px 7px;
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
-  min-width: 0;
   overflow: hidden;
 }
-
 .summary__title {
   font-size: 11px;
   font-weight: 950;
   text-transform: uppercase;
   letter-spacing: 0.35px;
   color: rgba(15, 23, 42, 0.68);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
-
-.summary__grid {
-  display: grid;
-  gap: 8px;
-}
-
-.sum {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-}
-.sum__ic {
-  width: 18px;
-  height: 18px;
-  color: rgba(24, 64, 112, 0.70);
-}
-.sum__k {
-  font-size: 10px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.55);
-}
-.sum__v {
-  font-size: 12px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.88);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.summary.ok { box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.10) inset, 0 10px 26px rgba(15, 23, 42, 0.10); }
-.summary.ok .sum__ic { color: rgba(34, 197, 94, 0.70); }
-.summary.warn { box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12) inset, 0 10px 26px rgba(15, 23, 42, 0.10); }
-.summary.warn .sum__ic { color: rgba(245, 158, 11, 0.75); }
-.summary.bad { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.12) inset, 0 10px 26px rgba(15, 23, 42, 0.10); }
-.summary.bad .sum__ic { color: rgba(239, 68, 68, 0.75); }
-.summary.neutral .sum__ic { color: rgba(24, 64, 112, 0.70); }
+.summary__grid { display: grid; gap: 7px; }
+.sum { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: center; }
+.sum__ic { width: 18px; height: 18px; color: rgba(24, 64, 112, 0.70); }
+.sum__k { font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.55); }
+.sum__v { font-size: 12px; font-weight: 950; color: rgba(15, 23, 42, 0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
