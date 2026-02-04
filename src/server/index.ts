@@ -5,6 +5,7 @@ import { prisma } from "./db";
 import { getPnls } from "./pnl.repo";
 import { Prisma } from "@prisma/client";
 
+
 const app = express();
 
 app.use(cors());
@@ -1302,6 +1303,74 @@ app.delete("/variants/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
+
+/* =========================================================
+   MAJORATIONS
+   - Stockées dans sectionAutresCouts.majorations (JSON string)
+   - Impact uniquement les KPIs du header
+========================================================= */
+
+app.get("/variants/:id/majorations", async (req, res) => {
+  const variantId = String(req.params.id);
+
+  try {
+    const section = await prisma.sectionAutresCouts.findUnique({
+      where: { variantId },
+      select: { majorations: true },
+    });
+
+    let parsed: Record<string, number> = {};
+    try {
+      parsed = section?.majorations
+        ? JSON.parse(section.majorations)
+        : {};
+    } catch {
+      parsed = {};
+    }
+
+    res.json({ majorations: parsed });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load majorations" });
+  }
+});
+
+app.put("/variants/:id/majorations", async (req, res) => {
+  const variantId = String(req.params.id);
+  const incoming = req.body?.majorations ?? {};
+
+  const safe: Record<string, number> = {};
+  if (incoming && typeof incoming === "object") {
+    for (const [k, v] of Object.entries(incoming)) {
+      const n = Number(v);
+      safe[k] = Number.isFinite(n) ? n : 0;
+    }
+  }
+
+  try {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.sectionAutresCouts.upsert({
+        where: { variantId },
+        create: {
+          variantId,
+          category: "COUTS_CHARGES",
+          majorations: JSON.stringify(safe),
+        },
+        update: {
+          majorations: JSON.stringify(safe),
+        },
+      });
+    });
+
+    // on renvoie la variante complète mise à jour
+    const fullVariant = await getFullVariant(variantId);
+    res.json(fullVariant);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: "Failed to save majorations" });
+  }
+});
+
 
 app.listen(3001, () => {
   console.log("API running on http://localhost:3001");

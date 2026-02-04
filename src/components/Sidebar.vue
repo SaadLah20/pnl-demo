@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePnlStore } from "@/stores/pnl.store";
+import { PercentBadgeIcon } from "@heroicons/vue/24/outline";
 
 // ✅ Logo (assure-toi que le fichier existe)
 import holcimLogoUrl from "@/assets/holcim_logo.png";
@@ -77,6 +78,8 @@ const routeByItem: Record<string, string> = {
   "Cout employés": "CoutEmployes",
   "Couts occasionnels": "CoutsOccasionnels",
   "Autres couts": "AutresCouts",
+    "Majorations": "Majorations",
+
 };
 
 function goToPage(item: string) {
@@ -131,6 +134,7 @@ watch(
     else if (route.name === "CoutEmployes") activeItem.value = "Cout employés";
     else if (route.name === "CoutsOccasionnels") activeItem.value = "Couts occasionnels";
     else if (route.name === "AutresCouts") activeItem.value = "Autres couts";
+    else if (route.name === "Majorations") activeItem.value = "Majorations";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 

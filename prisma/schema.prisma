@@ -225,6 +225,7 @@ model SectionAutresCouts {
   id        String  @id @default(uuid())
   variantId String  @unique
   category  String
+  majorations String @default("{}") // <-- AJOUT
   variant   Variant @relation(fields: [variantId], references: [id])
 
   items AutreCoutItem[]

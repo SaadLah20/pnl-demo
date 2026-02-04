@@ -56,6 +56,8 @@ export const usePnlStore = defineStore("pnl", {
     pnls: [] as any[],
     activePnlId: null as string | null,
     activeVariantId: null as string | null,
+    // preview majorations (temporaire) : n’impacte que les KPIs du header
+    headerMajorationsPreview: null as Record<string, number> | null,
 
     // catalogues
     mpCatalogue: [] as any[],
@@ -100,7 +102,7 @@ export const usePnlStore = defineStore("pnl", {
       if (!variant) return null;
 
       const dureeMois = (this as any).activeContract?.dureeMois ?? 0;
-      return computeHeaderKpis(variant, dureeMois);
+      return computeHeaderKpis(variant, dureeMois, (this as any).headerMajorationsPreview);
     },
   },
 
@@ -120,6 +122,28 @@ export const usePnlStore = defineStore("pnl", {
         }
       }
     },
+
+    setHeaderMajorationsPreview(map: Record<string, number> | null) {
+  this.headerMajorationsPreview = map;
+},
+clearHeaderMajorationsPreview() {
+  this.headerMajorationsPreview = null;
+},
+
+async saveMajorations(variantId: string, majorations: Record<string, number>) {
+  const updated = await jsonFetch(`/variants/${variantId}/majorations`, {
+    method: "PUT",
+    body: JSON.stringify({ majorations }),
+  });
+
+  if (updated?.id) this.replaceActiveVariantInState(updated);
+
+  // après enregistrement, on coupe le preview : le header doit lire la valeur persistée
+  this.headerMajorationsPreview = null;
+
+  return updated;
+},
+
 
     // -------------------------
     // LOAD HIERARCHY

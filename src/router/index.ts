@@ -17,7 +17,7 @@ import CoutMensuelPage from "@/pages/CoutMensuelPage.vue";
 import CoutEmployesPage from "@/pages/CoutEmployesPage.vue";
 import CoutsOccasionnelsPage from "@/pages/CoutsOccasionnelsPage.vue";
 import AutresCoutsPage from "@/pages/AutresCoutsPage.vue";
-
+import MajorationsPage from "@/pages/MajorationPage.vue";
 
 
 
@@ -42,6 +42,7 @@ const routes = [
 { path: "/cout-employes", name: "CoutEmployes", component: CoutEmployesPage },
 { path: "/couts-occasionnels", name: "CoutsOccasionnels", component: CoutsOccasionnelsPage },
 { path: "/autres-couts", name: "AutresCouts", component: AutresCoutsPage },
+{ path: "/majorations", name: "Majorations", component: MajorationsPage },
 
 
         

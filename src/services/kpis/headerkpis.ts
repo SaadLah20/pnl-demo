@@ -20,9 +20,45 @@ function pricePerKg(prix: number): number {
   return p / 1000; // DH/tonne -> DH/kg
 }
 
-export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
+/* =========================
+   MAJORATIONS (persisted + preview)
+   - Persisted: variant.autresCouts.majorations (JSON string)
+   - Preview: 3rd param (store.headerMajorationsPreview)
+========================= */
+function readPersistedMajorations(variant: any): Record<string, number> {
+  try {
+    const raw = variant?.autresCouts?.majorations;
+    if (!raw) return {};
+    if (typeof raw === "object") return raw as Record<string, number>;
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getMajorationPct(
+  key: string,
+  persisted: Record<string, number>,
+  preview?: Record<string, number> | null
+): number {
+  if (preview && key in preview) return n((preview as any)[key]);
+  return n((persisted as any)[key]);
+}
+
+function applyMajoration(value: number, pct: number): number {
+  return value * (1 + pct / 100);
+}
+
+export function computeHeaderKpis(
+  variant: any,
+  dureeMois: number,
+  previewMajorations?: Record<string, number> | null
+): HeaderKPIs {
   const formulesItems = variant?.formules?.items ?? [];
   const mpItems = variant?.mp?.items ?? [];
+
+  const persistedMajorations = readPersistedMajorations(variant);
 
   const duree = n(dureeMois);
   const dureeJours = duree > 0 ? Math.round(duree * 30) : null;
@@ -30,30 +66,39 @@ export function computeHeaderKpis(variant: any, dureeMois: number): HeaderKPIs {
   // 1) Volume total
   const volumeTotalM3 = sum(formulesItems, (f) => n(f?.volumeM3));
 
-  // 2) Transport
-  const transportMoyenM3 = n(variant?.transport?.prixMoyen);
+  // 2) Transport (majorable)
+  const transportPct = getMajorationPct(
+    "transport.prixMoyen",
+    persistedMajorations,
+    previewMajorations
+  );
+  const transportMoyenM3 = applyMajoration(n(variant?.transport?.prixMoyen), transportPct);
   const transportTotal = transportMoyenM3 * volumeTotalM3;
 
-function mpPrixUsed(mpId: string): number {
-  const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
-  if (!vmp) return 0;
+  function mpPrixUsed(mpId: string): number {
+    const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
+    if (!vmp) return 0;
 
-  // ✅ override (prix variante)
-  if (vmp?.prix != null) return n(vmp.prix);
+    // ✅ override (prix variante)
+    if (vmp?.prix != null) return n(vmp.prix);
 
-  // fallback catalogue
-  return n(vmp?.mp?.prix);
-}
+    // fallback catalogue
+    return n(vmp?.mp?.prix);
+  }
 
-
-  // 3) CMP formule (DH/m3)
+  // 3) CMP formule (DH/m3) — MP majorées par mpId
   function cmpFormuleM3(formule: any): number {
     const compo = formule?.items ?? [];
     return sum(compo, (it: any) => {
       const mpId = String(it?.mpId ?? "");
       const qtyKg = n(it?.qty);
+
       const prix = mpPrixUsed(mpId); // DH/tonne
-      const prixKg = pricePerKg(prix);
+      const pctMp = getMajorationPct(`mp:${mpId}`, persistedMajorations, previewMajorations);
+
+      const prixKgBase = pricePerKg(prix);
+      const prixKg = applyMajoration(prixKgBase, pctMp);
+
       return qtyKg * prixKg;
     });
   }
@@ -71,6 +116,8 @@ function mpPrixUsed(mpId: string): number {
     const vol = n(f?.volumeM3);
     const momd = n(f?.momd);
     const cmp = cmpFormuleM3(f?.formule);
+
+    // PV = CMP + Transport + MOMD (transport est déjà majoré)
     const pv = cmp + transportMoyenM3 + momd;
     return pv * vol;
   });
@@ -90,73 +137,245 @@ function mpPrixUsed(mpId: string): number {
   const coutOcc = variant?.coutOccasionnel;
   const autresItems = variant?.autresCouts?.items ?? [];
 
-  const coutM3Total =
-    (n(coutM3?.eau) + n(coutM3?.qualite) + n(coutM3?.dechets)) * volumeTotalM3;
+  // 5.1) Coûts / m3 (majorables par ligne)
+  const coutM3Eau = applyMajoration(
+    n(coutM3?.eau),
+    getMajorationPct("coutM3.eau", persistedMajorations, previewMajorations)
+  );
+  const coutM3Qualite = applyMajoration(
+    n(coutM3?.qualite),
+    getMajorationPct("coutM3.qualite", persistedMajorations, previewMajorations)
+  );
+  const coutM3Dechets = applyMajoration(
+    n(coutM3?.dechets),
+    getMajorationPct("coutM3.dechets", persistedMajorations, previewMajorations)
+  );
 
-  // ✅ inclure tous les mensuels
+  const coutM3Total = (coutM3Eau + coutM3Qualite + coutM3Dechets) * volumeTotalM3;
+
+  // 5.2) Coûts mensuels (majorables par champ)
+  const cmElectricite = applyMajoration(
+    n(coutMensuel?.electricite),
+    getMajorationPct("coutMensuel.electricite", persistedMajorations, previewMajorations)
+  );
+  const cmGasoil = applyMajoration(
+    n(coutMensuel?.gasoil),
+    getMajorationPct("coutMensuel.gasoil", persistedMajorations, previewMajorations)
+  );
+  const cmLocation = applyMajoration(
+    n(coutMensuel?.location),
+    getMajorationPct("coutMensuel.location", persistedMajorations, previewMajorations)
+  );
+  const cmSecurite = applyMajoration(
+    n(coutMensuel?.securite),
+    getMajorationPct("coutMensuel.securite", persistedMajorations, previewMajorations)
+  );
+  const cmHebergements = applyMajoration(
+    n(coutMensuel?.hebergements),
+    getMajorationPct("coutMensuel.hebergements", persistedMajorations, previewMajorations)
+  );
+  const cmLocationTerrain = applyMajoration(
+    n(coutMensuel?.locationTerrain),
+    getMajorationPct("coutMensuel.locationTerrain", persistedMajorations, previewMajorations)
+  );
+  const cmTelephone = applyMajoration(
+    n(coutMensuel?.telephone),
+    getMajorationPct("coutMensuel.telephone", persistedMajorations, previewMajorations)
+  );
+  const cmTroisG = applyMajoration(
+    n(coutMensuel?.troisG),
+    getMajorationPct("coutMensuel.troisG", persistedMajorations, previewMajorations)
+  );
+  const cmTaxePro = applyMajoration(
+    n(coutMensuel?.taxeProfessionnelle),
+    getMajorationPct("coutMensuel.taxeProfessionnelle", persistedMajorations, previewMajorations)
+  );
+  const cmLocVehicule = applyMajoration(
+    n(coutMensuel?.locationVehicule),
+    getMajorationPct("coutMensuel.locationVehicule", persistedMajorations, previewMajorations)
+  );
+  const cmLocAmbulance = applyMajoration(
+    n(coutMensuel?.locationAmbulance),
+    getMajorationPct("coutMensuel.locationAmbulance", persistedMajorations, previewMajorations)
+  );
+  const cmLocBungalows = applyMajoration(
+    n(coutMensuel?.locationBungalows),
+    getMajorationPct("coutMensuel.locationBungalows", persistedMajorations, previewMajorations)
+  );
+  const cmEpi = applyMajoration(
+    n(coutMensuel?.epi),
+    getMajorationPct("coutMensuel.epi", persistedMajorations, previewMajorations)
+  );
+
   const coutMensuelMensuel =
-    n(coutMensuel?.electricite) +
-    n(coutMensuel?.gasoil) +
-    n(coutMensuel?.location) +
-    n(coutMensuel?.securite) +
-    n(coutMensuel?.hebergements) +
-    n(coutMensuel?.locationTerrain) +
-    n(coutMensuel?.telephone) +
-    n(coutMensuel?.troisG) +
-    n(coutMensuel?.taxeProfessionnelle) +
-    n(coutMensuel?.locationVehicule) +
-    n(coutMensuel?.locationAmbulance) +
-    n(coutMensuel?.locationBungalows) +
-    n(coutMensuel?.epi);
+    cmElectricite +
+    cmGasoil +
+    cmLocation +
+    cmSecurite +
+    cmHebergements +
+    cmLocationTerrain +
+    cmTelephone +
+    cmTroisG +
+    cmTaxePro +
+    cmLocVehicule +
+    cmLocAmbulance +
+    cmLocBungalows +
+    cmEpi;
 
   const coutMensuelTotal = coutMensuelMensuel * duree;
 
-  const maintenanceMensuel =
-    n(maintenance?.cab) +
-    n(maintenance?.elec) +
-    n(maintenance?.chargeur) +
-    n(maintenance?.generale) +
-    n(maintenance?.bassins) +
-    n(maintenance?.preventive);
+  // 5.3) Maintenance (majorables par champ)
+  const mCab = applyMajoration(
+    n(maintenance?.cab),
+    getMajorationPct("maintenance.cab", persistedMajorations, previewMajorations)
+  );
+  const mElec = applyMajoration(
+    n(maintenance?.elec),
+    getMajorationPct("maintenance.elec", persistedMajorations, previewMajorations)
+  );
+  const mChargeur = applyMajoration(
+    n(maintenance?.chargeur),
+    getMajorationPct("maintenance.chargeur", persistedMajorations, previewMajorations)
+  );
+  const mGenerale = applyMajoration(
+    n(maintenance?.generale),
+    getMajorationPct("maintenance.generale", persistedMajorations, previewMajorations)
+  );
+  const mBassins = applyMajoration(
+    n(maintenance?.bassins),
+    getMajorationPct("maintenance.bassins", persistedMajorations, previewMajorations)
+  );
+  const mPreventive = applyMajoration(
+    n(maintenance?.preventive),
+    getMajorationPct("maintenance.preventive", persistedMajorations, previewMajorations)
+  );
 
+  const maintenanceMensuel = mCab + mElec + mChargeur + mGenerale + mBassins + mPreventive;
   const maintenanceTotal = maintenanceMensuel * duree;
 
-  // ✅ inclure tous les postes employés
+  // 5.4) Employés (majoration par poste : employes.<role>)
+  const empResponsable = applyMajoration(
+    n(employes?.responsableNb) * n(employes?.responsableCout),
+    getMajorationPct("employes.responsable", persistedMajorations, previewMajorations)
+  );
+  const empCentralistes = applyMajoration(
+    n(employes?.centralistesNb) * n(employes?.centralistesCout),
+    getMajorationPct("employes.centralistes", persistedMajorations, previewMajorations)
+  );
+  const empManoeuvre = applyMajoration(
+    n(employes?.manoeuvreNb) * n(employes?.manoeuvreCout),
+    getMajorationPct("employes.manoeuvre", persistedMajorations, previewMajorations)
+  );
+  const empCoord = applyMajoration(
+    n(employes?.coordinateurExploitationNb) * n(employes?.coordinateurExploitationCout),
+    getMajorationPct("employes.coordinateurExploitation", persistedMajorations, previewMajorations)
+  );
+  const empTechLabo = applyMajoration(
+    n(employes?.technicienLaboNb) * n(employes?.technicienLaboCout),
+    getMajorationPct("employes.technicienLabo", persistedMajorations, previewMajorations)
+  );
+  const empFemmeMenage = applyMajoration(
+    n(employes?.femmeMenageNb) * n(employes?.femmeMenageCout),
+    getMajorationPct("employes.femmeMenage", persistedMajorations, previewMajorations)
+  );
+  const empGardien = applyMajoration(
+    n(employes?.gardienNb) * n(employes?.gardienCout),
+    getMajorationPct("employes.gardien", persistedMajorations, previewMajorations)
+  );
+  const empMaintenancier = applyMajoration(
+    n(employes?.maintenancierNb) * n(employes?.maintenancierCout),
+    getMajorationPct("employes.maintenancier", persistedMajorations, previewMajorations)
+  );
+  const empPanier = applyMajoration(
+    n(employes?.panierRepasNb) * n(employes?.panierRepasCout),
+    getMajorationPct("employes.panierRepas", persistedMajorations, previewMajorations)
+  );
+
   const employesMensuel =
-    n(employes?.responsableNb) * n(employes?.responsableCout) +
-    n(employes?.centralistesNb) * n(employes?.centralistesCout) +
-    n(employes?.manoeuvreNb) * n(employes?.manoeuvreCout) +
-    n(employes?.coordinateurExploitationNb) * n(employes?.coordinateurExploitationCout) +
-    n(employes?.technicienLaboNb) * n(employes?.technicienLaboCout) +
-    n(employes?.femmeMenageNb) * n(employes?.femmeMenageCout) +
-    n(employes?.gardienNb) * n(employes?.gardienCout) +
-    n(employes?.maintenancierNb) * n(employes?.maintenancierCout) +
-    n(employes?.panierRepasNb) * n(employes?.panierRepasCout);
+    empResponsable +
+    empCentralistes +
+    empManoeuvre +
+    empCoord +
+    empTechLabo +
+    empFemmeMenage +
+    empGardien +
+    empMaintenancier +
+    empPanier;
 
   const employesTotal = employesMensuel * duree;
 
-  // ✅ inclure tous les occasionnels
-  const coutOccasionnelTotal =
-    n(coutOcc?.genieCivil) +
-    n(coutOcc?.installation) +
-    n(coutOcc?.transport) +
-    n(coutOcc?.demontage) +
-    n(coutOcc?.remisePointCentrale) +
-    n(coutOcc?.silots) +
-    n(coutOcc?.localAdjuvant) +
-    n(coutOcc?.bungalows);
+  // 5.5) Occasionnels (majorables par champ)
+  const occGenieCivil = applyMajoration(
+    n(coutOcc?.genieCivil),
+    getMajorationPct("coutOccasionnel.genieCivil", persistedMajorations, previewMajorations)
+  );
+  const occInstallation = applyMajoration(
+    n(coutOcc?.installation),
+    getMajorationPct("coutOccasionnel.installation", persistedMajorations, previewMajorations)
+  );
+  const occTransport = applyMajoration(
+    n(coutOcc?.transport),
+    getMajorationPct("coutOccasionnel.transport", persistedMajorations, previewMajorations)
+  );
+  const occDemontage = applyMajoration(
+    n(coutOcc?.demontage),
+    getMajorationPct("coutOccasionnel.demontage", persistedMajorations, previewMajorations)
+  );
+  const occRemise = applyMajoration(
+    n(coutOcc?.remisePointCentrale),
+    getMajorationPct(
+      "coutOccasionnel.remisePointCentrale",
+      persistedMajorations,
+      previewMajorations
+    )
+  );
+  const occSilots = applyMajoration(
+    n(coutOcc?.silots),
+    getMajorationPct("coutOccasionnel.silots", persistedMajorations, previewMajorations)
+  );
+  const occLocalAdjuvant = applyMajoration(
+    n(coutOcc?.localAdjuvant),
+    getMajorationPct("coutOccasionnel.localAdjuvant", persistedMajorations, previewMajorations)
+  );
+  const occBungalows = applyMajoration(
+    n(coutOcc?.bungalows),
+    getMajorationPct("coutOccasionnel.bungalows", persistedMajorations, previewMajorations)
+  );
 
+  const coutOccasionnelTotal =
+    occGenieCivil +
+    occInstallation +
+    occTransport +
+    occDemontage +
+    occRemise +
+    occSilots +
+    occLocalAdjuvant +
+    occBungalows;
+
+  // 5.6) Autres coûts (items)
+  // - frais généraux = item % (on ne majore pas ce % ici)
   const fraisGenPct = n(
     autresItems.find((x: any) => String(x?.unite ?? "").includes("POURCENT"))?.valeur
   );
 
+  // - autres coûts hors % : majoration par item (autresCoutsItem:<id>)
   const autresCoutsHorsPctTotal = sum(autresItems, (x: any) => {
     const unite = String(x?.unite ?? "");
-    const val = n(x?.valeur);
+    const baseVal = n(x?.valeur);
+
     if (unite.includes("POURCENT")) return 0;
-    if (unite === "MOIS") return val * duree;
-    if (unite === "M3") return val * volumeTotalM3;
-    return val;
+
+    const pctItem = getMajorationPct(
+      `autresCoutsItem:${String(x?.id ?? "")}`,
+      persistedMajorations,
+      previewMajorations
+    );
+
+    const valMajore = applyMajoration(baseVal, pctItem);
+
+    if (unite === "MOIS") return valMajore * duree;
+    if (unite === "M3") return valMajore * volumeTotalM3;
+    return valMajore;
   });
 
   const productionTotal =

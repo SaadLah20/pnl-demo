@@ -40,7 +40,8 @@ function clamp(v: any, min = 0, max = 1e15) {
 ========================= */
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
-const dureeMois = computed(() => Math.max(0, toNum(contract.value?.dureeMois)));
+
+const dureeMois = computed(() => toNum(contract.value?.dureeMois));
 
 /* =========================
    KPIs requis (Volume / CA)
@@ -68,9 +69,9 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
-);
+const volumeTotal = computed(() => {
+  return formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0);
+});
 
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
@@ -88,19 +89,28 @@ function cmpParM3For(vf: any): number {
   return it.reduce((s: number, x: any) => {
     const qtyKg = clamp(x?.qty);
     const prixTonne = mpPriceUsed(String(x?.mpId));
-    return s + (qtyKg / 1000) * prixTonne;
+    const coutParM3 = (qtyKg / 1000) * prixTonne;
+    return s + coutParM3;
   }, 0);
 }
 
-const caTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => {
+const caTotal = computed(() => {
+  // CA = Σ (PVformule * volume)
+  // PV = CMP + Transport + MOMD
+  return formules.value.reduce((s: number, vf: any) => {
     const vol = clamp(getFormDraft(vf.id).volumeM3);
     const momd = clamp(getFormDraft(vf.id).momd);
     const cmp = cmpParM3For(vf);
     const pv = cmp + transportPrixMoyen.value + momd;
     return s + pv * vol;
-  }, 0)
-);
+  }, 0);
+});
+
+const pvMoy = computed(() => {
+  const vol = volumeTotal.value;
+  if (vol <= 0) return 0;
+  return caTotal.value / vol;
+});
 
 /* =========================
    AUTRES COUTS - UI MODEL
@@ -108,7 +118,7 @@ const caTotal = computed(() =>
 type Unite = "FORFAIT" | "MOIS" | "M3" | "POURCENT_CA";
 
 type DraftRow = {
-  _id: string;
+  _id: string; // local id pour v-for stable
   label: string;
   unite: Unite;
   valeur: number;
@@ -130,17 +140,39 @@ function loadFromVariant() {
   }));
 }
 
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
+watch(
+  () => variant.value?.id,
+  () => loadFromVariant(),
+  { immediate: true }
+);
 
 /* =========================
    CALCULS
 ========================= */
 function totalFor(r: DraftRow): number {
   const v = clamp(r.valeur);
+
   if (r.unite === "FORFAIT") return v;
   if (r.unite === "MOIS") return v * clamp(dureeMois.value);
   if (r.unite === "M3") return v * clamp(volumeTotal.value);
-  return (v / 100) * clamp(caTotal.value); // POURCENT_CA
+
+  // POURCENT_CA
+  return (v / 100) * clamp(caTotal.value);
+}
+
+function monthlyFor(r: DraftRow): number {
+  const v = clamp(r.valeur);
+
+  if (r.unite === "MOIS") return v;
+
+  if (r.unite === "FORFAIT") {
+    const d = clamp(dureeMois.value);
+    if (d <= 0) return 0;
+    return totalFor(r) / d;
+  }
+
+  // M3 et %CA -> mensuel dépend de volumes mensuels (non dispo)
+  return 0;
 }
 
 function perM3For(r: DraftRow): number {
@@ -156,22 +188,43 @@ function pctFor(r: DraftRow): number {
 }
 
 const totalGlobal = computed(() => rows.value.reduce((s, r) => s + totalFor(r), 0));
-const perM3Global = computed(() => (volumeTotal.value > 0 ? totalGlobal.value / volumeTotal.value : 0));
-const monthlyGlobal = computed(() => (dureeMois.value > 0 ? totalGlobal.value / dureeMois.value : 0));
-const pctGlobal = computed(() => (caTotal.value > 0 ? (totalGlobal.value / caTotal.value) * 100 : 0));
+
+const perM3Global = computed(() => {
+  const vol = volumeTotal.value;
+  if (vol <= 0) return 0;
+  return totalGlobal.value / vol;
+});
+
+const monthlyGlobal = computed(() => {
+  const d = clamp(dureeMois.value);
+  if (d <= 0) return 0;
+  return totalGlobal.value / d;
+});
+
+const pctGlobal = computed(() => {
+  const ca = caTotal.value;
+  if (ca <= 0) return 0;
+  return (totalGlobal.value / ca) * 100;
+});
 
 /* =========================
    ACTIONS
 ========================= */
 function addRow() {
-  rows.value.push({ _id: uid(), label: "Nouveau coût", unite: "FORFAIT", valeur: 0 });
+  rows.value.push({
+    _id: uid(),
+    label: "Nouveau coût",
+    unite: "FORFAIT",
+    valeur: 0,
+  });
 }
+
 function removeRow(idx: number) {
   rows.value.splice(idx, 1);
 }
 
 /* =========================
-   MODAL
+   MODAL (confirm/info)
 ========================= */
 const modal = reactive({
   open: false,
@@ -180,6 +233,7 @@ const modal = reactive({
   mode: "confirm" as "confirm" | "info",
   onConfirm: null as null | (() => void | Promise<void>),
 });
+
 function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
   modal.open = true;
   modal.title = title;
@@ -221,7 +275,9 @@ async function save() {
   err.value = null;
   saving.value = true;
   try {
-    await (store as any).updateVariant(variant.value.id, { autresCouts: { items: buildPayload() } });
+    await (store as any).updateVariant(variant.value.id, {
+      autresCouts: { items: buildPayload() },
+    });
     openInfo("Enregistré", "Autres coûts mis à jour.");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
@@ -237,6 +293,7 @@ function askSave() {
     await save();
   });
 }
+
 function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
@@ -247,20 +304,24 @@ function askReset() {
 
 <template>
   <div class="page">
-    <div class="top">
-      <div class="title">
-        <div class="h1">Autres coûts</div>
-
-        <div class="muted" v-if="variant">
-          Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
+    <!-- HEADER compact (style dashboard-like) -->
+    <div class="head">
+      <div class="hLeft">
+        <div class="hTitle">Autres coûts</div>
+        <div class="hSub muted" v-if="variant">
+          Variante : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
+          <span v-if="dureeMois"> • {{ dureeMois }} mois</span>
+          <span v-if="volumeTotal"> • Vol {{ n(volumeTotal, 0) }} m³</span>
+          <span v-if="caTotal"> • CA {{ money(caTotal, 0) }}</span>
+          <span v-if="pvMoy"> • PV moy {{ money(pvMoy, 2) }}/m³</span>
         </div>
-        <div class="muted" v-else>Aucune variante active.</div>
+        <div class="hSub muted" v-else>Aucune variante active.</div>
       </div>
 
-      <div class="actions">
-        <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
-        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
+      <div class="hRight">
+        <button class="btn" type="button" :disabled="!variant || saving" @click="addRow()">+ Ajouter</button>
+        <button class="btn" type="button" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
+        <button class="btn primary" type="button" :disabled="!variant || saving" @click="askSave()">
           {{ saving ? "..." : "Enregistrer" }}
         </button>
       </div>
@@ -277,93 +338,88 @@ function askReset() {
       </div>
 
       <template v-else>
-        <!-- KPIs: KPI spécial = TOTAL (éloigné visuellement du Prix/m³) -->
+        <!-- KPIs: 1 ligne, très compacte -->
         <div class="kpis">
-          <div class="kpi kpiMain">
-            <div class="kLbl">Total autres coûts</div>
-            <div class="kVal mono">{{ money(totalGlobal, 2) }}</div>
-          </div>
-
-          <div class="kpi kpiMonth">
-            <div class="kLbl">/ mois</div>
-            <div class="kVal mono">{{ money(monthlyGlobal, 2) }} <span>DH/mois</span></div>
-          </div>
-
           <div class="kpi">
-            <div class="kLbl">Prix / m³</div>
-            <div class="kVal mono">{{ n(perM3Global, 2) }} <span>DH/m³</span></div>
+            <div class="kLbl">Autres coûts /m³</div>
+            <div class="kVal">{{ n(perM3Global, 2) }} <span class="kUnit">DH/m³</span></div>
           </div>
-
           <div class="kpi">
-            <div class="kLbl">%</div>
-            <div class="kVal mono">{{ n(pctGlobal, 2) }} <span>%</span></div>
+            <div class="kLbl">Autres coûts /mois</div>
+            <div class="kVal">{{ money(monthlyGlobal, 2) }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kLbl">Autres coûts total</div>
+            <div class="kVal">{{ money(totalGlobal, 2) }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kLbl">% du CA</div>
+            <div class="kVal">{{ n(pctGlobal, 2) }} <span class="kUnit">%</span></div>
           </div>
         </div>
 
-        <div class="panel">
-          <div class="rowTop">
-            <button class="btn" @click="addRow()">+ Ajouter</button>
+        <!-- LIST (grid rows) : compact + no overflow -->
+        <div class="panel list">
+          <div class="listHead">
+            <div class="cLabel">Désignation</div>
+            <div class="cUnite">Unité</div>
+            <div class="cVal r">Valeur</div>
+            <div class="cPm3 r">/m³</div>
+            <div class="cTot r">Total</div>
+            <div class="cPct r">%</div>
+            <div class="cAct r"></div>
           </div>
 
-          <!-- ✅ HEADER EXACTEMENT sur les colonnes -->
-          <div class="gridHead">
-            <div class="hCell">Nom</div>
-            <div class="hCell">Unité</div>
-            <div class="hCell r">Valeur</div>
-            <div class="hCell r">Prix / m³</div>
-            <div class="hCell r">Total</div>
-            <div class="hCell r">%</div>
-            <div class="hCell r"></div>
-          </div>
+          <div v-if="rows.length === 0" class="empty muted">Aucun autre coût.</div>
 
-          <div class="gridBody">
-            <div v-for="(r, idx) in rows" :key="r._id" class="gridRow">
-              <div class="cell">
-                <input class="input" v-model="r.label" placeholder="Ex: Assurance, Divers..." />
-              </div>
+          <div v-for="(r0, idx) in rows" :key="r0._id" class="row">
+            <!-- label -->
+            <div class="cell cLabel">
+              <input class="in" v-model="r0.label" placeholder="Ex: Sécurité, gardiennage…" />
+            </div>
 
-              <div class="cell">
-                <select class="select" v-model="r.unite">
-                  <option value="FORFAIT">FORFAIT</option>
-                  <option value="MOIS">MOIS</option>
-                  <option value="M3">M3</option>
-                  <option value="POURCENT_CA">% CA</option>
-                </select>
-              </div>
+            <!-- unite -->
+            <div class="cell cUnite">
+              <select class="in" v-model="r0.unite">
+                <option value="FORFAIT">FORFAIT</option>
+                <option value="MOIS">MOIS</option>
+                <option value="M3">M3</option>
+                <option value="POURCENT_CA">%CA</option>
+              </select>
+            </div>
 
-              <div class="cell r">
-                <div class="inCell">
-                  <input
-                    class="inputVal r"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    v-model.number="r.valeur"
-                    :placeholder="r.unite === 'POURCENT_CA' ? 'ex: 2.5' : '0'"
-                  />
-                  <span class="unit">
-                    <template v-if="r.unite === 'POURCENT_CA'">%</template>
-                    <template v-else-if="r.unite === 'M3'">DH/m³</template>
-                    <template v-else-if="r.unite === 'MOIS'">DH/mois</template>
-                    <template v-else>DH</template>
-                  </span>
-                </div>
-              </div>
-
-              <div class="cell r mono">{{ n(perM3For(r), 2) }}</div>
-              <div class="cell r mono"><b>{{ money(totalFor(r), 2) }}</b></div>
-              <div class="cell r mono">{{ n(pctFor(r), 2) }}%</div>
-
-              <div class="cell r">
-                <button class="btn danger" @click="removeRow(idx)">Suppr</button>
+            <!-- valeur -->
+            <div class="cell cVal r">
+              <div class="valWrap">
+                <input
+                  class="in inSm r"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  v-model.number="r0.valeur"
+                  :placeholder="r0.unite === 'POURCENT_CA' ? 'ex: 2.5' : '0'"
+                />
+                <span class="unit">
+                  <template v-if="r0.unite === 'POURCENT_CA'">%</template>
+                  <template v-else>DH</template>
+                </span>
               </div>
             </div>
 
-            <div v-if="rows.length === 0" class="empty muted">Aucun autre coût.</div>
+            <!-- computed -->
+            <div class="cell cPm3 r mono">{{ n(perM3For(r0), 2) }}</div>
+            <div class="cell cTot r mono"><b>{{ money(totalFor(r0), 2) }}</b></div>
+            <div class="cell cPct r mono">{{ n(pctFor(r0), 2) }}%</div>
+
+            <!-- actions -->
+            <div class="cell cAct r">
+              <button class="icon danger" type="button" title="Supprimer" @click="removeRow(idx)">✕</button>
+            </div>
           </div>
 
-          <div class="footNote muted">
-            Notes : <b>M3</b> et <b>%CA</b> utilisent le <b>volume total</b> et le <b>CA total</b> de la variante.
+          <div class="foot muted">
+            Note : unités <b>M3</b> et <b>%CA</b> calculées sur le volume total et le CA total de la variante.
+            <span class="muted" style="margin-left: 8px;">(Mensuel pour M3/%CA = 0 par design)</span>
           </div>
         </div>
       </template>
@@ -374,6 +430,7 @@ function askReset() {
       <div class="modal">
         <div class="modalTitle">{{ modal.title }}</div>
         <div class="modalMsg">{{ modal.message }}</div>
+
         <div class="modalActions">
           <button class="btn" @click="closeModal()">Fermer</button>
           <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
@@ -386,332 +443,233 @@ function askReset() {
 </template>
 
 <style scoped>
+/* ✅ anti-overflow global */
+.page, .panel, .head, .kpis, .row, .listHead { min-width: 0; }
+* { box-sizing: border-box; }
+
 .page {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  max-width: 100%;
-}
-* {
-  box-sizing: border-box;
 }
 
-.top {
+/* Header (compact, dashboard-like) */
+.head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-}
-.title {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.h1 {
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1.1;
-  margin: 0;
-}
-.muted {
-  color: #6b7280;
-  font-size: 12px;
-}
-.actions {
-  display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
+  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 55%);
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 16px;
+  padding: 8px 10px;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
 }
+.hLeft { display:flex; flex-direction:column; gap:2px; min-width: 0; }
+.hTitle { font-size: 14px; font-weight: 950; color:#0f172a; line-height: 1.1; }
+.hSub { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 1100px; }
+.muted { color: rgba(107, 114, 128, 1); font-weight: 800; }
+.hRight { margin-left: auto; display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
 
+/* panel */
 .panel {
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 10px;
-  max-width: 100%;
 }
 .panel.error {
-  border-color: #ef4444;
-  background: #fff5f5;
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
 }
 
+/* buttons */
 .btn {
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 10px;
-  padding: 7px 10px;
-  font-size: 13px;
+  height: 34px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 14px;
+  padding: 0 12px;
+  font-weight: 950;
+  font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .btn:hover {
-  background: #f9fafb;
+  background: rgba(32, 184, 232, 0.10);
+  border-color: rgba(32, 184, 232, 0.18);
 }
 .btn.primary {
-  background: #007a33;
-  border-color: #007a33;
+  background: rgba(24, 64, 112, 0.92);
+  border-color: rgba(24, 64, 112, 0.6);
   color: #fff;
 }
-.btn.primary:hover {
-  background: #046a2f;
+.btn.primary:hover { background: rgba(24, 64, 112, 1); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+
+/* KPI row (very compact) */
+.kpis{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
-.btn.danger {
-  border-color: #ef4444;
-  color: #b91c1c;
+@media (max-width: 980px){
+  .kpis{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.kpi{
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.9);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.kLbl{ font-size: 10.8px; font-weight: 950; color: rgba(15, 23, 42, 0.6); }
+.kVal{ margin-top: 2px; font-size: 13px; font-weight: 950; color:#0f172a; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
+.kUnit{ font-size: 11px; font-weight: 900; color: rgba(107,114,128,1); margin-left: 6px; }
+
+/* list grid */
+.list { padding: 8px; }
+.listHead{
+  display:grid;
+  grid-template-columns: 1.4fr 140px 150px 110px 150px 90px 40px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(24, 64, 112, 0.05);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(55,65,81,1);
+}
+.row{
+  display:grid;
+  grid-template-columns: 1.4fr 140px 150px 110px 150px 90px 40px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.10);
+}
+.row:last-of-type{ border-bottom: 0; }
+
+.cell{ min-width: 0; }
+.r{ text-align: right; }
+.mono{ font-variant-numeric: tabular-nums; }
+
+.in{
+  width: 100%;
+  height: 32px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.96);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 850;
+  color: #0f172a;
+  outline: none;
+  min-width: 0;
+}
+.in:focus{
+  border-color: rgba(32, 184, 232, 0.35);
+  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.12);
 }
 
-.mono {
-  font-variant-numeric: tabular-nums;
+.valWrap{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap: 6px;
+  min-width: 0;
 }
-.r {
+.inSm{ width: 100%; max-width: 110px; }
+.unit{
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(107,114,128,1);
+  min-width: 20px;
   text-align: right;
 }
 
-/* =========================
-   KPIs (Total séparé du Prix/m³)
-========================= */
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px; /* + d’air entre KPI */
-}
-@media (max-width: 1050px) {
-  .kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.kpi {
-  border: 1px solid #e5e7eb;
+.icon{
+  width: 34px;
+  height: 34px;
   border-radius: 12px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: #fff;
-  min-width: 0;
-}
-.kLbl {
-  font-size: 11px;
-  color: #6b7280;
-}
-.kVal {
-  font-size: 13px;
-  font-weight: 900;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.kVal span {
-  font-weight: 700;
-  color: #6b7280;
-  margin-left: 6px;
-}
-
-/* KPI spécial = TOTAL (plus large) */
-.kpiMain {
-  border: 1px solid rgba(16, 185, 129, 0.45);
-  background: rgba(236, 253, 245, 0.9);
-}
-@media (min-width: 1051px) {
-  .kpiMain {
-    grid-column: span 2; /* éloigne visuellement du Prix/m³ */
-  }
-}
-.kpiMain .kLbl {
-  color: #065f46;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255,255,255,0.9);
+  cursor: pointer;
   font-weight: 950;
 }
-.kpiMain .kVal {
-  font-size: 14px;
+.icon:hover{
+  background: rgba(32, 184, 232, 0.10);
+  border-color: rgba(32, 184, 232, 0.18);
+}
+.icon.danger{
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  color: rgba(127, 29, 29, 0.95);
+}
+.icon.danger:hover{
+  background: rgba(239, 68, 68, 0.14);
 }
 
-/* /mois distingué */
-.kpiMonth {
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  background: rgba(239, 246, 255, 0.9);
+/* empty + foot */
+.empty{
+  padding: 10px 8px;
+  border-bottom: 1px dashed rgba(16, 24, 40, 0.18);
 }
-.kpiMonth .kLbl {
-  color: #1d4ed8;
-  font-weight: 900;
-}
-.kpiMonth .kVal span {
-  color: #1d4ed8;
-  font-weight: 900;
+.foot{
+  padding: 8px 8px 2px;
+  font-size: 11.5px;
 }
 
-.rowTop {
-  display: flex;
-  justify-content: flex-start;
-  margin-bottom: 8px;
-}
-
-/* =========================
-   GRID (Header aligné EXACT sur champs)
-========================= */
-/* Colonnes: Nom | Unité | Valeur | Prix/m³ | Total | % | Action */
-.gridHead,
-.gridRow {
-  display: grid;
-  grid-template-columns:
-    minmax(220px, 2.2fr)
-    minmax(120px, 1fr)
-    minmax(170px, 1.2fr)
-    minmax(110px, 0.9fr)
-    minmax(140px, 1.1fr)
-    minmax(80px, 0.7fr)
-    88px;
-  column-gap: 10px;
-}
-
-.gridHead {
-  padding: 8px 6px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fafafa;
-  color: #6b7280;
-  font-size: 11px;
-  border-radius: 10px;
-}
-.hCell {
-  min-width: 0;
-  line-height: 1.2;
-}
-
-.gridBody {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.gridRow {
-  align-items: center;
-  padding: 6px 6px;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.cell {
-  min-width: 0;
-}
-
-/* Mobile: cartes, pas de header */
-@media (max-width: 980px) {
-  .gridHead {
-    display: none;
+/* responsive: stack columns to avoid overflow */
+@media (max-width: 1100px){
+  .listHead, .row{
+    grid-template-columns: 1.5fr 120px 140px 90px 140px 70px 40px;
   }
-  .gridRow {
+  .inSm{ max-width: 96px; }
+}
+@media (max-width: 920px){
+  .listHead{ display:none; }
+  .row{
     grid-template-columns: 1fr 1fr;
-    grid-auto-rows: auto;
-    row-gap: 8px;
-    column-gap: 10px;
+    gap: 8px;
     padding: 10px 8px;
-    border: 1px solid #eef2f7;
+    border-bottom: 1px solid rgba(16, 24, 40, 0.10);
     border-radius: 12px;
+    margin-bottom: 8px;
+    background: rgba(255,255,255,0.92);
   }
-  .gridRow .cell:nth-child(1) {
-    grid-column: 1 / -1;
-  }
-  .gridRow .cell:nth-child(2) {
-    grid-column: 1 / 2;
-  }
-  .gridRow .cell:nth-child(3) {
-    grid-column: 2 / 3;
-  }
-  .gridRow .cell:nth-child(4),
-  .gridRow .cell:nth-child(5),
-  .gridRow .cell:nth-child(6),
-  .gridRow .cell:nth-child(7) {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
+  .row:last-of-type{ margin-bottom: 0; }
+  .cLabel{ grid-column: 1 / -1; }
+  .cTot, .cPct, .cPm3{ text-align: left; }
+  .cAct{ grid-column: 2; justify-self: end; }
 }
-
-/* Inputs */
-.select,
-.input {
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  font-size: 13px;
-  padding: 7px 9px;
-  width: 100%;
-  min-width: 0;
-}
-
-/* Valeur: ✅ uniformisé (même taille pour tous) + unité ne déborde pas */
-.inCell {
-  display: grid;
-  grid-template-columns: 120px auto; /* ✅ taille fixe */
-  align-items: center;
-  justify-content: end;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
-@media (max-width: 980px) {
-  .inCell {
-    grid-template-columns: 120px auto;
-  }
-}
-.inputVal {
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  font-size: 12px;
-  padding: 5px 7px;
-  width: 120px; /* ✅ uniforme */
-  text-align: right;
-}
-.unit {
-  color: #6b7280;
-  font-size: 11px;
-  white-space: nowrap; /* ✅ pas de retour */
-}
-
-.empty {
-  padding: 10px 6px;
-}
-.footNote {
-  margin-top: 10px;
+@media (max-width: 520px){
+  .hSub{ white-space: normal; }
 }
 
 /* modal */
 .modalMask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(2, 6, 23, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 50;
+  z-index: 99999;
 }
 .modal {
-  width: min(520px, 100%);
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
+  width: min(520px, 96vw);
+  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 40%);
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  border-radius: 18px;
   padding: 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.35);
 }
-.modalTitle {
-  font-weight: 900;
-  font-size: 14px;
-  margin-bottom: 6px;
-}
-.modalMsg {
-  color: #374151;
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-.modalActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
-}
+.modalTitle { font-weight: 950; font-size: 14px; margin-bottom: 6px; color:#0f172a; }
+.modalMsg { color: rgba(55, 65, 81, 1); font-size: 13px; white-space: pre-wrap; font-weight: 850; }
+.modalActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 </style>

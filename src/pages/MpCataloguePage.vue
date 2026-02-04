@@ -144,7 +144,7 @@ const filtered = computed<any[]>(() => {
 });
 
 /* =========================
-   PAGINATION (10 / page) - footer style (FormulesCataloguePage)
+   PAGINATION
 ========================= */
 const PAGE_SIZE = 10;
 const page = ref(1);
@@ -173,9 +173,10 @@ function goToPage(p: number) {
 /* =========================
    FORMATTERS
 ========================= */
-function price(v: any) {
+function money2(v: any) {
   const n = Number(v ?? 0);
-  return Number.isFinite(n) ? n.toFixed(2) : "0.00";
+  const x = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
 }
 
 /* =========================
@@ -358,6 +359,10 @@ onMounted(reload);
     <div class="top">
       <div class="tleft">
         <div class="title">Répertoire MP</div>
+        <div class="subline">
+          <span class="muted">Résultats :</span> <b>{{ filtered.length }}</b>
+          <span v-if="activeFiltersCount" class="badge">{{ activeFiltersCount }}</span>
+        </div>
       </div>
 
       <div class="tright">
@@ -365,7 +370,7 @@ onMounted(reload);
           <input class="input" v-model="q" placeholder="Rechercher (catégorie, label, fournisseur, ville…)" />
         </div>
 
-        <button class="btn" @click="reload" :disabled="busy.reload || loading">🔄</button>
+        <button class="btn" @click="reload" :disabled="busy.reload || loading" title="Recharger">🔄</button>
         <button class="btn primary" @click="openCreate" :disabled="busy.save">➕ Nouvelle</button>
       </div>
     </div>
@@ -379,13 +384,7 @@ onMounted(reload);
         <div class="filtersLeft">
           <button class="btn" @click="showFilters = !showFilters">
             {{ showFilters ? "▲" : "▼" }} Filtres
-            <span v-if="activeFiltersCount" class="badge">{{ activeFiltersCount }}</span>
           </button>
-
-          <div class="muted">Résultats : <b>{{ filtered.length }}</b></div>
-        </div>
-
-        <div class="filtersRight">
           <button class="btn" @click="resetFilters" :disabled="activeFiltersCount === 0">Réinitialiser</button>
         </div>
       </div>
@@ -419,66 +418,65 @@ onMounted(reload);
       </div>
     </div>
 
-    <!-- TABLE -->
+    <!-- TABLE (no horizontal scroll) -->
     <div class="card cardTable">
       <div class="tableWrap">
         <table class="table">
           <colgroup>
             <col class="cCat" />
             <col class="cLabel" />
-            <col class="cUnit" />
+            <col class="cLoc" />
             <col class="cPrice" />
-            <col class="cFourn" />
-            <col class="cCity" />
-            <col class="cRegion" />
             <col class="cActions" />
           </colgroup>
 
           <thead>
             <tr>
               <th>Catégorie</th>
-              <th>Label</th>
-              <th>Unité</th>
-              <th class="right thPrice">Prix MP</th>
-              <th>Fournisseur</th>
-              <th>Ville</th>
-              <th>Région</th>
+              <th>MP</th>
+              <th>Localisation</th>
+              <th class="right">Prix</th>
               <th class="right">Actions</th>
             </tr>
           </thead>
 
           <tbody>
             <tr v-for="r in paged" :key="r.id">
-              <td class="ell">{{ r.categorie }}</td>
+              <td class="ell">
+                <span class="catPill">{{ r.categorie }}</span>
+              </td>
 
-              <td class="ell cellWithOverflow">
-                <div class="labelCell">
+              <td class="cellMain">
+                <div class="mainLine">
                   <b class="ell">{{ r.label }}</b>
 
                   <span v-if="r.comment && String(r.comment).trim()" class="cmtWrap">
                     <button class="cmtBtn" type="button" aria-label="Commentaire">
                       <InformationCircleIcon class="cmtIc" />
                     </button>
-
-                    <span class="cmtTip" role="tooltip">
-                      {{ r.comment }}
-                    </span>
+                    <span class="cmtTip" role="tooltip">{{ r.comment }}</span>
                   </span>
+                </div>
+
+                <div v-if="r.fournisseur && String(r.fournisseur).trim()" class="subText ell">
+                  Fournisseur : <b>{{ r.fournisseur }}</b>
                 </div>
               </td>
 
-              <td class="ell">{{ r.unite }}</td>
-
-              <td class="right tdPrice">
-                <span class="priceBadge">
-                  {{ price(r.prix) }}
-                  <span class="dh">DH</span>
-                </span>
+              <td class="cellMain">
+                <div class="mainLine">
+                  <span class="ell"><b>{{ r.city || "—" }}</b></span>
+                </div>
+                <div class="subText ell">{{ r.region || "—" }}</div>
               </td>
 
-              <td class="ell">{{ r.fournisseur }}</td>
-              <td class="ell">{{ r.city }}</td>
-              <td class="ell">{{ r.region }}</td>
+              <td class="right">
+                <span class="priceBadge">
+                  <span class="mono">{{ money2(r.prix) }}</span>
+                  <span class="dh">DH</span>
+                  <span class="unitTag">/ {{ r.unite }}</span>
+                </span>
+              </td>
 
               <td class="right">
                 <div class="rowActions">
@@ -493,7 +491,7 @@ onMounted(reload);
             </tr>
 
             <tr v-if="filtered.length === 0">
-              <td colspan="8" class="emptyRow">Aucune MP.</td>
+              <td colspan="5" class="emptyRow">Aucune MP.</td>
             </tr>
           </tbody>
         </table>
@@ -505,13 +503,7 @@ onMounted(reload);
         </button>
 
         <div class="pnums">
-          <button
-            v-for="p in totalPages"
-            :key="p"
-            class="pnum"
-            :class="{ on: p === page }"
-            @click="goToPage(p)"
-          >
+          <button v-for="p in totalPages" :key="p" class="pnum" :class="{ on: p === page }" @click="goToPage(p)">
             {{ p }}
           </button>
         </div>
@@ -536,6 +528,7 @@ onMounted(reload);
       @save="saveFromModal"
     />
 
+    <!-- DELETE MODAL -->
     <teleport to="body">
       <div v-if="confirmDelete.open" class="ovlDel" @mousedown.self="closeDelete" role="dialog" aria-modal="true">
         <div class="dlgDel">
@@ -567,45 +560,57 @@ onMounted(reload);
 .top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
 .tleft { display:flex; flex-direction:column; gap:4px; }
 .title { font-size:18px; font-weight:900; color:#111827; }
+.subline { display:flex; align-items:center; gap:8px; }
 .tright { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .search { min-width: 280px; flex: 1; }
 
 .alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
-.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:12px; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
 .cardTable { overflow: visible; }
 
 .btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; }
 .btn:hover { background:#f9fafb; }
-.btn.primary { background:#007a33; border-color:#007a33; color:#fff; }
-.btn.primary:hover { filter: brightness(0.95); }
+.btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
+.btn.primary:hover { background: rgba(24,64,112,1); }
 
 .input { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:12px; font-size:13px; background:#fff; }
 .right { text-align:right; }
 .muted { color:#6b7280; font-size:12px; }
 
-/* Tooltips: éviter clipping */
-.tableWrap {
-  position: relative;
-  overflow-x: auto;
-  overflow-y: visible;
+/* Filters */
+.filtersCard { padding: 10px 12px; }
+.filtersTop { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+.filtersLeft { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.filtersBody { margin-top:10px; border-top:1px solid #e5e7eb; padding-top:10px; }
+.filtersGrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
+@media (max-width: 980px) { .filtersGrid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .filtersGrid { grid-template-columns: 1fr; } }
+.f { display:flex; flex-direction:column; gap:6px; }
+.f .l { font-size:11px; color:#6b7280; font-weight:800; }
+
+.badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:22px; height:22px; padding:0 8px;
+  border-radius:999px; border:1px solid #e5e7eb; background:#fafafa;
+  font-size:12px; font-weight:900; color:#111827;
 }
+
+/* TABLE — NO horizontal scroll by design */
+.tableWrap { overflow: visible; }
 .table {
   width:100%;
   border-collapse:collapse;
   font-size:12px;
   table-layout: fixed;
 }
-
-/* ✅ CHANGEMENT: centrage vertical */
 .table th, .table td {
   border-bottom:1px solid #e5e7eb;
-  padding:8px;
+  padding: 7px 8px;          /* compact */
   text-align:left;
-  vertical-align: middle; /* ✅ au lieu de top */
+  vertical-align: middle;
 }
-
 .table th {
   font-size:11px;
   color:#6b7280;
@@ -616,35 +621,44 @@ onMounted(reload);
 
 .ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* Colonnes - 1 seule source de vérité */
-.cCat { width: 12%; }
-.cLabel { width: 26%; }
-.cUnit { width: 7%; }
-.cPrice { width: 12%; }
-.cFourn { width: 16%; }
-.cCity { width: 11%; }
-.cRegion { width: 11%; }
-.cActions { width: 120px; }
+/* Columns (sum <= 100%) */
+.cCat { width: 14%; }
+.cLabel { width: 40%; }
+.cLoc { width: 20%; }
+.cPrice { width: 16%; }
+.cActions { width: 10%; }
 
-.cellWithOverflow { overflow: visible; position: relative; }
+/* Category pill */
+.catPill{
+  display:inline-flex;
+  align-items:center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.03);
+  font-weight: 950;
+  font-size: 11px;
+  color:#111827;
+  max-width: 100%;
+}
 
-.labelCell { display:flex; align-items:center; gap:8px; min-width:0; }
-.labelCell > b { min-width:0; }
+/* Main cell */
+.cellMain { overflow: visible; }
+.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
+.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
 
+/* Tooltip comment */
 .cmtWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; }
 .cmtBtn{
-  width: 26px;
-  height: 26px;
+  width: 26px; height: 26px;
   border-radius: 10px;
   border: 1px solid #e5e7eb;
   background:#fff;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
+  display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
 }
 .cmtIc{ width: 16px; height: 16px; color:#6b7280; }
-
 .cmtTip{
   position:absolute;
   left: 34px;
@@ -659,7 +673,6 @@ onMounted(reload);
   border-radius: 12px;
   font-size: 12px;
   line-height: 1.25;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.25);
   opacity: 0;
   pointer-events: none;
   transition: opacity .12s ease, transform .12s ease;
@@ -671,29 +684,33 @@ onMounted(reload);
   transform: translateY(-50%) translateX(0px);
 }
 
-.thPrice { color:#111827; font-weight:1000; }
-.tdPrice { padding-right: 14px; }
+/* Price badge (numeric highlighted) */
 .priceBadge{
   display:inline-flex;
   align-items:center;
-  justify-content:center;
-  gap:6px;
+  justify-content:flex-end;
+  gap: 6px;
   padding:6px 10px;
   border-radius:999px;
-  border:1px solid #bbf7d0;
-  background:#f0fdf4;
-  color:#065f46;
+  border:1px solid rgba(2,132,199,0.22);
+  background: rgba(2,132,199,0.08);
+  color:#0b3b63;
   font-weight:1000;
   font-size:13px;
-  letter-spacing:0.2px;
   white-space:nowrap;
   max-width: 100%;
   box-sizing: border-box;
 }
-.priceBadge .dh{
-  font-size:11px;
-  font-weight:900;
-  opacity:0.85;
+.mono { font-variant-numeric: tabular-nums; }
+.priceBadge .dh{ font-size:11px; font-weight:900; opacity:0.9; }
+.unitTag{
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15,23,42,0.65);
+  background: rgba(255,255,255,0.65);
+  border: 1px solid rgba(16,24,40,0.10);
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 
 /* Actions */
@@ -713,34 +730,7 @@ onMounted(reload);
 .iconBtn.danger{ border-color:#ef4444; color:#b91c1c; }
 .actIc{ width:18px; height:18px; }
 
-/* Filters */
-.filtersCard { padding: 10px 12px; }
-.filtersTop { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
-.filtersLeft { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.filtersRight { display:flex; align-items:center; gap:8px; }
-.filtersBody { margin-top:10px; border-top:1px solid #e5e7eb; padding-top:10px; }
-.filtersGrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
-@media (max-width: 980px) { .filtersGrid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 620px) { .filtersGrid { grid-template-columns: 1fr; } }
-.f { display:flex; flex-direction:column; gap:6px; }
-.f .l { font-size:11px; color:#6b7280; font-weight:800; }
-.badge {
-  margin-left:8px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  min-width:22px;
-  height:22px;
-  padding:0 8px;
-  border-radius:999px;
-  border:1px solid #e5e7eb;
-  background:#fafafa;
-  font-size:12px;
-  font-weight:900;
-  color:#111827;
-}
-
-/* ✅ pager */
+/* pager */
 .pager{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:10px; }
 .pbtn{
   height:34px;
@@ -769,7 +759,7 @@ onMounted(reload);
 }
 .pnum.on{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
 
-/* ✅ DELETE MODAL */
+/* DELETE MODAL */
 .ovlDel{
   position: fixed;
   inset: 0;
@@ -785,7 +775,6 @@ onMounted(reload);
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 18px;
-  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.35);
   overflow:hidden;
 }
 .hdrDel{
@@ -803,7 +792,7 @@ onMounted(reload);
   background: rgba(15, 23, 42, 0.04);
   cursor:pointer;
 }
-.xDel:hover{ background: rgba(32, 184, 232, 0.12); border-color: rgba(32, 184, 232, 0.18); }
+.xDel:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
 .bodyDel{ padding: 12px 14px; display:flex; flex-direction:column; gap:8px; }
 .dangerLine{ color:#b91c1c; }
 .ftrDel{
@@ -812,15 +801,17 @@ onMounted(reload);
   justify-content:flex-end;
   gap:10px;
   border-top: 1px solid rgba(16, 24, 40, 0.1);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(15, 23, 42, 0.02);
 }
 .dangerBtn { border-color:#ef4444; background:#ef4444; color:#fff; }
 .dangerBtn:hover { filter: brightness(0.95); }
 
-/* Responsive: hide fournisseur on small screens */
-@media (max-width: 980px) {
-  col.cFourn { width: 0 !important; }
-  th:nth-child(5), td:nth-child(5) { display:none; }
-  col.cLabel { width: 34%; }
+@media (max-width: 720px) {
+  .cCat { width: 18%; }
+  .cLabel { width: 42%; }
+  .cLoc { width: 0%; }
+  th:nth-child(3), td:nth-child(3) { display:none; } /* localisation off mobile */
+  .cPrice { width: 26%; }
+  .cActions { width: 14%; }
 }
 </style>

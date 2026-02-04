@@ -76,6 +76,7 @@ const activeContract = computed<any | null>(() => {
 });
 
 const contractsOfActivePnl = computed<any[]>(() => activePnl.value?.contracts ?? []);
+const variantsOfActiveContract = computed<any[]>(() => activeContract.value?.variants ?? []);
 
 /* =========================
    SEARCHABLE PNL SELECT
@@ -142,6 +143,12 @@ function onPickContract(contractId: string) {
 
   const v0 = firstVariantIdOfContract(c);
   if (v0) setActiveVariantId(v0);
+}
+
+function onPickVariant(variantId: string) {
+  const v = variantsOfActiveContract.value.find((x: any) => String(x.id) === String(variantId));
+  if (!v) return;
+  setActiveVariantId(String(v.id));
 }
 
 /* =========================
@@ -326,7 +333,7 @@ onBeforeUnmount(() => {
   <header class="hd" :class="{ collapsed }">
     <div class="bar">
       <!-- P&L selector -->
-      <div class="pill pnl">
+      <div class="pill pnl control">
         <button ref="pnlBtnRef" type="button" class="pill__head" @click="openPnlDropdown">
           <span class="pill__label">P&L</span>
           <span class="pill__value" :title="projectName">{{ projectName }}</span>
@@ -339,8 +346,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Contrat -->
-      <div class="pill contract">
+      <!-- Contrat selector -->
+      <div class="pill contract control">
         <div class="pill__head contractHead">
           <span class="pill__label">Contrat</span>
           <span class="pill__value" :title="contractName">{{ contractName }}</span>
@@ -364,13 +371,24 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Variante -->
-      <div class="pill variant info">
-        <div class="pill__head static">
+      <!-- Variante selector (comme pnl/contrat) -->
+      <div class="pill variant control">
+        <div class="pill__head contractHead">
           <Squares2X2Icon class="pill__miniic" />
           <span class="pill__label">Variante</span>
-          <span class="pill__tag" title="Information uniquement">INFO</span>
           <span class="pill__value" :title="variantName">{{ variantName }}</span>
+          <ChevronDownIcon class="pill__chev" />
+
+          <select
+            class="pill__selectOverlay"
+            :value="activeVariant?.id ? String(activeVariant.id) : ''"
+            @change="onPickVariant(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="" disabled>—</option>
+            <option v-for="v in variantsOfActiveContract" :key="v.id" :value="String(v.id)">
+              {{ v.title ? String(v.title) : `Variante ${String(v.id).slice(0, 6)}` }}
+            </option>
+          </select>
         </div>
 
         <div class="pill__actions">
@@ -387,7 +405,12 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Fold button -->
-      <button class="foldBtn" type="button" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
+      <button
+        class="foldBtn"
+        type="button"
+        @click="collapsed = !collapsed"
+:aria-expanded="!collapsed"
+      >
         <ChevronDownIcon class="foldIc" :class="{ up: collapsed }" />
       </button>
     </div>
@@ -401,7 +424,7 @@ onBeforeUnmount(() => {
               v-for="key in kpiLeftRow1"
               :key="key"
               class="kpi"
-              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '']"
+              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '', key === 'EBIT' ? 'hero' : '']"
             >
               <div class="kpi__top">
                 <span class="kpi__name">{{ key }}</span>
@@ -413,10 +436,7 @@ onBeforeUnmount(() => {
                 <span class="kpi__unit">DH</span>
               </div>
 
-              <div
-                class="kpi__mini"
-                :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
-              >
+              <div class="kpi__mini">
                 <span class="mini__left">
                   <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
                   <span class="u m3u">DH/m3</span>
@@ -435,7 +455,7 @@ onBeforeUnmount(() => {
               v-for="key in kpiLeftRow2"
               :key="key"
               class="kpi"
-              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '']"
+              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '', key === 'EBIT' ? 'hero' : '']"
             >
               <div class="kpi__top">
                 <span class="kpi__name">{{ key }}</span>
@@ -447,10 +467,7 @@ onBeforeUnmount(() => {
                 <span class="kpi__unit">DH</span>
               </div>
 
-              <div
-                class="kpi__mini"
-                :title="`${fmtMoney(metrics[key].m3, 2)} DH/m3 • ${fmtMoney(metrics[key].month, 0)} DH/mo`"
-              >
+              <div class="kpi__mini">
                 <span class="mini__left">
                   <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
                   <span class="u m3u">DH/m3</span>
@@ -536,18 +553,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ===== Header frame ===== */
 .hd {
   --text: #0f172a;
   --muted: rgba(15, 23, 42, 0.65);
   --border: rgba(16, 24, 40, 0.12);
-  --bg: linear-gradient(180deg, #eef1f6 0%, #e6eaf1 100%);
 
   position: sticky;
   top: 0;
   z-index: 9999;
   isolation: isolate;
 
-  background: var(--bg);
+  background: #eef1f6;
   border-bottom: 1px solid var(--border);
 
   padding: 6px 8px;
@@ -555,9 +572,12 @@ onBeforeUnmount(() => {
   gap: 6px;
   overflow-x: hidden;
 }
-.hd.collapsed { gap: 0; padding-bottom: 6px; }
+.hd.collapsed {
+  gap: 0;
+  padding-bottom: 6px;
+}
 
-/* top bar */
+/* ===== Top bar ===== */
 .bar {
   display: flex;
   gap: 8px;
@@ -567,27 +587,46 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.pill.pnl { flex: 1 1 520px; }
-.pill.contract { flex: 1 1 420px; }
-.pill.variant { flex: 1 1 360px; }
+.pill.pnl {
+  flex: 1 1 520px;
+}
+.pill.contract {
+  flex: 1 1 420px;
+}
+.pill.variant {
+  flex: 1 1 360px;
+}
 @media (max-width: 900px) {
-  .pill.pnl, .pill.contract, .pill.variant { flex: 1 1 100%; }
+  .pill.pnl,
+  .pill.contract,
+  .pill.variant {
+    flex: 1 1 100%;
+  }
 }
 
 .pill {
   position: relative;
   min-width: 0;
 
-  background: rgba(255, 255, 255, 0.90);
-  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: #ffffff;
+  border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 14px;
 
-  padding: 3px 8px;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  padding: 6px 10px;
 
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Controls => readable, flat */
+.pill.control {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+.pill.control:hover {
+  background: #f1f5f9;
+  border-color: rgba(2, 132, 199, 0.22);
 }
 
 .pill__head {
@@ -600,16 +639,25 @@ onBeforeUnmount(() => {
   border: none;
   padding: 0;
 }
-.pill__head:not(.static) { cursor: pointer; }
+.pill__head:not(.static) {
+  cursor: pointer;
+}
+
+.pill__miniic {
+  width: 16px;
+  height: 16px;
+  color: rgba(15, 23, 42, 0.7);
+  flex: 0 0 auto;
+}
 
 .pill__label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 950;
-  color: rgba(15, 23, 42, 0.55);
+  color: rgba(15, 23, 42, 0.62);
   white-space: nowrap;
 }
 .pill__value {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 950;
   color: var(--text);
   min-width: 0;
@@ -622,11 +670,13 @@ onBeforeUnmount(() => {
 .pill__chev {
   width: 16px;
   height: 16px;
-  color: rgba(15, 23, 42, 0.55);
+  color: rgba(15, 23, 42, 0.62);
   flex: 0 0 auto;
   transition: transform 140ms ease;
 }
-.pill__chev.rot { transform: rotate(180deg); }
+.pill__chev.rot {
+  transform: rotate(180deg);
+}
 
 .pill__actions {
   display: inline-flex;
@@ -637,8 +687,8 @@ onBeforeUnmount(() => {
 }
 
 .iconbtn {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
@@ -647,11 +697,21 @@ onBeforeUnmount(() => {
   justify-content: center;
   cursor: pointer;
 }
-.iconbtn:hover { background: rgba(32, 184, 232, 0.12); border-color: rgba(32, 184, 232, 0.18); }
-.ic { width: 15px; height: 15px; color: rgba(15, 23, 42, 0.75); }
+.iconbtn:hover {
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.18);
+}
+.ic {
+  width: 15px;
+  height: 15px;
+  color: rgba(15, 23, 42, 0.75);
+}
 
-/* Contract overlay select clickable */
-.contractHead { position: relative; min-height: 24px; }
+/* Select overlay clickable */
+.contractHead {
+  position: relative;
+  min-height: 24px;
+}
 .pill__selectOverlay {
   position: absolute;
   inset: -6px;
@@ -666,51 +726,34 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
-/* Variant info */
-.pill.variant.info {
-  background: linear-gradient(180deg, rgba(24, 64, 112, 0.06), rgba(255,255,255,0.92));
-  border-style: dashed;
-  border-color: rgba(24, 64, 112, 0.22);
-}
-.pill__miniic { width: 16px; height: 16px; color: rgba(24, 64, 112, 0.75); flex: 0 0 auto; }
-.pill__tag {
-  font-size: 9px;
-  font-weight: 950;
-  letter-spacing: 0.35px;
-  color: rgba(24, 64, 112, 0.75);
-  background: rgba(24, 64, 112, 0.10);
-  border: 1px solid rgba(24, 64, 112, 0.18);
-  padding: 2px 6px;
-  border-radius: 999px;
-  line-height: 1;
-}
-
 /* fold button */
-.foldBtn{
+.foldBtn {
   width: 34px;
   height: 34px;
   border-radius: 14px;
-  border: 1px solid rgba(16,24,40,0.12);
-  background: rgba(255,255,255,0.75);
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  cursor:pointer;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
   flex: 0 0 auto;
 }
-.foldBtn:hover{
-  background: rgba(32,184,232,0.12);
-  border-color: rgba(32,184,232,0.18);
+.foldBtn:hover {
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.18);
 }
-.foldIc{
+.foldIc {
   width: 18px;
   height: 18px;
   transition: transform 160ms ease;
-  color: rgba(15,23,42,0.75);
+  color: rgba(15, 23, 42, 0.75);
 }
-.foldIc.up{ transform: rotate(180deg); }
+.foldIc.up {
+  transform: rotate(180deg);
+}
 
-/* Dropdown */
+/* ===== Dropdown ===== */
 .dd {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -723,12 +766,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   background: rgba(15, 23, 42, 0.03);
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 12px;
   padding: 8px 10px;
   margin-bottom: 8px;
 }
-.dd__ic { width: 16px; height: 16px; color: rgba(15, 23, 42, 0.55); }
+.dd__ic {
+  width: 16px;
+  height: 16px;
+  color: rgba(15, 23, 42, 0.55);
+}
 .dd__in {
   width: 100%;
   border: none;
@@ -738,9 +785,15 @@ onBeforeUnmount(() => {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.88);
 }
-.dd__list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.dd__list {
+  max-height: 260px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .dd__item {
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   border-radius: 12px;
   padding: 10px;
@@ -750,14 +803,36 @@ onBeforeUnmount(() => {
   cursor: pointer;
   text-align: left;
 }
-.dd__item:hover { background: rgba(32, 184, 232, 0.08); border-color: rgba(32, 184, 232, 0.18); }
-.dd__item.active { background: rgba(144, 192, 40, 0.10); border-color: rgba(144, 192, 40, 0.22); }
-.dd__title { font-size: 12px; font-weight: 950; color: var(--text); }
-.dd__sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.dd__id { font-size: 11px; color: rgba(15, 23, 42, 0.55); }
-.dd__empty { font-size: 12px; color: rgba(15, 23, 42, 0.55); padding: 10px; text-align: center; }
+.dd__item:hover {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.16);
+}
+.dd__item.active {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.18);
+}
+.dd__title {
+  font-size: 12px;
+  font-weight: 950;
+  color: var(--text);
+}
+.dd__sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.dd__id {
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.55);
+}
+.dd__empty {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  padding: 10px;
+  text-align: center;
+}
 
-/* Cockpit */
+/* ===== Cockpit ===== */
 .cockpit {
   display: grid;
   grid-template-columns: 1fr 185px;
@@ -765,179 +840,269 @@ onBeforeUnmount(() => {
   align-items: stretch;
   min-width: 0;
 }
-@media (max-width: 1100px) { .cockpit { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) {
+  .cockpit {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* transition fold */
 .hdFold-enter-active,
-.hdFold-leave-active{
+.hdFold-leave-active {
   transition: max-height 200ms ease, opacity 160ms ease, transform 160ms ease;
   overflow: hidden;
 }
 .hdFold-enter-from,
-.hdFold-leave-to{
+.hdFold-leave-to {
   max-height: 0;
   opacity: 0;
   transform: translateY(-4px);
 }
 .hdFold-enter-to,
-.hdFold-leave-from{
+.hdFold-leave-from {
   max-height: 900px;
   opacity: 1;
   transform: translateY(0);
 }
 
-.kpis-left { display: grid; gap: 6px; min-width: 0; }
-.kpi-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-@media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpis-left {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+@media (max-width: 900px) {
+  .kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 
-/* KPI */
+/* ===== KPI flat + compact height ===== */
 .kpi {
-  background: #fff;
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  position: relative;
+
+  --accent: rgba(148, 163, 184, 0.9);
+  background: #ffffff;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-left: 4px solid var(--accent);
   border-radius: 14px;
-  padding: 8px 9px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.65) inset, 0 10px 22px rgba(15, 23, 42, 0.10);
+
+  padding: 7px 8px 7px 7px;
   overflow: hidden;
 }
 
-/* ASP */
+/* Palette via accent ONLY */
 .kpi.asp {
-  border-color: rgba(14, 165, 233, 0.45);
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(14,165,233,0.24), transparent 55%),
-    linear-gradient(180deg, rgba(14,165,233,0.14), #fff 60%);
-  box-shadow:
-    0 0 0 1px rgba(14,165,233,0.14) inset,
-    0 18px 40px rgba(15, 23, 42, 0.14);
+  --accent: rgba(2, 132, 199, 0.9);
+}
+.kpi.cmp {
+  --accent: rgba(67, 56, 202, 0.88);
+}
+.kpi.transport {
+  --accent: rgba(234, 88, 12, 0.86);
+}
+.kpi.momd {
+  --accent: rgba(147, 51, 234, 0.86);
+}
+.kpi.prod {
+  --accent: rgba(13, 148, 136, 0.86);
+}
+.kpi.ebitda {
+  --accent: rgba(5, 150, 105, 0.86);
+}
+.kpi.amort {
+  --accent: rgba(71, 85, 105, 0.78);
 }
 
-/* other KPI colors */
-.kpi.cmp { background: linear-gradient(180deg, rgba(24,64,112,0.07), #fff 62%); border-color: rgba(24, 64, 112, 0.22); }
-.kpi.transport { background: linear-gradient(180deg, rgba(148,163,184,0.14), #fff 62%); border-color: rgba(148, 163, 184, 0.30); }
-.kpi.momd { background: linear-gradient(180deg, rgba(59,130,246,0.08), #fff 62%); border-color: rgba(59, 130, 246, 0.20); }
-.kpi.prod { background: linear-gradient(180deg, rgba(16,185,129,0.08), #fff 62%); border-color: rgba(16, 185, 129, 0.22); }
-.kpi.ebitda { background: linear-gradient(180deg, rgba(99,102,241,0.08), #fff 62%); border-color: rgba(99, 102, 241, 0.22); }
-.kpi.amort { background: linear-gradient(180deg, rgba(245,158,11,0.06), #fff 62%); border-color: rgba(245, 158, 11, 0.22); }
-
-/* ✅ EBIT premium + bucket colors */
-.kpi.ebit { position: relative; transform: translateY(-1px); }
-.kpi.ebit::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255,255,255,0.55), transparent 40%);
-  pointer-events: none;
-  opacity: 0.55;
-}
-
-/* bucket backgrounds */
+/* EBIT bucket: keep logic */
 .kpi.ebit.ebit-neg {
-  border-color: rgba(220, 38, 38, 0.55);
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(220,38,38,0.22), transparent 55%),
-    linear-gradient(180deg, rgba(220,38,38,0.12), #fff 60%);
+  --accent: rgba(220, 38, 38, 0.88);
 }
-.kpi.ebit.ebit-neg .kpi__name,
-.kpi.ebit.ebit-neg .kpi__num { color: rgba(185, 28, 28, 0.98); }
-.kpi.ebit.ebit-neg .kpi__pct.hot {
-  color: rgba(185, 28, 28, 0.98);
-  border-color: rgba(220, 38, 38, 0.55);
-  background: rgba(220, 38, 38, 0.14);
-}
-
 .kpi.ebit.ebit-low {
-  border-color: rgba(245, 158, 11, 0.55);
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(245,158,11,0.22), transparent 55%),
-    linear-gradient(180deg, rgba(245,158,11,0.14), #fff 60%);
+  --accent: rgba(245, 158, 11, 0.88);
 }
-.kpi.ebit.ebit-low .kpi__name,
-.kpi.ebit.ebit-low .kpi__num { color: rgba(180, 83, 9, 0.98); }
-.kpi.ebit.ebit-low .kpi__pct.hot {
-  color: rgba(180, 83, 9, 0.98);
-  border-color: rgba(245, 158, 11, 0.55);
-  background: rgba(245, 158, 11, 0.16);
-}
-
 .kpi.ebit.ebit-mid {
-  border-color: rgba(37, 99, 235, 0.50);
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(37,99,235,0.20), transparent 55%),
-    linear-gradient(180deg, rgba(37,99,235,0.10), #fff 60%);
+  --accent: rgba(37, 99, 235, 0.88);
 }
-.kpi.ebit.ebit-mid .kpi__name,
-.kpi.ebit.ebit-mid .kpi__num { color: rgba(29, 78, 216, 0.98); }
-.kpi.ebit.ebit-mid .kpi__pct.hot {
-  color: rgba(29, 78, 216, 0.98);
-  border-color: rgba(37, 99, 235, 0.50);
-  background: rgba(37, 99, 235, 0.12);
-}
-
 .kpi.ebit.ebit-good {
-  border-color: rgba(16, 185, 129, 0.52);
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(16,185,129,0.20), transparent 55%),
-    linear-gradient(180deg, rgba(16,185,129,0.10), #fff 60%);
-}
-.kpi.ebit.ebit-good .kpi__name,
-.kpi.ebit.ebit-good .kpi__num { color: rgba(5, 150, 105, 0.98); }
-.kpi.ebit.ebit-good .kpi__pct.hot {
-  color: rgba(5, 150, 105, 0.98);
-  border-color: rgba(16, 185, 129, 0.52);
-  background: rgba(16, 185, 129, 0.14);
+  --accent: rgba(16, 185, 129, 0.9);
 }
 
-/* KPI content */
-.kpi__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.kpi__name { font-size: 10px; font-weight: 950; text-transform: uppercase; letter-spacing: 0.35px; color: rgba(15, 23, 42, 0.72); }
+/* KPI content (compact) */
+.kpi__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.kpi__name {
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  color: rgba(15, 23, 42, 0.72);
+}
 
 .kpi__pct {
   font-size: 10px;
   font-weight: 950;
-  color: rgba(15, 23, 42, 0.58);
+  color: rgba(15, 23, 42, 0.6);
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
 }
 .kpi__pct.hot {
   font-size: 14px;
   padding: 4px 12px;
   letter-spacing: 0.2px;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.10);
 }
 
-.kpi__valRow { display: flex; justify-content: center; align-items: baseline; gap: 6px; margin-top: 5px; }
-.kpi__num { font-size: 16px; font-weight: 950; color: #184070; font-variant-numeric: tabular-nums; }
-.kpi__num.big { font-size: 19px; letter-spacing: 0.2px; }
-.kpi__unit { font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.50); }
+.kpi__valRow {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+}
+.kpi__num {
+  font-size: 16px;
+  font-weight: 950;
+  color: #184070;
+  font-variant-numeric: tabular-nums;
+}
+.kpi__num.big {
+  font-size: 19px;
+  letter-spacing: 0.2px;
+}
+.kpi__unit {
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.5);
+}
 
 .kpi__mini {
-  margin-top: 6px;
+  margin-top: 5px;
   display: flex;
   align-items: baseline;
   justify-content: center;
   gap: 6px;
   font-size: 10px;
   font-weight: 900;
-  color: rgba(15, 23, 42, 0.70);
+  color: rgba(15, 23, 42, 0.7);
   font-variant-numeric: tabular-nums;
 }
-.mini__left { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.mini__right { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dot { color: rgba(15, 23, 42, 0.26); }
-.kmini { font-size: 10px; font-weight: 950; color: rgba(15, 23, 42, 0.80); }
-.kmini.m3 { color: rgba(24, 64, 112, 0.95); font-weight: 950; }
-.u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.45); }
-.u.m3u { color: rgba(24, 64, 112, 0.60); font-weight: 950; }
+.mini__left {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mini__right {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dot {
+  color: rgba(15, 23, 42, 0.26);
+}
+.kmini {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.82);
+}
+.kmini.m3 {
+  color: rgba(24, 64, 112, 0.95);
+  font-weight: 950;
+}
+.u {
+  font-size: 9px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.45);
+}
+.u.m3u {
+  color: rgba(24, 64, 112, 0.6);
+  font-weight: 950;
+}
 
-/* Summary */
+/* ===== EBIT HERO (flat, premium, compact) ===== */
+.kpi.ebit.hero {
+  border-left-width: 6px;
+  outline: 2px solid rgba(15, 23, 42, 0.08);
+  outline-offset: 0px;
+}
+
+.kpi.ebit.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+
+/* Title + value more “hero” without adding height */
+.kpi.ebit.hero .kpi__name {
+  font-size: 11px;
+  letter-spacing: 0.55px;
+  color: rgba(15, 23, 42, 0.82);
+}
+.kpi.ebit.hero .kpi__num {
+  font-size: 21px;
+  line-height: 1.05;
+  letter-spacing: 0.2px;
+}
+.kpi.ebit.hero .kpi__unit {
+  font-size: 10px;
+  font-weight: 950;
+}
+.kpi.ebit.hero .kpi__pct.hot {
+  font-size: 15px;
+  padding: 4px 12px;
+  font-weight: 950;
+  border-width: 1px;
+}
+.kpi.ebit.hero .kpi__mini .kmini.m3 {
+  font-size: 11px;
+  font-weight: 950;
+}
+
+/* Keep bucket tint on badge only (still flat) */
+.kpi.ebit.ebit-neg .kpi__pct.hot {
+  color: rgba(185, 28, 28, 0.98);
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.08);
+}
+.kpi.ebit.ebit-low .kpi__pct.hot {
+  color: rgba(180, 83, 9, 0.98);
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
+}
+.kpi.ebit.ebit-mid .kpi__pct.hot {
+  color: rgba(29, 78, 216, 0.98);
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.07);
+}
+.kpi.ebit.ebit-good .kpi__pct.hot {
+  color: rgba(5, 150, 105, 0.98);
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.07);
+}
+
+/* ===== Summary flat ===== */
 .summary {
-  background: rgba(255, 255, 255, 0.88);
+  background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 16px;
   padding: 9px 9px 7px;
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
   overflow: hidden;
 }
 .summary__title {
@@ -948,9 +1113,32 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.68);
   margin-bottom: 6px;
 }
-.summary__grid { display: grid; gap: 7px; }
-.sum { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: center; }
-.sum__ic { width: 18px; height: 18px; color: rgba(24, 64, 112, 0.70); }
-.sum__k { font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.55); }
-.sum__v { font-size: 12px; font-weight: 950; color: rgba(15, 23, 42, 0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary__grid {
+  display: grid;
+  gap: 7px;
+}
+.sum {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.sum__ic {
+  width: 18px;
+  height: 18px;
+  color: rgba(24, 64, 112, 0.7);
+}
+.sum__k {
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.55);
+}
+.sum__v {
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 </style>
