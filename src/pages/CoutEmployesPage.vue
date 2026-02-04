@@ -18,7 +18,12 @@ function n(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
 function money(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "MAD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "MAD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
 }
 function clamp(v: any, min = 0, max = 1e15) {
   const x = toNum(v);
@@ -78,7 +83,6 @@ const caTotal = computed(() => {
 type Draft = Record<string, number>;
 const draft = reactive<Draft>({});
 
-/* mêmes groupes que tu utilises déjà */
 const EMP_GROUPS = [
   { key: "responsable", label: "Responsable" },
   { key: "centralistes", label: "Centralistes" },
@@ -94,22 +98,20 @@ const EMP_GROUPS = [
 function loadFromVariant() {
   const s: any = (variant.value as any)?.employes ?? {};
   for (const g of EMP_GROUPS) {
-    draft[`${g.key}Nb`] = clamp(s[`${g.key}Nb`]);
-    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`]);
+    draft[`${g.key}Nb`] = clamp(s[`${g.key}Nb`], 0, 9999);
+    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999);
   }
 }
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 
 /* KPI employes */
 const monthly = computed(() => {
-  // ✅ hypothèse standard: coût mensuel du poste = nb * cout
   return EMP_GROUPS.reduce((s, g) => {
-    const nb = clamp(draft[`${g.key}Nb`]);
-    const cout = clamp(draft[`${g.key}Cout`]);
+    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
+    const cout = clamp(draft[`${g.key}Cout`], 0, 999999);
     return s + nb * cout;
   }, 0);
 });
-
 const total = computed(() => monthly.value * clamp(dureeMois.value));
 const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
@@ -123,13 +125,24 @@ const modal = reactive({
   onConfirm: null as null | (() => void | Promise<void>),
 });
 function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
-  modal.open = true; modal.title = title; modal.message = message; modal.mode = "confirm"; modal.onConfirm = onConfirm;
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "confirm";
+  modal.onConfirm = onConfirm;
 }
 function openInfo(title: string, message: string) {
-  modal.open = true; modal.title = title; modal.message = message; modal.mode = "info"; modal.onConfirm = null;
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "info";
+  modal.onConfirm = null;
 }
 function closeModal() {
-  modal.open = false; modal.title = ""; modal.message = ""; modal.onConfirm = null;
+  modal.open = false;
+  modal.title = "";
+  modal.message = "";
+  modal.onConfirm = null;
 }
 
 /* save/reset */
@@ -140,8 +153,8 @@ function buildPayload() {
   const existing: any = (variant.value as any)?.employes ?? {};
   const out: any = { category: existing.category ?? "COUTS_CHARGES" };
   for (const g of EMP_GROUPS) {
-    out[`${g.key}Nb`] = Number(clamp(draft[`${g.key}Nb`]));
-    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`]));
+    out[`${g.key}Nb`] = Number(clamp(draft[`${g.key}Nb`], 0, 9999));
+    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`], 0, 999999));
   }
   return out;
 }
@@ -161,10 +174,16 @@ async function save() {
   }
 }
 function askSave() {
-  openConfirm("Enregistrer", "Confirmer l’enregistrement ?", async () => { closeModal(); await save(); });
+  openConfirm("Enregistrer", "Confirmer l’enregistrement ?", async () => {
+    closeModal();
+    await save();
+  });
 }
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => { closeModal(); loadFromVariant(); });
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
+    closeModal();
+    loadFromVariant();
+  });
 }
 </script>
 
@@ -177,11 +196,14 @@ function askReset() {
           Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
           <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
         </div>
+        <div class="muted" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
         <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
-        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">{{ saving ? "..." : "Enregistrer" }}</button>
+        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
+          {{ saving ? "..." : "Enregistrer" }}
+        </button>
       </div>
     </div>
 
@@ -194,42 +216,76 @@ function askReset() {
       <div v-if="!variant" class="panel"><div class="muted">Sélectionne une variante.</div></div>
 
       <template v-else>
-        <!-- ✅ KPI UNIFORME -->
         <div class="kpis">
           <div class="kpi">
             <div class="kLbl">Prix / m³</div>
-            <div class="kVal">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+            <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
           </div>
           <div class="kpi">
             <div class="kLbl">Total</div>
-            <div class="kVal">{{ money(total, 2) }}</div>
+            <div class="kVal mono">{{ money(total, 2) }}</div>
           </div>
-          <div class="kpi">
+          <div class="kpi kpiMonth">
             <div class="kLbl">/ mois</div>
-            <div class="kVal">{{ money(monthly, 2) }}</div>
+            <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
           </div>
           <div class="kpi">
             <div class="kLbl">%</div>
-            <div class="kVal">{{ n(pct, 2) }} <span>%</span></div>
+            <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
           </div>
         </div>
 
         <div class="panel">
-          <div class="grid4">
-            <template v-for="g in EMP_GROUPS" :key="g.key">
-              <div class="field">
-                <div class="label">{{ g.label }} — Nb</div>
-                <input class="input r" type="number" step="0.1" v-model.number="draft[`${g.key}Nb`]" />
+          <div class="gridCards">
+            <div v-for="g in EMP_GROUPS" :key="g.key" class="empCard">
+              <div class="empTop">
+                <div class="empTitle">{{ g.label }}</div>
+                <div class="empHint muted">Nb × Coût</div>
               </div>
-              <div class="field">
-                <div class="label">{{ g.label }} — Coût (MAD)</div>
-                <input class="input r" type="number" step="0.01" v-model.number="draft[`${g.key}Cout`]" />
+
+              <div class="empRow">
+                <div class="field">
+                  <div class="label">Nb</div>
+                  <div class="inCell">
+                    <input
+                      class="inputNb"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="9999"
+                      :value="draft[`${g.key}Nb`]"
+                      @input="draft[`${g.key}Nb`] = clamp(($event.target as HTMLInputElement).value, 0, 9999)"
+                    />
+                    <span class="unit">Nb</span>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="label">Coût</div>
+                  <div class="inCell">
+                    <input
+                      class="inputCout inputMonth"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="999999"
+                      :value="draft[`${g.key}Cout`]"
+                      @input="draft[`${g.key}Cout`] = clamp(($event.target as HTMLInputElement).value, 0, 999999)"
+                    />
+                    <span class="unit unitMonth">DH/mois</span>
+                  </div>
+                </div>
               </div>
-            </template>
+
+              <div class="empTotal mono">
+                <span class="muted">Poste / mois</span>
+                <b>{{ money(clamp(draft[`${g.key}Nb`], 0, 9999) * clamp(draft[`${g.key}Cout`], 0, 999999), 2) }}</b>
+              </div>
+            </div>
           </div>
 
           <div class="muted foot">
-            Calcul mensuel : Σ(<b>Nb × Coût</b>). Si ton “Coût” est déjà le total poste/mois, je te bascule en Σ(Coût).
+            Calcul mensuel : Σ(<b>Nb × Coût</b>). Champs bleus = valeurs <b>DH/mois</b>.
           </div>
         </div>
       </template>
@@ -242,7 +298,9 @@ function askReset() {
         <div class="modalMsg">{{ modal.message }}</div>
         <div class="modalActions">
           <button class="btn" @click="closeModal()">Fermer</button>
-          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">Confirmer</button>
+          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
+            Confirmer
+          </button>
         </div>
       </div>
     </div>
@@ -250,38 +308,309 @@ function askReset() {
 </template>
 
 <style scoped>
-.page{display:flex;flex-direction:column;gap:10px;padding:12px;}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
-.title{display:flex;flex-direction:column;gap:2px;}
-.h1{font-size:16px;font-weight:800;line-height:1.1;margin:0;}
-.muted{color:#6b7280;font-size:12px;}
-.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.panel{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;}
-.panel.error{border-color:#ef4444;background:#fff5f5;}
-.btn{border:1px solid #d1d5db;background:#fff;border-radius:10px;padding:7px 10px;font-size:13px;cursor:pointer;}
-.btn:hover{background:#f9fafb;}
-.btn.primary{background:#007a33;border-color:#007a33;color:#fff;}
-.btn.primary:hover{background:#046a2f;}
-.btn:disabled{opacity:.6;cursor:not-allowed;}
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  max-width: 100%;
+}
+* {
+  box-sizing: border-box;
+}
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.h1 {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0;
+}
+.muted {
+  color: #6b7280;
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px;
+  max-width: 100%;
+}
+.panel.error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
+.btn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover {
+  background: #f9fafb;
+}
+.btn.primary {
+  background: #007a33;
+  border-color: #007a33;
+  color: #fff;
+}
+.btn.primary:hover {
+  background: #046a2f;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+}
 
-.kpis{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:8px;}
-@media (max-width:1050px){.kpis{grid-template-columns:repeat(2,minmax(180px,1fr));}}
-.kpi{border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;background:#fff;}
-.kLbl{font-size:11px;color:#6b7280;}
-.kVal{font-size:13px;font-weight:900;white-space:nowrap;}
-.kVal span{font-weight:700;color:#6b7280;margin-left:6px;}
+/* KPIs */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1050px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.kpi {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #fff;
+  min-width: 0;
+}
+.kLbl {
+  font-size: 11px;
+  color: #6b7280;
+}
+.kVal {
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kVal span {
+  font-weight: 700;
+  color: #6b7280;
+  margin-left: 6px;
+}
+.kpiMonth {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.9);
+}
+.kpiMonth .kLbl {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+.kpiMonth .kVal span {
+  color: #1d4ed8;
+  font-weight: 900;
+}
 
-.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
-@media (max-width:980px){.grid4{grid-template-columns:1fr;}}
-.field{display:flex;flex-direction:column;gap:6px;}
-.label{font-size:11px;color:#6b7280;}
-.input{border:1px solid #d1d5db;border-radius:10px;font-size:13px;padding:7px 9px;width:100%;}
-.r{text-align:right;}
-.foot{margin-top:8px;}
+/* ✅ responsive grid: jamais de débordement */
+.gridCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  max-width: 100%;
+}
+.empCard {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 10px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+.empTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.empTitle {
+  font-weight: 950;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empHint {
+  font-size: 11px;
+  white-space: nowrap;
+}
 
-.modalMask{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50;}
-.modal{width:min(520px,100%);background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.15);}
-.modalTitle{font-weight:900;font-size:14px;margin-bottom:6px;}
-.modalMsg{color:#374151;font-size:13px;white-space:pre-wrap;}
-.modalActions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;}
+/* ✅ champs + unités: toujours contenues */
+.empRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.label {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inCell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.unit {
+  color: #6b7280;
+  font-size: 11px;
+  white-space: nowrap;
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.unitMonth {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+/* ✅ tailles + responsive: pas de width fixe, jamais de débordement */
+.inputNb,
+.inputCout {
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 12px;
+  padding: 5px 7px;
+  width: 100%;
+  max-width: 100%;
+  text-align: right;
+  min-width: 0;
+}
+
+/* Nb compact (mais responsive) */
+.inputNb {
+  max-width: 92px;
+}
+
+/* Coût: correct pour 6 chiffres, mais s’adapte */
+.inputCout {
+  max-width: 140px;
+}
+
+/* ✅ champs /mois distingués */
+.inputMonth {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.8);
+}
+.inputMonth:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.65);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.empTotal {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
+  min-width: 0;
+}
+.empTotal b {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.foot {
+  margin-top: 8px;
+}
+
+/* modal */
+.modalMask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+.modal {
+  width: min(520px, 100%);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+.modalTitle {
+  font-weight: 900;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.modalMsg {
+  color: #374151;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* petit écran: empRow empile */
+@media (max-width: 420px) {
+  .empRow {
+    grid-template-columns: 1fr;
+  }
+  .inputNb {
+    max-width: 100%;
+  }
+  .inputCout {
+    max-width: 100%;
+  }
+}
 </style>

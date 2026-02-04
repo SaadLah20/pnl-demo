@@ -330,6 +330,7 @@ function askReset() {
       </div>
 
       <template v-else>
+        <!-- HEADER -->
         <div class="panel">
           <div class="headGrid">
             <div class="field">
@@ -373,7 +374,7 @@ function askReset() {
           <button class="collHead" type="button" @click="zonesOpen = !zonesOpen">
             <div class="collLeft">
               <b>Calculateur par zone</b>
-              <span class="muted small">Zone · % · Prix · Contrib.</span>
+              <span class="muted small">Tuiles KPI — aucun débordement, aucune superposition.</span>
             </div>
 
             <div class="sumBadge" :class="{ ok: pctOk, bad: !pctOk }" aria-live="polite">
@@ -404,45 +405,33 @@ function askReset() {
 
             <div v-if="overMsg" class="overMsg"><b>Limite 100% :</b> {{ overMsg }}</div>
 
-            <!-- ✅ 5 tuiles sur 1 ligne (écran desktop) -->
+            <!-- ✅ AUTO-FIT => jamais overflow à droite -->
             <div class="zonesWrap">
               <div class="zoneTile" v-for="z in edit.zones" :key="z.key">
-                <div class="tileTitle">{{ z.label }}</div>
-
-                <div class="tileInputs">
-                  <div class="inCol">
-                    <div class="miniLbl">%</div>
-                    <div class="inWrap">
-                      <input
-                        class="tileInput r"
-                        type="number"
-                        step="0.01"
-                        :value="z.pct"
-                        placeholder="Pourcentage"
-                        @input="(e) => setPct(z, (e.target as HTMLInputElement).value)"
-                      />
-                      <span class="unitR">%</span>
-                    </div>
-                  </div>
-
-                  <div class="inCol">
-                    <div class="miniLbl">Prix</div>
-                    <div class="inWrap">
-                      <input
-                        class="tileInput r"
-                        type="number"
-                        step="0.01"
-                        v-model.number="z.prix"
-                        placeholder="Prix"
-                      />
-                      <span class="unitR">DH</span>
-                    </div>
+                <div class="tileHead">
+                  <div class="tileTitle" :title="z.label">{{ z.label }}</div>
+                  <div class="tileContrib" title="Contribution (prix × %)">
+                    {{ n(toNum(z.prix) * (toNum(z.pct) / 100), 2) }}
                   </div>
                 </div>
 
-                <div class="tileFoot">
-                  <span class="muted small">Contrib.</span>
-                  <b>{{ n(toNum(z.prix) * (toNum(z.pct) / 100), 2) }}</b>
+                <!-- ✅ GRID interne safe: % fixe + prix flexible -->
+                <div class="tileInputsGrid">
+                  <div class="inWrap">
+                    <input
+                      class="tileInput r"
+                      type="number"
+                      step="0.01"
+                      :value="z.pct"
+                      @input="(e) => setPct(z, (e.target as HTMLInputElement).value)"
+                    />
+                    <span class="unitR">%</span>
+                  </div>
+
+                  <div class="inWrap">
+                    <input class="tileInput r" type="number" step="0.01" v-model.number="z.prix" />
+                    <span class="unitR">DH</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -463,18 +452,19 @@ function askReset() {
             <div class="muted small">Si décoché : valeurs remises à 0 (et envoyées à 0 au backend au save).</div>
           </div>
 
-          <div v-if="edit.includePompage" class="pumpGrid">
-            <div class="field">
+          <!-- ✅ pas de débordement + champs séparés -->
+          <div v-if="edit.includePompage" class="pumpRow">
+            <div class="pumpField">
               <div class="label">% pompé</div>
-              <input class="input r num" type="number" step="0.01" v-model.number="edit.volumePompePct" />
+              <input class="input r pumpInput" type="number" step="0.01" v-model.number="edit.volumePompePct" />
             </div>
-            <div class="field">
+            <div class="pumpField">
               <div class="label">Achat</div>
-              <input class="input r num" type="number" step="0.01" v-model.number="edit.prixAchatPompe" />
+              <input class="input r pumpInput" type="number" step="0.01" v-model.number="edit.prixAchatPompe" />
             </div>
-            <div class="field">
+            <div class="pumpField">
               <div class="label">Vente</div>
-              <input class="input r num" type="number" step="0.01" v-model.number="edit.prixVentePompe" />
+              <input class="input r pumpInput" type="number" step="0.01" v-model.number="edit.prixVentePompe" />
             </div>
           </div>
         </div>
@@ -499,24 +489,41 @@ function askReset() {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:8px; padding:10px; }
+/* ✅ anti overflow global */
+.page {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:10px;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* ✅ box sizing partout dans la page */
+.page, .page * { box-sizing: border-box; }
 
 /* top */
-.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-.title { display:flex; flex-direction:column; gap:2px; }
-.h1 { font-size:16px; font-weight:800; line-height:1.1; margin:0; }
+.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; }
+.title { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.h1 { font-size:16px; font-weight:900; line-height:1.1; margin:0; }
 .muted { color:#6b7280; font-size:12px; }
 .small { font-size:11px; }
 .actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
 /* panel */
-.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
+.panel {
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:10px;
+  overflow: hidden; /* ✅ empêche les débordements internes */
+}
 .panel.error { border-color:#ef4444; background:#fff5f5; }
 
 /* controls */
 .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.field { display:flex; flex-direction:column; gap:5px; }
-.label { font-size:11px; color:#6b7280; }
+.field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.label { font-size:11px; color:#6b7280; font-weight:800; }
 .r { text-align:right; }
 
 .select, .input {
@@ -556,12 +563,13 @@ function askReset() {
 .impactBox{
   padding-left: 14px;
   border-left: 1px dashed #e5e7eb;
+  min-width:0;
 }
 @media (max-width: 980px){
   .impactBox{ padding-left: 0; border-left: none; }
 }
-.impactVal{ display:flex; gap:8px; align-items:baseline; }
-.impactVal b{ font-weight:800; }
+.impactVal{ display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+.impactVal b{ font-weight:900; }
 
 /* collapsible */
 .collHead{
@@ -577,8 +585,8 @@ function askReset() {
   cursor:pointer;
 }
 .collHead:hover{ background:#fafafa; }
-.collLeft{ display:flex; flex-direction:column; gap:2px; align-items:flex-start; }
-.chev{ width:22px; text-align:center; transition: transform .15s ease; color:#6b7280; }
+.collLeft{ display:flex; flex-direction:column; gap:2px; align-items:flex-start; min-width:0; }
+.chev{ width:22px; text-align:center; transition: transform .15s ease; color:#6b7280; flex:0 0 auto; }
 .chev.open{ transform: rotate(180deg); }
 
 .sumBadge{
@@ -590,14 +598,15 @@ function askReset() {
   flex-direction:column;
   gap:2px;
   text-align:right;
+  flex:0 0 auto;
 }
 .sumBadge.ok{ border-color:#16a34a33; background:#16a34a0f; }
 .sumBadge.bad{ border-color:#ef444433; background:#ef44440f; }
 .sumLbl{ color:#6b7280; font-size:11px; margin-right:6px; }
 .sumLine{ display:flex; justify-content:flex-end; gap:6px; align-items:baseline; }
 .sumState{ font-size:11px; }
-.good { color:#166534; }
-.warn { color:#b91c1c; }
+.good { color:#166534; font-weight:800; }
+.warn { color:#b91c1c; font-weight:800; }
 
 .collBody{ margin-top:8px; }
 
@@ -630,19 +639,14 @@ function askReset() {
   margin-bottom:8px;
   font-size:12px;
   color:#92400e;
+  font-weight:800;
 }
 
-/* ✅ 5 tuiles en 1 ligne sur desktop */
+/* ✅ AUTO-FIT GRID => zero overflow */
 .zonesWrap{
   display:grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap:8px;
-}
-@media (max-width: 1250px){
-  .zonesWrap{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 860px){
-  .zonesWrap{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px){
   .zonesWrap{ grid-template-columns: 1fr; }
@@ -651,52 +655,70 @@ function askReset() {
 .zoneTile{
   border:1px solid #eef2f7;
   background:#fff;
-  border-radius:12px;
+  border-radius:14px;
   padding:8px;
   display:flex;
   flex-direction:column;
   gap:8px;
-  min-width: 0; /* important pour grid */
+  min-width:0;
+  box-shadow: 0 10px 26px rgba(15,23,42,0.05);
 }
 
-.tileTitle{ font-weight:900; font-size:12px; color:#111827; }
-
-.tileInputs{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
+.tileHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
   gap:8px;
 }
-
-.inCol{ display:flex; flex-direction:column; gap:4px; min-width:0; }
-.miniLbl{ font-size:10px; color:#6b7280; line-height:1; }
-
-/* ✅ unités à droite */
-.inWrap{ position:relative; display:flex; align-items:center; min-width:0; }
-.unitR{
-  position:absolute;
-  right:8px;
-  font-size:11px;
-  color:#6b7280;
-  pointer-events:none;
+.tileTitle{
+  font-weight:950;
+  font-size:12px;
+  color:#111827;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
+.tileContrib{
+  font-size:10px;
+  color:#6b7280;
+  font-weight:800;
+  flex:0 0 auto;
+}
+
+/* ✅ SAFE inputs: never overlap */
+.tileInputsGrid{
+  display:grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap:8px;
+  align-items:center;
+}
+
+.inWrap{
+  position:relative;
+  min-width:0;
+}
+
 .tileInput{
   width:100%;
   border:1px solid #d1d5db;
   border-radius:10px;
-  padding:7px 26px 7px 8px; /* espace à droite pour unité */
+  padding:7px 26px 7px 8px;
   font-size:13px;
   min-width:0;
 }
 .tileInput:focus{ outline:none; border-color:#9ca3af; }
 
-.tileFoot{
-  display:flex;
-  justify-content:space-between;
-  align-items:baseline;
-  border-top: 1px dashed #e5e7eb;
-  padding-top:7px;
+.unitR{
+  position:absolute;
+  right:8px;
+  top:50%;
+  transform: translateY(-50%);
+  font-size:11px;
+  color:#6b7280;
+  pointer-events:none;
+  font-weight:800;
 }
-.tileFoot b{ font-weight:900; }
 
 /* alert */
 .alert {
@@ -712,15 +734,23 @@ function askReset() {
 .check { display:flex; gap:8px; align-items:center; cursor:pointer; user-select:none; }
 .check input { width:16px; height:16px; }
 
-/* pompage */
-.pumpGrid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(160px, 220px));
-  gap:10px;
+/* ✅ pompage: compact + no overflow */
+.pumpRow{
+  display:flex;
+  gap:14px;
   margin-top:10px;
-  align-items:end;
+  flex-wrap:wrap;
+  align-items:flex-end;
 }
-@media (max-width: 980px){ .pumpGrid{ grid-template-columns: 1fr; } }
+.pumpField{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.pumpInput{
+  width: 140px;
+  max-width: 140px;
+}
 
 /* modal */
 .modalMask {

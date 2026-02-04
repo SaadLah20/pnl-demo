@@ -486,25 +486,395 @@ app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response)
    VARIANT CRUD + UPDATE (partial payload)
 ========================================================= */
 
-app.post("/variants", async (req: Request, res: Response) => {
-  try {
-    const created = await prisma.variant.create({
+type VariantCreateMode = "INITIALISEE" | "ZERO" | "INITIEE" | "COMPOSEE";
+
+function asMode(v: any): VariantCreateMode {
+  const s = String(v ?? "").trim().toUpperCase();
+  if (s === "ZERO") return "ZERO";
+  if (s === "INITIEE" || s === "INITIÉE") return "INITIEE";
+  if (s === "COMPOSEE" || s === "COMPOSÉE") return "COMPOSEE";
+  return "INITIALISEE";
+}
+
+async function ensureAutresCoutsDefault(tx: Prisma.TransactionClient, variantId: string) {
+  const sec = await tx.sectionAutresCouts.upsert({
+    where: { variantId },
+    create: { variantId, category: "COUTS_CHARGES" },
+    update: {},
+  });
+
+  // Ajoute au moins 1 item par défaut (si vide)
+  const cnt = await tx.autreCoutItem.count({ where: { variantId } });
+  if (cnt === 0) {
+    await tx.autreCoutItem.create({
       data: {
-        ...req.body,
-        autresCouts: {
-          create: {
-            category: "COUTS_CHARGES",
-            label: "Frais généraux",
-            unite: "POURCENT_CA",
-            valeur: 0,
-          },
-        },
+        sectionId: sec.id,
+        variantId,
+        label: "Frais généraux",
+        unite: "POURCENT_CA",
+        valeur: 0,
       },
     });
-    res.json(created);
-  } catch (err) {
+  }
+}
+
+async function initVariantZero(tx: Prisma.TransactionClient, variantId: string) {
+  await tx.sectionTransport.create({
+    data: {
+      variantId,
+      category: "LOGISTIQUE_APPRO",
+      type: "MOYENNE",
+      prixMoyen: 0,
+      volumePompePct: 0,
+      prixAchatPompe: 0,
+      prixVentePompe: 0,
+    },
+  });
+
+  await tx.sectionCab.create({
+    data: {
+      variantId,
+      category: "LOGISTIQUE_APPRO",
+      etat: "NEUVE",
+      mode: "ACHAT",
+      capaciteM3: 0,
+      amortMois: 0,
+    },
+  });
+
+  await tx.sectionMaintenance.create({
+    data: {
+      variantId,
+      category: "COUTS_CHARGES",
+      cab: 0,
+      elec: 0,
+      chargeur: 0,
+      generale: 0,
+      bassins: 0,
+      preventive: 0,
+    },
+  });
+
+  await tx.sectionCoutM3.create({
+    data: {
+      variantId,
+      category: "COUTS_CHARGES",
+      eau: 0,
+      qualite: 0,
+      dechets: 0,
+    },
+  });
+
+  await tx.sectionCoutMensuel.create({
+    data: {
+      variantId,
+      category: "COUTS_CHARGES",
+      electricite: 0,
+      gasoil: 0,
+      location: 0,
+      securite: 0,
+      hebergements: 0,
+      locationTerrain: 0,
+      telephone: 0,
+      troisG: 0,
+      taxeProfessionnelle: 0,
+      locationVehicule: 0,
+      locationAmbulance: 0,
+      locationBungalows: 0,
+      epi: 0,
+    },
+  });
+
+  await tx.sectionCoutOccasionnel.create({
+    data: {
+      variantId,
+      category: "COUTS_CHARGES",
+      genieCivil: 0,
+      installation: 0,
+      transport: 0,
+      demontage: 0,
+      remisePointCentrale: 0,
+      silots: 0,
+      localAdjuvant: 0,
+      bungalows: 0,
+    },
+  });
+
+  await tx.sectionEmployes.create({
+    data: {
+      variantId,
+      category: "COUTS_CHARGES",
+      responsableNb: 0,
+      responsableCout: 0,
+      centralistesNb: 0,
+      centralistesCout: 0,
+      manoeuvreNb: 0,
+      manoeuvreCout: 0,
+      coordinateurExploitationNb: 0,
+      coordinateurExploitationCout: 0,
+      technicienLaboNb: 0,
+      technicienLaboCout: 0,
+      femmeMenageNb: 0,
+      femmeMenageCout: 0,
+      gardienNb: 0,
+      gardienCout: 0,
+      maintenancierNb: 0,
+      maintenancierCout: 0,
+      panierRepasNb: 0,
+      panierRepasCout: 0,
+    },
+  });
+
+  await tx.sectionMatierePremiere.create({
+    data: { variantId, category: "LOGISTIQUE_APPRO" },
+  });
+
+  await tx.sectionFormules.create({
+    data: { variantId, category: "FORMULES" },
+  });
+
+  await tx.sectionMajorations.create({
+    data: { variantId, category: "MAJORATIONS" },
+  });
+
+  await tx.sectionDevis.create({
+    data: { variantId, category: "DEVIS" },
+  });
+
+  await ensureAutresCoutsDefault(tx, variantId);
+}
+
+function rnd(min: number, max: number) {
+  return Math.round((min + Math.random() * (max - min)) * 100) / 100;
+}
+
+async function initVariantInitiee(tx: Prisma.TransactionClient, variantId: string) {
+  // base zero
+  await initVariantZero(tx, variantId);
+
+  // randomise quelques champs (placeholder)
+  await tx.sectionTransport.update({
+    where: { variantId },
+    data: {
+      type: Math.random() > 0.5 ? "MOYENNE" : "PAR_ZONE",
+      prixMoyen: rnd(50, 120),
+      volumePompePct: rnd(0, 80),
+      prixAchatPompe: rnd(0, 150),
+      prixVentePompe: rnd(0, 220),
+    },
+  });
+
+  await tx.sectionMaintenance.update({
+    where: { variantId },
+    data: {
+      cab: rnd(0, 30000),
+      elec: rnd(0, 30000),
+      chargeur: rnd(0, 30000),
+      generale: rnd(0, 15000),
+      bassins: rnd(0, 8000),
+      preventive: rnd(0, 12000),
+    },
+  });
+
+  await tx.sectionCoutM3.update({
+    where: { variantId },
+    data: { eau: rnd(0, 6), qualite: rnd(0, 4), dechets: rnd(0, 4) },
+  });
+
+  // random formules (si catalogue présent)
+  const secForm = await tx.sectionFormules.findUnique({ where: { variantId } });
+  if (secForm) {
+    const all = await tx.formuleCatalogue.findMany({ select: { id: true } });
+    const pickN = all.sort(() => 0.5 - Math.random()).slice(0, Math.min(2, all.length));
+    for (const f of pickN) {
+      await tx.variantFormule.create({
+        data: {
+          variantId,
+          sectionId: secForm.id,
+          formuleId: f.id,
+          volumeM3: rnd(10, 150),
+          momd: rnd(0, 25),
+          cmpOverride: null,
+        },
+      });
+    }
+    await syncVariantMpsFromFormules(tx, variantId);
+  }
+}
+
+async function cloneVariantFrom(tx: Prisma.TransactionClient, sourceVariantId: string, targetVariantId: string) {
+  const src = await tx.variant.findUnique({
+    where: { id: sourceVariantId },
+    include: {
+      transport: true,
+      cab: true,
+      maintenance: true,
+      coutM3: true,
+      coutMensuel: true,
+      coutOccasionnel: true,
+      employes: true,
+      autresCouts: { include: { items: true } },
+      devis: true,
+      majorations: true,
+      mp: true,
+      formules: true,
+      variantMps: true,
+      variantFormules: true,
+    },
+  });
+  if (!src) throw new Error("SOURCE_VARIANT_NOT_FOUND");
+
+  // Sections (copie brute)
+  if (src.transport) {
+    const { id: _id, variantId: _v, ...data } = src.transport as any;
+    await tx.sectionTransport.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.cab) {
+    const { id: _id, variantId: _v, ...data } = src.cab as any;
+    await tx.sectionCab.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.maintenance) {
+    const { id: _id, variantId: _v, ...data } = src.maintenance as any;
+    await tx.sectionMaintenance.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.coutM3) {
+    const { id: _id, variantId: _v, ...data } = src.coutM3 as any;
+    await tx.sectionCoutM3.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.coutMensuel) {
+    const { id: _id, variantId: _v, ...data } = src.coutMensuel as any;
+    await tx.sectionCoutMensuel.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.coutOccasionnel) {
+    const { id: _id, variantId: _v, ...data } = src.coutOccasionnel as any;
+    await tx.sectionCoutOccasionnel.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.employes) {
+    const { id: _id, variantId: _v, ...data } = src.employes as any;
+    await tx.sectionEmployes.create({ data: { variantId: targetVariantId, ...data } });
+  }
+
+  // bare sections
+  if (src.mp) {
+    const { id: _id, variantId: _v, ...data } = src.mp as any;
+    await tx.sectionMatierePremiere.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.formules) {
+    const { id: _id, variantId: _v, ...data } = src.formules as any;
+    await tx.sectionFormules.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.majorations) {
+    const { id: _id, variantId: _v, ...data } = src.majorations as any;
+    await tx.sectionMajorations.create({ data: { variantId: targetVariantId, ...data } });
+  }
+  if (src.devis) {
+    const { id: _id, variantId: _v, ...data } = src.devis as any;
+    await tx.sectionDevis.create({ data: { variantId: targetVariantId, ...data } });
+  }
+
+  // Autres couts
+  const secAc = await tx.sectionAutresCouts.create({
+    data: { variantId: targetVariantId, category: src.autresCouts?.category ?? "COUTS_CHARGES" },
+  });
+  const items = (src.autresCouts?.items ?? []) as any[];
+  if (items.length) {
+    await tx.autreCoutItem.createMany({
+      data: items.map((it) => ({
+        sectionId: secAc.id,
+        variantId: targetVariantId,
+        label: String(it.label ?? ""),
+        unite: String(it.unite ?? "FORFAIT"),
+        valeur: Number(it.valeur ?? 0),
+      })),
+    });
+  } else {
+    await ensureAutresCoutsDefault(tx, targetVariantId);
+  }
+
+  // Variant formules + sync MP
+  const secForm = await tx.sectionFormules.findUnique({ where: { variantId: targetVariantId } });
+  if (secForm) {
+    for (const vf of src.variantFormules ?? []) {
+      await tx.variantFormule.create({
+        data: {
+          variantId: targetVariantId,
+          sectionId: secForm.id,
+          formuleId: vf.formuleId,
+          volumeM3: Number(vf.volumeM3 ?? 0),
+          momd: Number(vf.momd ?? 0),
+          cmpOverride: vf.cmpOverride ?? null,
+        },
+      });
+    }
+  }
+  await syncVariantMpsFromFormules(tx, targetVariantId);
+
+  // MP overrides (si existants)
+  const secMp = await tx.sectionMatierePremiere.findUnique({ where: { variantId: targetVariantId } });
+  if (secMp) {
+    for (const vm of src.variantMps ?? []) {
+      await tx.variantMp.upsert({
+        where: { variantId_mpId: { variantId: targetVariantId, mpId: vm.mpId } },
+        create: {
+          variantId: targetVariantId,
+          sectionId: secMp.id,
+          mpId: vm.mpId,
+          prix: Number(vm.prix ?? 0),
+          comment: vm.comment ?? null,
+          prixOverride: vm.prixOverride ?? null,
+        },
+        update: {
+          prix: Number(vm.prix ?? 0),
+          comment: vm.comment ?? null,
+          prixOverride: vm.prixOverride ?? null,
+        },
+      });
+    }
+  }
+}
+
+app.post("/variants", async (req: Request, res: Response) => {
+  try {
+    const body = req.body ?? {};
+    const mode = asMode(body.createMode);
+    const contractId = String(body.contractId ?? "");
+    if (!contractId) return res.status(400).json({ error: "contractId required" });
+
+    const title = String(body.title ?? "Variante");
+    const description = body.description == null ? null : String(body.description);
+    const status = body.status === undefined ? undefined : String(body.status);
+    const sourceVariantId = body.sourceVariantId ? String(body.sourceVariantId) : "";
+
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const v = await tx.variant.create({
+        data: {
+          contractId,
+          title,
+          description,
+          ...(status ? { status } : {}),
+        },
+      });
+
+      if (mode === "ZERO") {
+        await initVariantZero(tx, v.id);
+      } else if (mode === "INITIEE") {
+        await initVariantInitiee(tx, v.id);
+      } else if (mode === "COMPOSEE") {
+        if (!sourceVariantId) throw new Error("sourceVariantId required for COMPOSEE");
+        await cloneVariantFrom(tx, sourceVariantId, v.id);
+      } else {
+        // INITIALISEE => on crée juste un squelette "autres couts" pour compat UI
+        await ensureAutresCoutsDefault(tx, v.id);
+      }
+
+      return v;
+    });
+
+    const variant = await getFullVariant(created.id);
+    return res.json({ ok: true, variant });
+  } catch (err: any) {
     console.error(err);
-    res.status(400).json({ error: "Bad Request" });
+    return res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
 

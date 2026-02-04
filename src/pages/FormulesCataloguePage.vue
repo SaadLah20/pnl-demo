@@ -186,7 +186,7 @@ function mpById(mpId: string): any | null {
 }
 
 /* =========================
-   Helpers: normalize, ciment constraint
+   Helpers: normalize, ciment constraint, duplicate MP constraint
 ========================= */
 function normalizeItems(items: ItemDraft[] = []): ItemDraft[] {
   const map = new Map<string, number>();
@@ -207,6 +207,16 @@ function countCiment(items: ItemDraft[] = []): number {
   for (const it of items) if (it?.mpId && isCimentMp(String(it.mpId))) c++;
   return c;
 }
+
+/* ✅ NEW: forbid duplicate MP (same mpId) */
+function countMp(items: ItemDraft[] = [], mpId: string): number {
+  const id = String(mpId ?? "");
+  if (!id) return 0;
+  let c = 0;
+  for (const it of items) if (String(it?.mpId ?? "") === id) c++;
+  return c;
+}
+
 function cimentQty(items: ItemDraft[] = []): number {
   for (const it of items) {
     if (it?.mpId && isCimentMp(String(it.mpId))) return toNum(it.qty ?? 0);
@@ -222,15 +232,25 @@ function cimentQtyFromRow(row: any): number {
   return 0;
 }
 
-/* Forbid second ciment */
+/* Forbid second ciment + forbid duplicate MP */
 function onChangeMp(formuleId: string, idx: number, newMpId: string) {
   const d = getDraft(formuleId);
   const row = d[idx];
   if (!row) return;
 
   const prevMpId = String(row.mpId ?? "");
-  row.mpId = newMpId;
+  const nextMpId = String(newMpId ?? "");
 
+  row.mpId = nextMpId;
+
+  // ✅ Interdit: même MP 2 fois
+  if (nextMpId && countMp(d, nextMpId) > 1) {
+    row.mpId = prevMpId;
+    showToast("Interdit : une formule ne peut pas contenir 2 fois la même MP.");
+    return;
+  }
+
+  // ✅ Interdit: 2 ciments
   if (countCiment(d) > 1) {
     row.mpId = prevMpId;
     showToast("Interdit : une formule ne peut pas contenir 2 MP de catégorie CIMENT.");
@@ -310,7 +330,9 @@ const filtered = computed(() => {
 
   return (formules.value ?? []).filter((f) => {
     if (s) {
-      const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""} ${f.comment ?? ""}`.toLowerCase();
+      const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""} ${
+        f.comment ?? ""
+      }`.toLowerCase();
       if (!blob.includes(s)) return false;
     }
 
@@ -468,22 +490,29 @@ function confirmReplace() {
 function addItem(formuleId: string) {
   const d = getDraft(formuleId);
 
-  const first = mpSorted.value?.[0]?.id ? String(mpSorted.value[0].id) : "";
-  if (!first) return;
+  // ✅ used mpIds (forbid duplicates)
+  const used = new Set<string>();
+  for (const it of d) {
+    const id = String(it?.mpId ?? "").trim();
+    if (id) used.add(id);
+  }
 
-  let chosen = first;
+  // ✅ pick first available mp not already used, and respecting ciment constraint
+  const pick = (mpSorted.value ?? []).find((mp: any) => {
+    const id = String(mp?.id ?? "");
+    if (!id) return false;
+    if (used.has(id)) return false; // forbid duplicates
+    if (catRank(mp?.categorie) === 0 && countCiment(d) >= 1) return false; // keep ciment rule
+    return true;
+  });
 
-  if (isCimentMp(chosen) && countCiment(d) >= 1) {
-    const fallback = mpSorted.value.find((x: any) => catRank(x?.categorie) !== 0);
-    if (!fallback) {
-      showToast("Impossible d’ajouter : aucune MP non-ciment disponible.");
-      return;
-    }
-    chosen = String(fallback.id);
+  if (!pick?.id) {
+    showToast("Impossible d’ajouter : aucune MP disponible (déjà utilisées ou contrainte CIMENT).");
+    return;
   }
 
   // ✅ add at top
-  d.unshift({ mpId: chosen, qty: 0 });
+  d.unshift({ mpId: String(pick.id), qty: 0 });
 }
 
 function removeItem(formuleId: string, idx: number) {
@@ -745,7 +774,10 @@ onMounted(async () => {
           </div>
 
           <!-- ✅ ONLY ONE LINE (banner message + buttons on the right) -->
-          <div class="volRow" :class="{ low: compositionStatsFor(String(f.id)).isLow, ok: compositionStatsFor(String(f.id)).isOk }">
+          <div
+            class="volRow"
+            :class="{ low: compositionStatsFor(String(f.id)).isLow, ok: compositionStatsFor(String(f.id)).isOk }"
+          >
             <div class="volMsg">
               {{ volumeLine(String(f.id)) }}
             </div>
@@ -817,7 +849,7 @@ onMounted(async () => {
             </div>
 
             <div class="note">
-              ⚠️ Interdit : <b>2 MP de catégorie CIMENT</b> dans une même formule.
+              ⚠️ Interdit : <b>2 MP de catégorie CIMENT</b> et <b>2 fois la même MP</b> dans une même formule.
             </div>
           </div>
         </div>
@@ -1102,7 +1134,7 @@ onMounted(async () => {
 }
 
 .btnSm {
-  height: 30px;              /* ✅ tighter */
+  height: 30px; /* ✅ tighter */
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
   border-radius: 12px;
@@ -1302,7 +1334,7 @@ onMounted(async () => {
 }
 .banner.warn {
   border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.10);
+  background: rgba(245, 158, 11, 0.1);
 }
 .miniTag {
   display: inline-flex;
@@ -1323,7 +1355,7 @@ onMounted(async () => {
   flex-wrap: wrap;
   padding: 8px 10px;
   border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   margin-bottom: 10px;
 }
 .volRow.ok {
@@ -1367,7 +1399,7 @@ onMounted(async () => {
 }
 .table th,
 .table td {
-  border-bottom: 1px solid rgba(16, 24, 40, 0.10);
+  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
   padding: 5px 6px; /* ✅ smaller vertical padding */
   vertical-align: middle;
 }
@@ -1422,7 +1454,7 @@ onMounted(async () => {
 .note {
   margin-top: 8px;
   background: rgba(15, 23, 42, 0.03);
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 12px;
   padding: 8px 10px;
   font-size: 11.5px;

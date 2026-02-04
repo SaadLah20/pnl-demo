@@ -85,10 +85,6 @@ function labelFrom(opts: Opt[], value: any) {
   const f = opts.find((o) => String(o.value) === String(value));
   return f?.label ?? (value === null || value === undefined || value === "" ? "-" : String(value));
 }
-function normalizeEnum(opts: Opt[], value: any, fallback: any) {
-  const ok = opts.some((o) => String(o.value) === String(value));
-  return ok ? value : fallback;
-}
 
 /* =========================================================
    Helpers
@@ -132,10 +128,6 @@ function tagClass(status?: string) {
   if (s.includes("ENCO") || s.includes("ACT") || s.includes("ADJ")) return "tag tag--on";
   return "tag";
 }
-function toNum(v: any, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
 
 /* =========================================================
    Data
@@ -155,9 +147,24 @@ const activeContractId = computed(() => {
 });
 
 /* =========================================================
-   P&L Search + Filters (P&L only)
+   UI state
 ========================================================= */
-const q = ref("");
+const q = ref(""); // search P&L only
+const openPnl = reactive<Record<string, boolean>>({});
+function isOpenPnl(id: string) {
+  if (openPnl[id] === undefined) openPnl[id] = false;
+  return openPnl[id];
+}
+function togglePnl(id: string) {
+  openPnl[id] = !isOpenPnl(id);
+}
+function collapseAllPnls() {
+  for (const p of pnls.value) openPnl[p.id] = false;
+}
+
+/* =========================================================
+   FILTERS/ SORT (P&L ONLY)
+========================================================= */
 const filterOpen = ref(false);
 
 const pnlStatusFilter = ref<string>("");
@@ -168,49 +175,47 @@ const pnlModelFilter = ref<string>("");
 const sortPnlKey = ref<"status" | "city" | "client" | "model">("status");
 const sortPnlDir = ref<"asc" | "desc">("asc");
 
+const pnlCityOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const c = String(p?.city ?? "").trim();
+    if (c) set.add(c);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+const pnlClientOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const c = String(p?.client ?? "").trim();
+    if (c) set.add(c);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+const pnlModelOptions = computed(() => {
+  const set = new Set<string>();
+  for (const p of pnls.value) {
+    const m = String(p?.model ?? "").trim();
+    if (m) set.add(m);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
 const pnlStatusOptions = computed(() => {
   const set = new Set<string>();
   for (const p of pnls.value) {
     const s = statusKey(p?.status);
     if (s) set.add(s);
   }
-  return Array.from(set).sort((a, b) => a.localeCompare(b, "fr"));
-});
-const pnlCityOptions = computed(() => {
-  const set = new Set<string>();
-  for (const p of pnls.value) {
-    const v = String(p?.city ?? "");
-    if (v) set.add(v);
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b, "fr"));
-});
-const pnlClientOptions = computed(() => {
-  const set = new Set<string>();
-  for (const p of pnls.value) {
-    const v = String(p?.client ?? "");
-    if (v) set.add(v);
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b, "fr"));
-});
-const pnlModelOptions = computed(() => {
-  const set = new Set<string>();
-  for (const p of pnls.value) {
-    const v = String(p?.model ?? "");
-    if (v) set.add(v);
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b, "fr"));
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
 });
 
-const openPnl = reactive<Record<string, boolean>>({});
-function isOpenPnl(id: string) {
-  if (openPnl[id] === undefined) openPnl[id] = false;
-  return openPnl[id];
-}
-function togglePnl(id: string) {
-  openPnl[id] = !isOpenPnl(id);
-}
-function collapseAllPnls() {
-  for (const p of pnls.value) openPnl[String(p.id)] = false;
+function resetPnlFilters() {
+  q.value = "";
+  pnlStatusFilter.value = "";
+  pnlCityFilter.value = "";
+  pnlClientFilter.value = "";
+  pnlModelFilter.value = "";
+  sortPnlKey.value = "status";
+  sortPnlDir.value = "asc";
 }
 
 const filteredPnls = computed<any[]>(() => {
@@ -242,7 +247,6 @@ const filteredPnls = computed<any[]>(() => {
     return av.localeCompare(bv, "fr") * dir;
   });
 
-  // keep active pnl on top
   const ap = activePnlId.value;
   if (ap) {
     const idx = rows.findIndex((x) => x.id === ap);
@@ -255,10 +259,20 @@ const filteredPnls = computed<any[]>(() => {
   return rows;
 });
 
+/* click-outside popover */
+function onDocDown(e: MouseEvent) {
+  const t = e.target as HTMLElement | null;
+  if (!t) return;
+  if (t.closest?.("[data-filter-anchor]")) return;
+  filterOpen.value = false;
+}
+document.addEventListener("mousedown", onDocDown);
+onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
+
 /* =========================================================
-   Selection helpers
+   Actions
 ========================================================= */
-function openVariantByIds(pnlId: string, contractId: string, variantId: string) {
+function openVariant(pnlId: string, contractId: string, variantId: string) {
   if ((store as any).setActivePnl) (store as any).setActivePnl(pnlId);
   if ((store as any).setActiveContract) (store as any).setActiveContract(contractId);
   if ((store as any).setActiveVariant) (store as any).setActiveVariant(variantId);
@@ -291,10 +305,10 @@ const editMode = ref<EditMode>("pnl");
 const editBusy = ref(false);
 const editErr = ref<string | null>(null);
 
+/** create flags */
 const isCreate = ref(false);
-const createPnlId = ref<string | null>(null);
-const createContractId = ref<string | null>(null);
-const createdVariantIdToSelect = ref<string | null>(null);
+const createPnlId = ref<string | null>(null);      // for creating contract
+const createContractId = ref<string | null>(null); // for creating variant
 
 const draft = reactive<any>({
   id: "",
@@ -308,13 +322,13 @@ const draft = reactive<any>({
   createdAt: "",
 
   // contract
-  ref: "",
+  ref: "", // non modifiable
   dureeMois: 0,
-  terrain: "LHM",
-  installation: "LHM",
   cab: "LHM",
+  installation: "LHM",
   genieCivil: "LHM",
   transport: "LHM",
+  terrain: "LHM",
   matierePremiere: "LHM",
   maintenance: "LHM",
   chargeuse: "LHM",
@@ -329,6 +343,11 @@ const draft = reactive<any>({
 
   // variant
   description: "",
+
+  // variant create helpers (not persisted in DB)
+  // Server expects: ZERO | INITIEE | COMPOSEE (anything else => simple init)
+  createMode: "ZERO",
+  sourceVariantId: "",       // for COMPOSEE
 });
 
 function resetDraft() {
@@ -336,10 +355,8 @@ function resetDraft() {
   isCreate.value = false;
   createPnlId.value = null;
   createContractId.value = null;
-  createdVariantIdToSelect.value = null;
 
   draft.id = "";
-
   draft.title = "";
   draft.client = "";
   draft.model = "";
@@ -349,7 +366,6 @@ function resetDraft() {
 
   draft.ref = "";
   draft.dureeMois = 0;
-
   draft.cab = "LHM";
   draft.installation = "LHM";
   draft.genieCivil = "LHM";
@@ -358,19 +374,46 @@ function resetDraft() {
   draft.matierePremiere = "LHM";
   draft.maintenance = "LHM";
   draft.chargeuse = "LHM";
-
   draft.branchementEau = "LHM";
   draft.consoEau = "LHM";
   draft.branchementElec = "LHM";
   draft.consoElec = "LHM";
-
   draft.postes = 1;
   draft.sundayPrice = 0;
   draft.delayPenalty = 0;
   draft.chillerRent = 0;
 
   draft.description = "";
+
+  draft.createMode = "ZERO";
+  draft.sourceVariantId = "";
 }
+
+function findPnlIdByContractId(contractId: string): string | null {
+  for (const p of pnls.value) {
+    for (const c of p.contracts ?? []) {
+      if (String(c.id) === String(contractId)) return String(p.id);
+    }
+  }
+  return null;
+}
+
+const composeSourceOptions = computed(() => {
+  // all variants grouped by P&L, to let the user clone any variant
+  const out: Array<{ id: string; label: string; pnlId: string }> = [];
+  for (const p of pnls.value) {
+    for (const c of p.contracts ?? []) {
+      for (const v of c.variants ?? []) {
+        out.push({
+          id: String(v.id),
+          pnlId: String(p.id),
+          label: `${String(p.title ?? "P&L")} · ${String(c.ref ?? "Contrat")} · ${String(v.title ?? "Variante")}`,
+        });
+      }
+    }
+  }
+  return out;
+});
 
 function openEdit(mode: EditMode, data: any) {
   resetDraft();
@@ -390,47 +433,51 @@ function openEdit(mode: EditMode, data: any) {
   if (mode === "contract") {
     draft.id = String(data.id);
     draft.ref = String(data.ref ?? "");
-    draft.dureeMois = toNum(data.dureeMois, 0);
+    draft.dureeMois = Number(data.dureeMois ?? 0);
 
-    draft.cab = normalizeEnum(CHARGE_3, String(data.cab ?? "LHM"), "LHM");
-    draft.installation = normalizeEnum(CHARGE_3, String(data.installation ?? "LHM"), "LHM");
-    draft.genieCivil = normalizeEnum(GENIE_CIVIL_4, String(data.genieCivil ?? "LHM"), "LHM");
-    draft.transport = normalizeEnum(CHARGE_3, String(data.transport ?? "LHM"), "LHM");
-    draft.terrain = normalizeEnum(TERRAIN_4, String(data.terrain ?? "LHM"), "LHM");
-    draft.matierePremiere = normalizeEnum(MATIERE_3, String(data.matierePremiere ?? "LHM"), "LHM");
-    draft.maintenance = normalizeEnum(MAINTENANCE_4, String(data.maintenance ?? "LHM"), "LHM");
-    draft.chargeuse = normalizeEnum(CHARGE_3, String(data.chargeuse ?? "LHM"), "LHM");
+    draft.cab = String(data.cab ?? "LHM");
+    draft.installation = String(data.installation ?? "LHM");
+    draft.genieCivil = String(data.genieCivil ?? "LHM");
+    draft.transport = String(data.transport ?? "LHM");
+    draft.terrain = String(data.terrain ?? "LHM");
+    draft.matierePremiere = String(data.matierePremiere ?? "LHM");
+    draft.maintenance = String(data.maintenance ?? "LHM");
+    draft.chargeuse = String(data.chargeuse ?? "LHM");
 
-    draft.branchementEau = normalizeEnum(CHARGE_3, String(data.branchementEau ?? "LHM"), "LHM");
-    draft.consoEau = normalizeEnum(CONSOMMATION_2, String(data.consoEau ?? "LHM"), "LHM");
-    draft.branchementElec = normalizeEnum(CHARGE_3, String(data.branchementElec ?? "LHM"), "LHM");
-    draft.consoElec = normalizeEnum(CONSOMMATION_2, String(data.consoElec ?? "LHM"), "LHM");
+    draft.branchementEau = String(data.branchementEau ?? "LHM");
+    draft.consoEau = String(data.consoEau ?? "LHM");
+    draft.branchementElec = String(data.branchementElec ?? "LHM");
+    draft.consoElec = String(data.consoElec ?? "LHM");
 
-    const postes = toNum(data.postes, 1);
-    draft.postes = postes === 2 ? 2 : 1;
-
-    draft.sundayPrice = toNum(data.sundayPrice, 0);
-    draft.delayPenalty = toNum(data.delayPenalty, 0);
-    draft.chillerRent = toNum(data.chillerRent, 0);
+    draft.postes = Number(data.postes ?? 1);
+    draft.sundayPrice = Number(data.sundayPrice ?? 0);
+    draft.delayPenalty = Number(data.delayPenalty ?? 0);
+    draft.chillerRent = Number(data.chillerRent ?? 0);
   }
 
   if (mode === "variant") {
     draft.id = String(data.id);
     draft.title = String(data.title ?? "");
-    draft.status = String(data.status ?? "INITIALISEE");
+    draft.status = String(data.status ?? "");
     draft.description = String(data.description ?? "");
   }
 }
 
+/** CREATE Contract under P&L */
 function openCreateContract(pnlId: string) {
   resetDraft();
   editMode.value = "contract";
   editOpen.value = true;
   isCreate.value = true;
   createPnlId.value = pnlId;
-  // defaults already set
+
+  // defaults “raisonnables”
+  draft.ref = "";         // auto
+  draft.dureeMois = 0;
+  draft.postes = 1;
 }
 
+/** CREATE Variant under Contract */
 function openCreateVariant(contractId: string) {
   resetDraft();
   editMode.value = "variant";
@@ -438,14 +485,18 @@ function openCreateVariant(contractId: string) {
   isCreate.value = true;
   createContractId.value = contractId;
 
+  draft.title = "Variante";
   draft.status = "INITIALISEE";
+  draft.description = "";
+
+  draft.createMode = "ZERO";
+  draft.sourceVariantId = "";
 }
 
 function closeEdit() {
   editOpen.value = false;
-  editErr.value = null;
   editBusy.value = false;
-  resetDraft();
+  editErr.value = null;
 }
 
 async function saveEdit() {
@@ -458,37 +509,39 @@ async function saveEdit() {
       await apiJson(`/pnls/${draft.id}`, {
         method: "PUT",
         body: JSON.stringify({
-          title: String(draft.title ?? ""),
-          client: draft.client === "" ? null : String(draft.client ?? ""),
-          city: String(draft.city ?? ""),
-          region: undefined, // backend gère, on n’envoie pas si pas utilisé
-          status: String(draft.status ?? ""),
+          title: draft.title,
+          client: draft.client,
+          city: draft.city,
+          status: draft.status,
         }),
       });
     }
 
     // -------- CONTRACT CREATE / UPDATE
     if (editMode.value === "contract") {
-      // IMPORTANT: jamais de null sur les champs Prisma non-null.
-      // IMPORTANT: ne pas envoyer ref/status (ref non modifiable / status inexistant).
-      const payload: any = {
-        dureeMois: Math.trunc(toNum(draft.dureeMois, 0)),
-        cab: normalizeEnum(CHARGE_3, draft.cab, "LHM"),
-        installation: normalizeEnum(CHARGE_3, draft.installation, "LHM"),
-        genieCivil: normalizeEnum(GENIE_CIVIL_4, draft.genieCivil, "LHM"),
-        transport: normalizeEnum(CHARGE_3, draft.transport, "LHM"),
-        terrain: normalizeEnum(TERRAIN_4, draft.terrain, "LHM"),
-        matierePremiere: normalizeEnum(MATIERE_3, draft.matierePremiere, "LHM"),
-        maintenance: normalizeEnum(MAINTENANCE_4, draft.maintenance, "LHM"),
-        chargeuse: normalizeEnum(CHARGE_3, draft.chargeuse, "LHM"),
-        branchementEau: normalizeEnum(CHARGE_3, draft.branchementEau, "LHM"),
-        consoEau: normalizeEnum(CONSOMMATION_2, draft.consoEau, "LHM"),
-        branchementElec: normalizeEnum(CHARGE_3, draft.branchementElec, "LHM"),
-        consoElec: normalizeEnum(CONSOMMATION_2, draft.consoElec, "LHM"),
-        postes: normalizeEnum(POSTES_2, Number(draft.postes ?? 1), 1),
-        sundayPrice: toNum(draft.sundayPrice, 0),
-        delayPenalty: toNum(draft.delayPenalty, 0),
-        chillerRent: toNum(draft.chillerRent, 0),
+      const payload = {
+        // ref non modifiable et auto -> on n’envoie jamais "ref"
+        dureeMois: Number(draft.dureeMois ?? 0),
+
+        cab: draft.cab,
+        installation: draft.installation,
+        genieCivil: draft.genieCivil,
+        transport: draft.transport,
+        terrain: draft.terrain,
+        matierePremiere: draft.matierePremiere,
+        maintenance: draft.maintenance,
+        chargeuse: draft.chargeuse,
+
+        branchementEau: draft.branchementEau,
+        consoEau: draft.consoEau,
+        branchementElec: draft.branchementElec,
+        consoElec: draft.consoElec,
+
+        postes: Number(draft.postes ?? 1),
+
+        sundayPrice: Number(draft.sundayPrice ?? 0),
+        delayPenalty: Number(draft.delayPenalty ?? 0),
+        chillerRent: Number(draft.chillerRent ?? 0),
       };
 
       if (isCreate.value) {
@@ -513,40 +566,56 @@ async function saveEdit() {
       if (isCreate.value) {
         if (!createContractId.value) throw new Error("contractId manquant pour créer une variante.");
 
-        const created: any = await apiJson(`/variants`, {
+        if (draft.createMode === "COMPOSEE" && !String(draft.sourceVariantId || "").trim()) {
+          throw new Error("Variante composée: sélectionne une variante source.");
+        }
+
+        const created = await apiJson(`/variants`, {
           method: "POST",
           body: JSON.stringify({
             contractId: createContractId.value,
-            title: String(draft.title ?? ""),
-            status: String(draft.status ?? "INITIALISEE"),
-            description: draft.description === "" ? null : String(draft.description ?? ""),
+            title: draft.title,
+            status: draft.status,
+            description: draft.description,
+            createMode: draft.createMode,
+            sourceVariantId: draft.sourceVariantId || undefined,
           }),
         });
 
-        const newId = created?.variant?.id ?? created?.id ?? null;
-        if (newId) createdVariantIdToSelect.value = String(newId);
+        // 🔥 keep newly created variant selected after reload
+        const newVarId = String(created?.variant?.id ?? created?.id ?? "");
+        const pnlIdForContract = findPnlIdByContractId(String(createContractId.value));
+        if (newVarId) {
+          (store as any).__keepAfterReload = { pnlId: pnlIdForContract, variantId: newVarId, contractId: String(createContractId.value) };
+        }
       } else {
         await apiJson(`/variants/${draft.id}`, {
           method: "PUT",
           body: JSON.stringify({
-            title: String(draft.title ?? ""),
-            status: String(draft.status ?? ""),
-            description: draft.description === "" ? null : String(draft.description ?? ""),
+            title: draft.title,
+            status: draft.status,
+            description: draft.description,
           }),
         });
       }
     }
 
-    // reload + keep selection
     const keepPnl = activePnlId.value;
-    const keepContract = activeContractId.value;
-    const keepVariant = createdVariantIdToSelect.value ?? activeVariantId.value;
+    const keepVar = activeVariantId.value;
 
     await store.loadPnls?.();
 
-    if (keepPnl && (store as any).setActivePnl) (store as any).setActivePnl(keepPnl);
-    if (keepContract && (store as any).setActiveContract) (store as any).setActiveContract(keepContract);
-    if (keepVariant && (store as any).setActiveVariant) (store as any).setActiveVariant(keepVariant);
+    const keepAfter = (store as any).__keepAfterReload as any;
+    delete (store as any).__keepAfterReload;
+
+    if (keepAfter?.pnlId && (store as any).setActivePnl) (store as any).setActivePnl(keepAfter.pnlId);
+    else if (keepPnl && (store as any).setActivePnl) (store as any).setActivePnl(keepPnl);
+
+    if (keepAfter?.variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(keepAfter.variantId);
+    else if (keepVar && (store as any).setActiveVariant) (store as any).setActiveVariant(keepVar);
+
+    // ensure P&L container is opened so the user can immediately click the new variant
+    if (keepAfter?.pnlId) openPnl[String(keepAfter.pnlId)] = true;
 
     closeEdit();
   } catch (e: any) {
@@ -555,19 +624,6 @@ async function saveEdit() {
     editBusy.value = false;
   }
 }
-
-/* =========================================================
-   Keyboard
-========================================================= */
-const onKey = (ev: KeyboardEvent) => {
-  if (ev.key === "Escape") {
-    if (viewOpen.value) closeView();
-    if (editOpen.value) closeEdit();
-    if (filterOpen.value) filterOpen.value = false;
-  }
-};
-window.addEventListener("keydown", onKey);
-onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>
@@ -591,7 +647,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
         <input class="input" v-model="q" placeholder="Rechercher P&L…" />
       </div>
 
-      <div class="filterWrap">
+      <div class="filterWrap" data-filter-anchor>
         <button class="btn btn--soft btn--mini" @click="filterOpen = !filterOpen" title="Filtres">⚙</button>
 
         <div v-if="filterOpen" class="popover">
@@ -603,128 +659,155 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 
             <select class="sel" v-model="pnlCityFilter" title="Ville">
               <option value="">Ville: Toutes</option>
-              <option v-for="s in pnlCityOptions" :key="s" :value="s">{{ s }}</option>
+              <option v-for="c in pnlCityOptions" :key="c" :value="c">{{ c }}</option>
             </select>
 
             <select class="sel" v-model="pnlClientFilter" title="Client">
               <option value="">Client: Tous</option>
-              <option v-for="s in pnlClientOptions" :key="s" :value="s">{{ s }}</option>
+              <option v-for="c in pnlClientOptions" :key="c" :value="c">{{ c }}</option>
             </select>
 
             <select class="sel" v-model="pnlModelFilter" title="Modèle">
               <option value="">Modèle: Tous</option>
-              <option v-for="s in pnlModelOptions" :key="s" :value="s">{{ s }}</option>
+              <option v-for="m in pnlModelOptions" :key="m" :value="m">{{ m }}</option>
             </select>
 
-            <div class="sortRow">
-              <select class="sel" v-model="sortPnlKey" title="Trier par">
-                <option value="status">Trier: Statut</option>
-                <option value="city">Trier: Ville</option>
-                <option value="client">Trier: Client</option>
-                <option value="model">Trier: Modèle</option>
-              </select>
-              <button class="btn btn--soft btn--mini" @click="sortPnlDir = sortPnlDir === 'asc' ? 'desc' : 'asc'">
-                {{ sortPnlDir === "asc" ? "↑" : "↓" }}
-              </button>
-            </div>
-          </div>
+            <select class="sel" v-model="sortPnlKey" title="Trier par">
+              <option value="status">Tri: Statut</option>
+              <option value="city">Tri: Ville</option>
+              <option value="client">Tri: Client</option>
+              <option value="model">Tri: Modèle</option>
+            </select>
 
-          <div class="popFoot">
-            <button
-              class="btn btn--ghost btn--mini"
-              @click="
-                pnlStatusFilter = '';
-                pnlCityFilter = '';
-                pnlClientFilter = '';
-                pnlModelFilter = '';
-              "
-            >
-              Réinitialiser
-            </button>
+            <select class="sel" v-model="sortPnlDir" title="Ordre">
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+
+            <button class="btn btn--ghost btn--mini" @click="resetPnlFilters">Reset</button>
           </div>
         </div>
       </div>
     </div>
 
     <!-- LIST -->
-    <div v-if="filteredPnls.length === 0" class="card empty">
-      Aucun P&amp;L.
-    </div>
+    <div v-if="store.loading" class="card">Chargement…</div>
+    <div v-else-if="store.error" class="card card--error"><b>Erreur :</b> {{ store.error }}</div>
 
     <div v-else class="list">
-      <div v-for="p in filteredPnls" :key="p.id" class="card">
+      <div v-if="filteredPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
+
+      <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: p.id === activePnlId }">
         <div class="row pnlRow">
+          <button class="disclosure" @click="togglePnl(p.id)">{{ isOpenPnl(p.id) ? "▾" : "▸" }}</button>
+
           <div class="main">
             <div class="line1">
-              <button class="btn btn--ghost btn--mini" @click="togglePnl(p.id)" title="Ouvrir/Fermer">
-                {{ isOpenPnl(p.id) ? "▾" : "▸" }}
-              </button>
-              <div class="name">{{ p.title || "Sans titre" }}</div>
-              <span :class="tagClass(p.status)">{{ statusKey(p.status) || (p.status ?? "—") }}</span>
-              <span class="meta">Client: <b>{{ p.client || "-" }}</b></span>
-              <span class="meta">Ville: <b>{{ p.city || "-" }}</b></span>
-              <span class="meta">Modèle: <b>{{ p.model || "-" }}</b></span>
+              <div class="name">{{ p.title }}</div>
+              <span :class="tagClass(p.status)">{{ p.status ?? "—" }}</span>
+              <span v-if="p.id === activePnlId" class="pill">ACTIF</span>
             </div>
 
             <div class="line2">
-              <span class="meta idTiny">ID: {{ idShort(p.id) }}</span>
-              <span class="meta">Créé: <b>{{ fmtDate(p.createdAt) }}</b></span>
-              <span class="meta">Contrats: <b>{{ (p.contracts ?? []).length }}</b></span>
-              <span class="meta">Variantes: <b>{{ (p.contracts ?? []).reduce((s: number, c: any) => s + (c.variants?.length ?? 0), 0) }}</b></span>
+              <span class="meta"><span class="k">Client :</span> <b>{{ p.client ?? "-" }}</b></span>
+              <span class="dot">•</span>
+              <span class="meta"><span class="k">Modèle :</span> <b>{{ p.model ?? "-" }}</b></span>
+              <span class="dot">•</span>
+              <span class="meta"><span class="k">Ville :</span> <b>{{ p.city ?? "-" }}</b></span>
+              <span class="dot">•</span>
+              <span class="meta"><span class="k">Créé le :</span> <b>{{ fmtDate(p.createdAt) }}</b></span>
+              <span class="idTiny">ID : {{ idShort(p.id) }}</span>
             </div>
           </div>
 
           <div class="actions">
-            <button class="btn btn--soft" @click="openView('pnl', p)">👁</button>
-            <button class="btn btn--soft" @click="openEdit('pnl', p)">✎</button>
-            <button class="btn btn--primary" @click="openCreateContract(p.id)">+ Nouveau Contrat</button>
+            <button class="btn btn--soft" @click="openView('pnl', p)">Visualiser</button>
+            <button class="btn btn--soft" @click="openEdit('pnl', p)">Modifier</button>
           </div>
         </div>
 
-        <!-- CONTRACTS -->
-        <div v-if="isOpenPnl(p.id)" class="contracts">
-          <div v-if="(p.contracts ?? []).length === 0" class="empty tiny">Aucun contrat.</div>
+        <div v-show="isOpenPnl(p.id)" class="children">
+          <div class="childrenHead">
+            <div class="muted">Contrats</div>
+            <button class="btn btn--primary btn--mini" @click="openCreateContract(p.id)">+ Nouveau Contrat</button>
+          </div>
 
-          <div v-for="c in p.contracts ?? []" :key="c.id" class="contractBox">
-            <div class="contractHead">
-              <div class="contractTitle">
-                <div class="name name--sm">Contrat — {{ c.ref || idShort(c.id) }}</div>
-                <div class="meta tiny">
-                  Durée: <b>{{ c.dureeMois ?? 0 }}</b> mois · Postes: <b>{{ labelFrom(POSTES_2, c.postes) }}</b>
+          <div v-if="(p.contracts ?? []).length === 0" class="muted">Aucun contrat.</div>
+
+          <div
+            v-for="c in (p.contracts ?? [])"
+            :key="c.id"
+            class="contract"
+            :class="{ activeContract: c.id === activeContractId }"
+          >
+            <div class="row contractRow">
+              <div class="tree"><div class="branch"></div><div class="node"></div></div>
+
+              <div class="main">
+                <div class="line1">
+                  <div class="name name--sm">Contrat</div>
+                  <span class="meta">
+                    <span class="k">Réf :</span> <b>{{ c.ref ?? "-" }}</b>
+                    <span class="dot">•</span>
+                    <span class="k">Durée :</span> <b>{{ c.dureeMois ?? 0 }}</b> mois
+                    <span class="dot">•</span>
+                    <span class="k">Postes :</span> <b>{{ labelFrom(POSTES_2, c.postes) }}</b>
+                  </span>
+                </div>
+
+                <div class="line2">
+                  <span class="meta"><span class="k">Cab :</span> <b>{{ labelFrom(CHARGE_3, c.cab) }}</b></span>
+                  <span class="dot">•</span>
+                  <span class="meta"><span class="k">Terrain :</span> <b>{{ labelFrom(TERRAIN_4, c.terrain) }}</b></span>
+                  <span class="idTiny">ID : {{ idShort(c.id) }}</span>
                 </div>
               </div>
 
               <div class="actions">
-                <button class="btn btn--soft btn--mini" @click="openView('contract', c)">👁</button>
-                <button class="btn btn--soft btn--mini" @click="openEdit('contract', c)">✎</button>
+                <button class="btn btn--soft" @click="openView('contract', c)">Visualiser</button>
+                <button class="btn btn--soft" @click="openEdit('contract', c)">Modifier</button>
               </div>
             </div>
 
-            <!-- VARIANTS -->
             <div class="variants">
               <div class="variantsHead">
-                <div class="meta tiny">Variantes</div>
+                <div class="muted">Variantes</div>
                 <button class="btn btn--primary btn--mini" @click="openCreateVariant(c.id)">+ Nouvelle Variante</button>
               </div>
 
-              <div v-if="(c.variants ?? []).length === 0" class="empty tiny">Aucune variante.</div>
+              <div v-if="(c.variants ?? []).length === 0" class="muted indent2">Aucune variante.</div>
 
-              <div v-for="v in c.variants ?? []" :key="v.id" class="variantRow" :class="{ active: v.id === activeVariantId }">
-                <button class="variantMain" @click="openVariantByIds(p.id, c.id, v.id)">
-                  <div class="name name--xs">{{ v.title || "Sans titre" }}</div>
-                  <div class="meta tiny">
-                    <span :class="tagClass(v.status)">{{ statusKey(v.status) || (v.status ?? "—") }}</span>
-                    <span class="idTiny">ID: {{ idShort(v.id) }}</span>
+              <div
+                v-for="v in (c.variants ?? [])"
+                :key="v.id"
+                class="row variantRow"
+                :class="{ activeVariant: v.id === activeVariantId }"
+              >
+                <div class="tree tree--deep"><div class="branch"></div><div class="node"></div></div>
+
+                <div class="main">
+                  <div class="line1">
+                    <div class="name name--xs">{{ v.title ?? "Variante" }}</div>
+                    <span :class="tagClass(v.status)">{{ v.status ?? "—" }}</span>
+                    <span v-if="v.id === activeVariantId" class="pill pill--green">ACTIVE</span>
                   </div>
-                </button>
+
+                  <div class="line2">
+                    <span v-if="v.description" class="meta">{{ v.description }}</span>
+                    <span class="idTiny">ID : {{ idShort(v.id) }}</span>
+                  </div>
+                </div>
+
                 <div class="actions">
-                  <button class="btn btn--soft btn--mini" @click="openView('variant', v)">👁</button>
-                  <button class="btn btn--soft btn--mini" @click="openEdit('variant', v)">✎</button>
+                  <button class="btn btn--primary btn--mini" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
+                  <button class="btn btn--soft" @click="openView('variant', v)">Visualiser</button>
+                  <button class="btn btn--soft" @click="openEdit('variant', v)">Modifier</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
+
       </div>
     </div>
 
@@ -794,11 +877,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
               </div>
 
               <div class="sectionBox">
-                <div class="sectionTitle">Financier</div>
+                <div class="sectionTitle">Paramètres financiers</div>
                 <div class="sectionGrid">
-                  <div class="rowKV"><div class="k">Prix dimanches</div><div class="v"><b>{{ viewData?.sundayPrice ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Dim./fériés</div><div class="v"><b>{{ viewData?.sundayPrice ?? 0 }}</b></div></div>
                   <div class="rowKV"><div class="k">Pénalité délai</div><div class="v"><b>{{ viewData?.delayPenalty ?? 0 }}</b></div></div>
-                  <div class="rowKV"><div class="k">Location Chiller</div><div class="v"><b>{{ viewData?.chillerRent ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Location chiller</div><div class="v"><b>{{ viewData?.chillerRent ?? 0 }}</b></div></div>
                 </div>
               </div>
             </div>
@@ -806,7 +889,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
             <div v-else class="kv">
               <div class="rowKV"><div class="k">Titre</div><div class="v"><b>{{ viewData?.title ?? "-" }}</b></div></div>
               <div class="rowKV"><div class="k">Statut</div><div class="v"><span :class="tagClass(viewData?.status)">{{ viewData?.status ?? "—" }}</span></div></div>
-              <div class="rowKV"><div class="k">Description</div><div class="v"><b>{{ viewData?.description ?? "-" }}</b></div></div>
+              <div v-if="viewData?.description" class="rowKV"><div class="k">Description</div><div class="v"><b>{{ viewData?.description }}</b></div></div>
             </div>
           </div>
 
@@ -991,6 +1074,28 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 
             <!-- VARIANT -->
             <div v-else class="formGrid">
+              <div v-if="isCreate" class="f f--full">
+                <div class="k">Mode de création</div>
+                <select class="in" v-model="draft.createMode">
+                  <option value="ZERO">Variante ZERO (toutes sections à 0)</option>
+                  <option value="INITIEE">Variante INITIÉE (initiation auto pour test)</option>
+                  <option value="COMPOSEE">Variante COMPOSÉE (copie d'une variante)</option>
+                </select>
+                <div class="hint" style="margin-top:6px">
+                  <span v-if="draft.createMode === 'ZERO'">Création rapide: toutes les sections sont créées avec des valeurs 0 / vides.</span>
+                  <span v-else-if="draft.createMode === 'INITIEE'">Pour l’instant: initiation aléatoire (stub) — tu remplaceras par tes règles plus tard.</span>
+                  <span v-else>Obligatoire: choisir une variante source pour copier toutes les sections.</span>
+                </div>
+              </div>
+
+              <div v-if="isCreate && draft.createMode === 'COMPOSEE'" class="f f--full">
+                <div class="k">Variante source</div>
+                <select class="in" v-model="draft.sourceVariantId">
+                  <option value="">— Sélectionner —</option>
+                  <option v-for="o in composeSourceOptions" :key="o.id" :value="o.id">{{ o.label }}</option>
+                </select>
+              </div>
+
               <div class="f">
                 <div class="k">Titre</div>
                 <input class="in" v-model="draft.title" placeholder="Titre de la variante" />
@@ -1006,7 +1111,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
               </div>
               <div class="f f--full">
                 <div class="k">Description</div>
-                <textarea class="in ta" v-model="draft.description" rows="5" placeholder="Description (optionnel)"></textarea>
+                <textarea class="in" rows="4" v-model="draft.description" placeholder="Description (optionnelle)"></textarea>
               </div>
             </div>
           </div>
@@ -1031,6 +1136,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 .headerActions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .card { background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 12px; box-shadow: 0 1px 0 rgba(17,24,39,0.03); overflow: visible; }
+.card--error { border-color: #fecaca; background: #fff5f5; }
 .empty { text-align: center; color: #6b7280; }
 
 .list { display: flex; flex-direction: column; gap: 10px; }
@@ -1046,71 +1152,90 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 .name--sm { font-size: 12.5px; font-weight: 900; }
 .name--xs { font-size: 12px; font-weight: 900; }
 
-.meta { font-size: 12px; color: #6b7280; }
-.tiny { font-size: 11px; color: #6b7280; }
-.idTiny { font-size: 11px; color: #9ca3af; }
+.meta { font-size: 12px; color: #374151; }
+.k { color: #6b7280; font-weight: 600; }
+.muted { font-size: 12px; color: #6b7280; }
+.dot { color: #d1d5db; }
+.idTiny { font-size: 11px; color: #9ca3af; margin-left: 6px; }
 
-.actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 
-.btn { border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; padding: 8px 10px; cursor: pointer; font-weight: 800; font-size: 12px; color: #111827; }
+.disclosure { width: 34px; height: 34px; border: 1px solid #e6e8ee; border-radius: 10px; background: #fff; cursor: pointer; color: #374151; }
+.disclosure:hover { background: #f9fafb; }
+
+.btn { border-radius: 12px; padding: 9px 12px; font-size: 13px; border: 1px solid #e6e8ee; background: #fff; cursor: pointer; }
 .btn:hover { background: #f9fafb; }
+.btn--primary { background: #0b7a35; border-color: #0b7a35; color: #fff; }
+.btn--primary:hover { background: #096a2e; }
 .btn--ghost { background: transparent; }
-.btn--soft { background: #f3f4f6; border-color: #eceef4; }
-.btn--primary { background: #111827; color: #fff; border-color: #111827; }
-.btn--primary:hover { background: #0b1220; }
-.btn--mini { padding: 6px 8px; border-radius: 10px; font-size: 12px; }
-.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn--ghost:hover { background: #ffffff; }
+.btn--soft { background: #f6f7f9; }
+.btn--soft:hover { background: #eef0f4; }
+.btn--mini { padding: 6px 9px; border-radius: 10px; font-size: 12px; line-height: 16px; }
 
-.tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; font-size: 11px; font-weight: 900; color: #111827; }
-.tag--on { border-color: #bbf7d0; background: #ecfdf5; }
-.tag--off { border-color: #e5e7eb; background: #f3f4f6; color: #6b7280; }
-.tag--arch { border-color: #fed7aa; background: #fff7ed; color: #9a3412; }
+.tag { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid #e6e8ee; color: #374151; background: #fafbfc; }
+.tag--on { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+.tag--arch, .tag--off { border-color: #e5e7eb; background: #f9fafb; color: #6b7280; }
 
-.toolbarOneLine { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; }
-.searchMini { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; padding: 6px 10px; }
-.searchMini .icon { color: #9ca3af; font-weight: 900; }
-.input { border: none; outline: none; width: 100%; font-weight: 700; font-size: 12px; color: #111827; background: transparent; }
+.pill { font-size: 10.5px; font-weight: 900; letter-spacing: 0.2px; padding: 3px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; color: #111827; }
+.pill--green { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
 
-.filterWrap { position: relative; flex: 0 0 auto; }
-.popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 60;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  box-shadow: 0 18px 50px rgba(0,0,0,0.12);
-  padding: 10px;
-  min-width: 340px;
+.pnl { background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%); }
+.pnl.activePnl { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(34,197,94,0.10); }
+
+.contract { border: 1px solid #eef0f4; border-radius: 12px; padding: 10px; background: #fcfcfd; }
+.contract.activeContract { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.10); }
+.contractRow { align-items: flex-start; }
+
+.variantRow { padding: 8px 10px; border: 1px solid #eef0f4; border-radius: 12px; background: #ffffff; }
+.variantRow.activeVariant { border-color: #bbf7d0; background: #fbfffb; }
+
+.children { margin-top: 10px; border-top: 1px dashed #e6e8ee; padding-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.childrenHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0 4px; }
+.variants { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.variantsHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-left: 38px; margin-right: 2px; }
+.indent2 { margin-left: 38px; }
+
+.tree { width: 26px; position: relative; display: flex; align-items: center; justify-content: center; }
+.tree .branch { position: absolute; left: 50%; top: -10px; bottom: -10px; width: 2px; background: #e5e7eb; transform: translateX(-50%); }
+.tree .node { width: 10px; height: 10px; border-radius: 999px; background: #fff; border: 2px solid #d1d5db; }
+.tree--deep { width: 38px; }
+.tree--deep .branch { background: #e5e7eb; }
+
+/* ultra-compact one-line toolbar */
+.toolbarOneLine { padding: 6px 8px; display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow: visible; }
+.searchMini {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid #e6e8ee; border-radius: 10px;
+  padding: 4px 8px; background: #fafbfc;
 }
-.popGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.sel { border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; padding: 8px 10px; font-weight: 800; font-size: 12px; color: #111827; outline: none; width: 100%; }
-.sortRow { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
-.popFoot { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
+.icon { font-size: 11px; line-height: 1; color: #6b7280; }
+.input { min-width: 0; border: 0; outline: 0; background: transparent; width: 100%; font-size: 12.5px; line-height: 16px; padding: 0; }
 
-.contracts { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
-.contractBox { border: 1px solid #eef2f7; border-radius: 14px; padding: 10px; background: #fbfbfd; }
-.contractHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.contractTitle { display: flex; flex-direction: column; gap: 2px; }
+.filterWrap { position: relative; flex: 0 0 auto; overflow: visible; }
+.popover {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  width: min(560px, calc(100% + 260px));
+  max-width: calc(100vw - 24px);
+  background: #fff; border: 1px solid #e6e8ee; border-radius: 12px;
+  box-shadow: 0 18px 45px rgba(0,0,0,0.12);
+  padding: 8px; z-index: 50;
+}
+.popGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; align-items: center; }
+.sel { min-width: 0; border: 1px solid #e6e8ee; border-radius: 10px; padding: 5px 8px; font-size: 12px; line-height: 16px; background: #fff; }
 
-.variants { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-.variantsHead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-left: 4px; }
-.variantRow { display: flex; gap: 8px; align-items: stretch; border: 1px solid #eef2f7; background: #fff; border-radius: 12px; overflow: hidden; }
-.variantRow.active { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99,102,241,0.08); }
-.variantMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 10px; text-align: left; border: none; background: transparent; cursor: pointer; }
-.variantMain:hover { background: #f9fafb; }
-
+/* Modal */
 .modalOverlay {
   position: fixed; inset: 0;
   background: rgba(17, 24, 39, 0.45);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 84px 18px 18px;
-  z-index: 99999;
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px;
+  z-index: 9999;
 }
 .modal {
   width: min(760px, 100%);
-  max-height: calc(100vh - 102px);
+  max-height: calc(100vh - 36px);
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 16px;
@@ -1126,25 +1251,25 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 .modalBody { padding: 14px; overflow: auto; flex: 1 1 auto; }
 .modalFoot { padding: 12px 14px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #eef2f7; background: #fcfcfd; }
 
-.alert { border: 1px solid #fecaca; background: #fff5f5; color: #7f1d1d; padding: 10px 12px; border-radius: 12px; font-size: 12px; margin-bottom: 10px; }
+.kv { display: flex; flex-direction: column; gap: 12px; }
+.rowKV { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: start; }
+.rowKV .k { font-size: 12px; color: #6b7280; font-weight: 700; }
+.rowKV .v { font-size: 12.5px; color: #111827; }
 
-.kv { display: flex; flex-direction: column; gap: 8px; }
-.rowKV { display: grid; grid-template-columns: 160px 1fr; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid #eef2f7; border-radius: 12px; background: #fff; }
-.rowKV .k { font-size: 12px; font-weight: 900; color: #111827; }
-.rowKV .v { font-size: 12px; color: #111827; min-width: 0; }
-
-.stack { display: flex; flex-direction: column; gap: 10px; }
-.sectionBox { border: 1px solid #eef2f7; background: #fbfbfd; border-radius: 14px; padding: 10px; }
-.sectionTitle { font-weight: 900; font-size: 12px; color: #111827; margin-bottom: 6px; }
-.sectionGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .f { display: flex; flex-direction: column; gap: 6px; }
 .f--full { grid-column: 1 / -1; }
-.k { font-size: 12px; font-weight: 900; color: #111827; }
-.in { border: 1px solid #e5e7eb; border-radius: 12px; padding: 9px 10px; font-size: 12px; font-weight: 800; outline: none; background: #fff; }
-.in--disabled { background: #f3f4f6; color: #6b7280; }
-.ta { resize: vertical; }
+.in { border: 1px solid #e5e7eb; border-radius: 12px; padding: 9px 10px; font-size: 13px; outline: none; background: #fff; }
+.in:focus { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99,102,241,0.10); }
+.in--disabled { background: #f9fafb; color: #6b7280; }
 .r { text-align: right; }
+
+.alert { border: 1px solid #fecaca; background: #fff5f5; color: #991b1b; border-radius: 12px; padding: 10px; margin-bottom: 12px; }
+
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.sectionBox { border: 1px solid #eef0f4; border-radius: 14px; background: #fcfcfd; padding: 10px; }
+.sectionTitle { font-size: 12px; font-weight: 900; color: #111827; margin-bottom: 8px; }
+.sectionGrid { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .sectionForm { margin-top: 2px; }
 
 @media (max-width: 900px) {

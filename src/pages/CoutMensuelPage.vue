@@ -15,10 +15,18 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
 }
 function money(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "MAD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "MAD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
 }
 function clamp(v: any, min = 0, max = 1e15) {
   const x = toNum(v);
@@ -52,11 +60,15 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
+const volumeTotal = computed(() =>
+  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
+);
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
-  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find((x: any) => String(x.mpId) === String(mpId));
+  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find(
+    (x: any) => String(x.mpId) === String(mpId)
+  );
   if (!vmp) return 0;
   if (vmp?.prix != null) return clamp(vmp.prix);
   return clamp(vmp?.mp?.prix);
@@ -163,13 +175,24 @@ const modal = reactive({
   onConfirm: null as null | (() => void | Promise<void>),
 });
 function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
-  modal.open = true; modal.title = title; modal.message = message; modal.mode = "confirm"; modal.onConfirm = onConfirm;
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "confirm";
+  modal.onConfirm = onConfirm;
 }
 function openInfo(title: string, message: string) {
-  modal.open = true; modal.title = title; modal.message = message; modal.mode = "info"; modal.onConfirm = null;
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "info";
+  modal.onConfirm = null;
 }
 function closeModal() {
-  modal.open = false; modal.title = ""; modal.message = ""; modal.onConfirm = null;
+  modal.open = false;
+  modal.title = "";
+  modal.message = "";
+  modal.onConfirm = null;
 }
 
 /* save/reset */
@@ -212,10 +235,16 @@ async function save() {
   }
 }
 function askSave() {
-  openConfirm("Enregistrer", "Confirmer l’enregistrement ?", async () => { closeModal(); await save(); });
+  openConfirm("Enregistrer", "Confirmer l’enregistrement ?", async () => {
+    closeModal();
+    await save();
+  });
 }
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => { closeModal(); loadFromVariant(); });
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
+    closeModal();
+    loadFromVariant();
+  });
 }
 </script>
 
@@ -228,11 +257,14 @@ function askReset() {
           Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
           <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
         </div>
+        <div class="muted" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
         <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
-        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">{{ saving ? "..." : "Enregistrer" }}</button>
+        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
+          {{ saving ? "..." : "Enregistrer" }}
+        </button>
       </div>
     </div>
 
@@ -245,45 +277,144 @@ function askReset() {
       <div v-if="!variant" class="panel"><div class="muted">Sélectionne une variante.</div></div>
 
       <template v-else>
-        <!-- ✅ KPI UNIFORME -->
+        <!-- ✅ KPIs : "/ mois" spécial comme Maintenance -->
         <div class="kpis">
           <div class="kpi">
             <div class="kLbl">Prix / m³</div>
-            <div class="kVal">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+            <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
           </div>
+
           <div class="kpi">
             <div class="kLbl">Total</div>
-            <div class="kVal">{{ money(total, 2) }}</div>
+            <div class="kVal mono">{{ money(total, 2) }}</div>
           </div>
-          <div class="kpi">
+
+          <!-- ✅ spécial -->
+          <div class="kpi kpiMonth">
             <div class="kLbl">/ mois</div>
-            <div class="kVal">{{ money(monthly, 2) }}</div>
+            <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
           </div>
+
           <div class="kpi">
             <div class="kLbl">%</div>
-            <div class="kVal">{{ n(pct, 2) }} <span>%</span></div>
+            <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
           </div>
         </div>
 
         <div class="panel">
+          <!-- ✅ Inputs style Maintenance : label + champ alignés + champ pas trop large + aligné à gauche -->
           <div class="grid4">
-            <div class="field"><div class="label">Électricité</div><input class="input r" type="number" step="0.01" v-model.number="draft.electricite" /></div>
-            <div class="field"><div class="label">Location groupes</div><input class="input r" type="number" step="0.01" v-model.number="draft.locationGroupes" /></div>
-            <div class="field"><div class="label">Gasoil</div><input class="input r" type="number" step="0.01" v-model.number="draft.gasoil" /></div>
-            <div class="field"><div class="label">Hébergements</div><input class="input r" type="number" step="0.01" v-model.number="draft.hebergements" /></div>
+            <div class="field">
+              <div class="label">Électricité</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.electricite" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
 
-            <div class="field"><div class="label">Location terrain</div><input class="input r" type="number" step="0.01" v-model.number="draft.locationTerrain" /></div>
-            <div class="field"><div class="label">Téléphone</div><input class="input r" type="number" step="0.01" v-model.number="draft.telephone" /></div>
-            <div class="field"><div class="label">3G</div><input class="input r" type="number" step="0.01" v-model.number="draft.troisG" /></div>
-            <div class="field"><div class="label">Taxe prof.</div><input class="input r" type="number" step="0.01" v-model.number="draft.taxeProfessionnelle" /></div>
+            <div class="field">
+              <div class="label">Location groupes</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.locationGroupes" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
 
-            <div class="field"><div class="label">Sécurité</div><input class="input r" type="number" step="0.01" v-model.number="draft.securite" /></div>
-            <div class="field"><div class="label">Loc. véhicule</div><input class="input r" type="number" step="0.01" v-model.number="draft.locationVehicule" /></div>
-            <div class="field"><div class="label">Loc. ambulance</div><input class="input r" type="number" step="0.01" v-model.number="draft.locationAmbulance" /></div>
-            <div class="field"><div class="label">Loc. bungalows</div><input class="input r" type="number" step="0.01" v-model.number="draft.locationBungalows" /></div>
+            <div class="field">
+              <div class="label">Gasoil</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.gasoil" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
 
-            <div class="field"><div class="label">EPI</div><input class="input r" type="number" step="0.01" v-model.number="draft.epi" /></div>
-            <div class="field"><div class="label muted">DB: location (legacy)</div><input class="input r" type="number" step="0.01" v-model.number="draft.location" /></div>
+            <div class="field">
+              <div class="label">Hébergements</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.hebergements" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Location terrain</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.locationTerrain" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Téléphone</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.telephone" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">3G</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.troisG" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Taxe prof.</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.taxeProfessionnelle" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Sécurité</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.securite" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Loc. véhicule</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.locationVehicule" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Loc. ambulance</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.locationAmbulance" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">Loc. bungalows</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.locationBungalows" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">EPI</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.epi" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label muted">DB: location (legacy)</div>
+              <div class="inCell">
+                <input class="inputSm inputMonth" type="number" step="0.01" min="0" v-model.number="draft.location" />
+                <span class="unit unitMonth">DH</span>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -296,7 +427,9 @@ function askReset() {
         <div class="modalMsg">{{ modal.message }}</div>
         <div class="modalActions">
           <button class="btn" @click="closeModal()">Fermer</button>
-          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">Confirmer</button>
+          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
+            Confirmer
+          </button>
         </div>
       </div>
     </div>
@@ -304,37 +437,217 @@ function askReset() {
 </template>
 
 <style scoped>
-.page{display:flex;flex-direction:column;gap:10px;padding:12px;}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
-.title{display:flex;flex-direction:column;gap:2px;}
-.h1{font-size:16px;font-weight:800;line-height:1.1;margin:0;}
-.muted{color:#6b7280;font-size:12px;}
-.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.panel{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;}
-.panel.error{border-color:#ef4444;background:#fff5f5;}
-.btn{border:1px solid #d1d5db;background:#fff;border-radius:10px;padding:7px 10px;font-size:13px;cursor:pointer;}
-.btn:hover{background:#f9fafb;}
-.btn.primary{background:#007a33;border-color:#007a33;color:#fff;}
-.btn.primary:hover{background:#046a2f;}
-.btn:disabled{opacity:.6;cursor:not-allowed;}
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.h1 {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0;
+}
+.muted {
+  color: #6b7280;
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px;
+}
+.panel.error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
+.btn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover {
+  background: #f9fafb;
+}
+.btn.primary {
+  background: #007a33;
+  border-color: #007a33;
+  color: #fff;
+}
+.btn.primary:hover {
+  background: #046a2f;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
-.kpis{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:8px;}
-@media (max-width:1050px){.kpis{grid-template-columns:repeat(2,minmax(180px,1fr));}}
-.kpi{border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;background:#fff;}
-.kLbl{font-size:11px;color:#6b7280;}
-.kVal{font-size:13px;font-weight:900;white-space:nowrap;}
-.kVal span{font-weight:700;color:#6b7280;margin-left:6px;}
+/* KPIs */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1050px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+.kpi {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #fff;
+}
+.kLbl {
+  font-size: 11px;
+  color: #6b7280;
+}
+.kVal {
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.kVal span {
+  font-weight: 700;
+  color: #6b7280;
+  margin-left: 6px;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+}
 
-.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
-@media (max-width:980px){.grid4{grid-template-columns:1fr;}}
-.field{display:flex;flex-direction:column;gap:6px;}
-.label{font-size:11px;color:#6b7280;}
-.input{border:1px solid #d1d5db;border-radius:10px;font-size:13px;padding:7px 9px;width:100%;}
-.r{text-align:right;}
+/* ✅ KPI /mois spécial exactement comme Maintenance */
+.kpiMonth {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.9);
+}
+.kpiMonth .kLbl {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+.kpiMonth .kVal span {
+  color: #1d4ed8;
+  font-weight: 900;
+}
 
-.modalMask{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50;}
-.modal{width:min(520px,100%);background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.15);}
-.modalTitle{font-weight:900;font-size:14px;margin-bottom:6px;}
-.modalMsg{color:#374151;font-size:13px;white-space:pre-wrap;}
-.modalActions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;}
+/* Inputs (style Maintenance) */
+.grid4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 10px;
+}
+@media (max-width: 980px) {
+  .grid4 {
+    grid-template-columns: 1fr;
+  }
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.label {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* ✅ même pattern que Maintenance : input + unité alignés, input pas large */
+.inCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+}
+.inputSm {
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 12px;
+  padding: 5px 7px;
+  width: 110px;
+  text-align: right;
+}
+.unit {
+  color: #6b7280;
+  font-size: 11px;
+  min-width: 20px;
+  text-align: left;
+}
+
+/* ✅ champs /mois distingués (comme Maintenance) */
+.inputMonth {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.8);
+}
+.inputMonth:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.65);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+.unitMonth {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+/* modal */
+.modalMask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+.modal {
+  width: min(520px, 100%);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+.modalTitle {
+  font-weight: 900;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.modalMsg {
+  color: #374151;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
 </style>

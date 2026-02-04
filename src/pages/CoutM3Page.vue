@@ -101,7 +101,7 @@ const caTotal = computed(() => {
   return formules.value.reduce((s: number, vf: any) => {
     const vol = toNum(vf?.volumeM3);
     const momd = toNum(vf?.momd);
-    const pv = cmpParM3For(vf) + momd + t; // ✅ PV formule = CMP + Transport + MOMD
+    const pv = cmpParM3For(vf) + momd + t;
     return s + pv * vol;
   }, 0);
 });
@@ -231,12 +231,13 @@ function askReset() {
       </div>
 
       <template v-else>
-        <!-- ✅ KPI "Prix / m³" spécial -->
+        <!-- ✅ KPIs -->
         <div class="kpis">
           <div class="kpi kpiSpecial">
             <div class="kLbl kLblSpecial">Prix / m³</div>
             <div class="kVal mono kValSpecial">
-              {{ n(coutM3ParM3, 2) }} <span class="unitSpecial">DH/m³</span>
+              {{ n(coutM3ParM3, 2) }}
+              <span class="unitSpecial">DH/m³</span>
             </div>
           </div>
 
@@ -256,42 +257,42 @@ function askReset() {
           </div>
         </div>
 
-        <!-- ✅ Inputs compacts -->
+        <!-- ✅ Inputs alignés label + input (gauche) comme Maintenance -->
         <div class="card">
-          <div class="grid3">
+          <div class="formGrid">
             <div class="field">
               <div class="label">Eau</div>
-              <div class="inRow">
-                <input class="inputSm mono r inputCompact" type="number" step="0.01" min="0" v-model.number="draft.eau" />
-                <span class="unit">DH/m³</span>
+              <div class="inputLine">
+                <input class="inputSm mono inputMonthLike" type="number" step="0.01" min="0" v-model.number="draft.eau" />
+                <span class="unit unitMonthLike">DH/m³</span>
               </div>
             </div>
 
             <div class="field">
               <div class="label">Qualité</div>
-              <div class="inRow">
+              <div class="inputLine">
                 <input
-                  class="inputSm mono r inputCompact"
+                  class="inputSm mono inputMonthLike"
                   type="number"
                   step="0.01"
                   min="0"
                   v-model.number="draft.qualite"
                 />
-                <span class="unit">DH/m³</span>
+                <span class="unit unitMonthLike">DH/m³</span>
               </div>
             </div>
 
             <div class="field">
               <div class="label">Déchets</div>
-              <div class="inRow">
+              <div class="inputLine">
                 <input
-                  class="inputSm mono r inputCompact"
+                  class="inputSm mono inputMonthLike"
                   type="number"
                   step="0.01"
                   min="0"
                   v-model.number="draft.dechets"
                 />
-                <span class="unit">DH/m³</span>
+                <span class="unit unitMonthLike">DH/m³</span>
               </div>
             </div>
           </div>
@@ -433,9 +434,6 @@ function askReset() {
 .mono {
   font-variant-numeric: tabular-nums;
 }
-.r {
-  text-align: right;
-}
 
 /* cards */
 .card {
@@ -485,7 +483,7 @@ function askReset() {
   font-size: 10.5px;
 }
 
-/* ✅ KPI spécial (Prix / m³) — même palette que inputMonth */
+/* KPI spécial (Prix / m³) */
 .kpiSpecial {
   border-color: rgba(59, 130, 246, 0.55);
   background: rgba(239, 246, 255, 0.9);
@@ -501,14 +499,14 @@ function askReset() {
   font-weight: 950 !important;
 }
 
-/* Inputs grid */
-.grid3 {
+/* ✅ Form aligné label + input (gauche) */
+.formGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap: 10px;
 }
 @media (max-width: 980px) {
-  .grid3 {
+  .formGrid {
     grid-template-columns: 1fr;
   }
 }
@@ -520,35 +518,50 @@ function askReset() {
 .label {
   font-size: 11px;
   color: #6b7280;
-  font-weight: 900;
+  font-weight: 950;
 }
 
-/* ✅ input compact */
-.inRow {
+/* ligne input similaire à Maintenance */
+.inputLine {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
 }
+
+/* même base inputSm que Maintenance */
 .inputSm {
   border: 1px solid #d1d5db;
   border-radius: 12px;
   font-size: 11px;
   padding: 6px 7px;
   background: #fff;
+  width: 120px; /* ✅ compact, pas énorme */
+  text-align: right;
 }
-.inputCompact {
-  width: 110px;       /* ✅ beaucoup moins large */
-  max-width: 110px;
+
+/* ✅ même style "mensuel" (bleu) de Maintenance */
+.inputMonthLike {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(239, 246, 255, 0.9);
+  font-weight: 950;
 }
+.inputMonthLike:focus {
+  outline: none;
+  border-color: rgba(29, 78, 216, 0.85);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
 .unit {
   color: #6b7280;
   font-size: 10.5px;
   font-weight: 900;
   white-space: nowrap;
 }
+.unitMonthLike {
+  color: rgba(29, 78, 216, 0.95);
+  font-weight: 950;
+}
 
-/* note */
 .note {
   margin-top: 10px;
   padding-top: 8px;

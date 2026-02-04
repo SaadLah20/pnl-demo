@@ -142,14 +142,13 @@ function loadFromVariant() {
   draft.bungalows = clamp(s.bungalows);
   draft.installation = clamp(s.installation); // legacy
 }
-
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 
 /* =========================
    KPI (Occasionnel)
+   ✅ KPI spécial = TOTAL (en haut à gauche)
 ========================= */
 const total = computed(() => {
-  // ✅ on garde tous les champs (y compris legacy installation si utilisé)
   return (
     clamp(draft.genieCivil) +
     clamp(draft.installationCab) +
@@ -272,6 +271,7 @@ function askReset() {
           Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
           <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
         </div>
+        <div class="muted" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
@@ -291,41 +291,135 @@ function askReset() {
       <div v-if="!variant" class="panel"><div class="muted">Sélectionne une variante.</div></div>
 
       <template v-else>
-        <!-- ✅ KPI UNIFORME -->
+        <!-- ✅ KPIs "comme coût au mois" + KPI spécial en premier = TOTAL -->
         <div class="kpis">
+          <div class="kpi kpiMain">
+            <div class="kLbl">Total coûts occasionnels</div>
+            <div class="kVal mono">{{ money(total, 2) }}</div>
+          </div>
+
           <div class="kpi">
             <div class="kLbl">Prix / m³</div>
-            <div class="kVal">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+            <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
           </div>
-          <div class="kpi">
-            <div class="kLbl">Total</div>
-            <div class="kVal">{{ money(total, 2) }}</div>
-          </div>
-          <div class="kpi">
+
+          <div class="kpi kpiMonth">
             <div class="kLbl">/ mois</div>
-            <div class="kVal">{{ money(monthly, 2) }}</div>
+            <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
           </div>
+
           <div class="kpi">
             <div class="kLbl">%</div>
-            <div class="kVal">{{ n(pct, 2) }} <span>%</span></div>
+            <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
           </div>
         </div>
 
+        <!-- ✅ inputs style compact, unités contenues, responsif -->
         <div class="panel">
-          <div class="grid4">
-            <div class="field"><div class="label">Génie civil</div><input class="input r" type="number" step="0.01" v-model.number="draft.genieCivil" /></div>
-            <div class="field"><div class="label">Install CAB</div><input class="input r" type="number" step="0.01" v-model.number="draft.installationCab" /></div>
-            <div class="field"><div class="label">Démontage</div><input class="input r" type="number" step="0.01" v-model.number="draft.demontage" /></div>
-            <div class="field"><div class="label">Remise point</div><input class="input r" type="number" step="0.01" v-model.number="draft.remisePointCentrale" /></div>
+          <div class="gridCards">
+            <div class="costCard">
+              <div class="cardTitle">Génie civil</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.genieCivil" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
 
-            <div class="field"><div class="label">Transport</div><input class="input r" type="number" step="0.01" v-model.number="draft.transport" /></div>
-            <div class="field"><div class="label">Silots</div><input class="input r" type="number" step="0.01" v-model.number="draft.silots" /></div>
-            <div class="field"><div class="label">Local adjuvant</div><input class="input r" type="number" step="0.01" v-model.number="draft.localAdjuvant" /></div>
-            <div class="field"><div class="label">Bungalows</div><input class="input r" type="number" step="0.01" v-model.number="draft.bungalows" /></div>
+            <div class="costCard">
+              <div class="cardTitle">Installation CAB</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.installationCab" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
 
-            <div class="field">
-              <div class="label muted">DB: installation (legacy)</div>
-              <input class="input r" type="number" step="0.01" v-model.number="draft.installation" />
+            <div class="costCard">
+              <div class="cardTitle">Démontage</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.demontage" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="costCard">
+              <div class="cardTitle">Remise point centrale</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input
+                    class="inputMoney"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    v-model.number="draft.remisePointCentrale"
+                  />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="costCard">
+              <div class="cardTitle">Transport</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.transport" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="costCard">
+              <div class="cardTitle">Silots</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.silots" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="costCard">
+              <div class="cardTitle">Local adjuvant</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.localAdjuvant" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="costCard">
+              <div class="cardTitle">Bungalows</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.bungalows" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="costCard legacy">
+              <div class="cardTitle muted">DB: installation (legacy)</div>
+              <div class="field">
+                <div class="label">Montant</div>
+                <div class="inCell">
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.installation" />
+                  <span class="unit">DH</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -347,39 +441,263 @@ function askReset() {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:10px; padding:12px; }
-.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-.title { display:flex; flex-direction:column; gap:2px; }
-.h1 { font-size:16px; font-weight:800; line-height:1.1; margin:0; }
-.muted { color:#6b7280; font-size:12px; }
-.actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  max-width: 100%;
+}
+* {
+  box-sizing: border-box;
+}
 
-.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
-.panel.error { border-color:#ef4444; background:#fff5f5; }
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.h1 {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0;
+}
+.muted {
+  color: #6b7280;
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
-.btn{ border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:7px 10px; font-size:13px; cursor:pointer; }
-.btn:hover{ background:#f9fafb; }
-.btn.primary{ background:#007a33; border-color:#007a33; color:#fff; }
-.btn.primary:hover{ background:#046a2f; }
-.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px;
+  max-width: 100%;
+}
+.panel.error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
 
-.kpis{ display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:8px; }
-@media (max-width: 1050px){ .kpis{ grid-template-columns: repeat(2, minmax(180px, 1fr)); } }
-.kpi{ border:1px solid #e5e7eb; border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:4px; background:#fff; }
-.kLbl{ font-size:11px; color:#6b7280; }
-.kVal{ font-size:13px; font-weight:900; white-space:nowrap; }
-.kVal span{ font-weight:700; color:#6b7280; margin-left:6px; }
+.btn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover {
+  background: #f9fafb;
+}
+.btn.primary {
+  background: #007a33;
+  border-color: #007a33;
+  color: #fff;
+}
+.btn.primary:hover {
+  background: #046a2f;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+}
 
-.grid4{ display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; }
-@media (max-width: 980px){ .grid4{ grid-template-columns: 1fr; } }
-.field{ display:flex; flex-direction:column; gap:6px; }
-.label{ font-size:11px; color:#6b7280; }
-.input{ border:1px solid #d1d5db; border-radius:10px; font-size:13px; padding:7px 9px; width:100%; }
-.r{ text-align:right; }
+/* KPIs */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1050px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.kpi {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #fff;
+  min-width: 0;
+}
+.kLbl {
+  font-size: 11px;
+  color: #6b7280;
+}
+.kVal {
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kVal span {
+  font-weight: 700;
+  color: #6b7280;
+  margin-left: 6px;
+}
 
-.modalMask{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50; }
-.modal{ width:min(520px, 100%); background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.15); }
-.modalTitle{ font-weight:900; font-size:14px; margin-bottom:6px; }
-.modalMsg{ color:#374151; font-size:13px; white-space:pre-wrap; }
-.modalActions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+/* ✅ KPI spécial = TOTAL */
+.kpiMain {
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  background: rgba(236, 253, 245, 0.9);
+}
+.kpiMain .kLbl {
+  color: #065f46;
+  font-weight: 950;
+}
+.kpiMain .kVal {
+  font-size: 14px;
+}
+
+/* /mois distingué */
+.kpiMonth {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.9);
+}
+.kpiMonth .kLbl {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+.kpiMonth .kVal span {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+/* Cards grid - jamais de débordement */
+.gridCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  max-width: 100%;
+}
+
+.costCard {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 10px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+.costCard.legacy {
+  background: #fcfcfd;
+}
+
+.cardTitle {
+  font-weight: 950;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Maintenance-like input row */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.label {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inCell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.unit {
+  color: #6b7280;
+  font-size: 11px;
+  white-space: nowrap;
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* inputs compacts */
+.inputMoney {
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 12px;
+  padding: 5px 7px;
+  width: 100%;
+  max-width: 140px; /* 6 chiffres OK */
+  text-align: right;
+  min-width: 0;
+}
+@media (max-width: 520px) {
+  .inputMoney {
+    max-width: 100%;
+  }
+}
+
+/* modal */
+.modalMask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+.modal {
+  width: min(520px, 100%);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+.modalTitle {
+  font-weight: 900;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.modalMsg {
+  color: #374151;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
 </style>
