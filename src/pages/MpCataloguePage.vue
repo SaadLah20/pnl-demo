@@ -44,7 +44,6 @@ const UNITS_OPTIONS = computed<UnitOption[]>(() =>
   UNITS.map((u) => ({
     value: u,
     label: u,
-    // Si tu veux re-bloquer tout sauf T, dé-commente:
     // disabled: u !== "T",
   }))
 );
@@ -281,7 +280,6 @@ async function saveFromModal(payload: MpDraft) {
   mpModalError.value = null;
   error.value = null;
 
-  // Normalisation + validation
   const d: MpDraft = {
     categorie: upperTrim(payload.categorie),
     label: trim(payload.label),
@@ -425,7 +423,6 @@ onMounted(reload);
     <div class="card cardTable">
       <div class="tableWrap">
         <table class="table">
-          <!-- colgroup = alignement garanti titres/colonnes -->
           <colgroup>
             <col class="cCat" />
             <col class="cLabel" />
@@ -459,7 +456,6 @@ onMounted(reload);
                   <b class="ell">{{ r.label }}</b>
 
                   <span v-if="r.comment && String(r.comment).trim()" class="cmtWrap">
-                    <!-- IMPORTANT: pas de title => pas de mini popup navigateur -->
                     <button class="cmtBtn" type="button" aria-label="Commentaire">
                       <InformationCircleIcon class="cmtIc" />
                     </button>
@@ -503,7 +499,6 @@ onMounted(reload);
         </table>
       </div>
 
-      <!-- ✅ pager bottom (same style as FormulesCataloguePage) -->
       <div class="pager" v-if="filtered.length > 0">
         <button class="pbtn" :disabled="page <= 1" @click="goToPage(page - 1)">
           <ChevronLeftIcon class="pico" /> Précédent
@@ -527,7 +522,6 @@ onMounted(reload);
       </div>
     </div>
 
-    <!-- ✅ CREATE/EDIT (réutilisable) -->
     <MpModal
       :open="mpModalOpen"
       :mode="mpModalMode"
@@ -542,7 +536,6 @@ onMounted(reload);
       @save="saveFromModal"
     />
 
-    <!-- ✅ CONFIRM DELETE (teleport + z-index > header) -->
     <teleport to="body">
       <div v-if="confirmDelete.open" class="ovlDel" @mousedown.self="closeDelete" role="dialog" aria-modal="true">
         <div class="dlgDel">
@@ -604,12 +597,15 @@ onMounted(reload);
   font-size:12px;
   table-layout: fixed;
 }
+
+/* ✅ CHANGEMENT: centrage vertical */
 .table th, .table td {
   border-bottom:1px solid #e5e7eb;
   padding:8px;
   text-align:left;
-  vertical-align:top;
+  vertical-align: middle; /* ✅ au lieu de top */
 }
+
 .table th {
   font-size:11px;
   color:#6b7280;
@@ -744,7 +740,7 @@ onMounted(reload);
   color:#111827;
 }
 
-/* ✅ pager (same as FormulesCataloguePage) */
+/* ✅ pager */
 .pager{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:10px; }
 .pbtn{
   height:34px;
@@ -773,7 +769,7 @@ onMounted(reload);
 }
 .pnum.on{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
 
-/* ✅ DELETE MODAL (au-dessus du header: header = 9999) */
+/* ✅ DELETE MODAL */
 .ovlDel{
   position: fixed;
   inset: 0;
@@ -782,7 +778,7 @@ onMounted(reload);
   align-items:center;
   justify-content:center;
   padding: 16px;
-  z-index: 100000; /* ✅ > 9999 */
+  z-index: 100000;
 }
 .dlgDel{
   width: min(520px, 96vw);

@@ -217,36 +217,37 @@ async function confirmRestore() {
 
 <template>
   <div class="page" ref="rootEl">
+    <!-- TOP BAR ultra compact -->
     <div class="top">
-      <div class="title">
-        <div class="h1">MP — Variante active</div>
+      <div class="tleft">
+        <div class="titleRow">
+          <div class="title">MP — Variante active</div>
+          <span class="badge">Override</span>
+        </div>
         <div class="muted">
-          Override uniquement (utilisé dans les calculs). Le prix catalogue se modifie dans le répertoire MP.
+          Override uniquement. Catalogue = répertoire MP.
         </div>
       </div>
-      <button class="btn" @click="store.loadPnls()">Recharger</button>
+
+      <div class="tright">
+        <button class="btn" @click="store.loadPnls()">Recharger</button>
+      </div>
     </div>
 
-    <div v-if="store.loading" class="panel">Chargement…</div>
-    <div v-else-if="store.error" class="panel error"><b>Erreur :</b> {{ store.error }}</div>
+    <div v-if="store.loading" class="alert">Chargement…</div>
+    <div v-else-if="store.error" class="alert error"><b>Erreur :</b> {{ store.error }}</div>
 
     <template v-else>
-      <div class="panel">
-        <div class="meta">
-          <div><span class="muted">P&L:</span> <b>{{ pnlTitle }}</b></div>
-          <div><span class="muted">Contrat:</span> <b>{{ contractLabel }}</b></div>
-          <div><span class="muted">Variante:</span> <b>{{ variantTitle }}</b></div>
-        </div>
-      </div>
-
-      <div class="panel" v-if="!variant">
+      <div class="card" v-if="!variant">
         <div class="muted">Aucune variante active. Sélectionne une variante depuis le Dashboard.</div>
       </div>
 
-      <div class="panel" v-else>
-        <div class="h2">Matières premières</div>
-        <div class="muted small" style="margin-top: 2px">
-          • Clique <b>Prix override</b> pour modifier • Clique <b>Prix utilisé</b> pour restaurer l’override au prix catalogue (si override existe)
+      <div class="card" v-else>
+        <div class="cardHead">
+          <div class="h2">Matières premières</div>
+          <div class="muted tiny">
+            <b>Override</b> = éditable • <b>Utilisé</b> = restaurer (si override existe)
+          </div>
         </div>
 
         <div v-if="mpRows.length === 0" class="muted pad">Aucune MP.</div>
@@ -255,42 +256,56 @@ async function confirmRestore() {
           <table class="table">
             <thead>
               <tr>
-                <th>Cat.</th>
-                <th>MP</th>
-                <th>Fournisseur</th>
-                <th class="r">Prix cat.</th>
-                <th class="r">Prix override</th>
-                <th class="r">Utilisé</th>
+                <th class="cCat">Cat.</th>
+                <th class="cMp">MP</th>
+                <th class="cFourn">Fourn.</th>
+                <th class="cPrice r">Cat.</th>
+                <th class="cOv r">Ov.</th>
+                <th class="cUsed r">Util.</th>
               </tr>
             </thead>
 
             <tbody>
-              <tr v-for="r in mpRows" :key="r.variantMpId">
-                <td>{{ r.categorie }}</td>
-
-                <td>
-                  <b>{{ r.label }}</b>
-                  <span class="muted"> ({{ r.unite }})</span>
+              <tr v-for="r in mpRows" :key="r.variantMpId" class="row">
+                <td class="ell">
+                  <span class="pill">{{ r.categorie || "—" }}</span>
                 </td>
 
-                <td>{{ r.fournisseur }}</td>
+                <td class="ell">
+                  <div class="mpCell">
+                    <b class="ell">{{ r.label }}</b>
+                    <span class="muted unit">({{ r.unite }})</span>
+                  </div>
+                </td>
 
-                <td class="r">{{ n(r.prixCatalogue) }}</td>
+                <td class="ell">{{ r.fournisseur || "—" }}</td>
+
+                <td class="r mono">{{ n(r.prixCatalogue) }}</td>
 
                 <!-- OVERRIDE -->
                 <td class="r" @click.stop>
                   <template v-if="ensureEdit(r.variantMpId, r.prixOverride).ovEditing">
                     <div class="editCell">
                       <input
-                        class="inputSm r"
+                        class="inputSm r mono"
                         type="number"
                         step="0.01"
                         v-model.number="ensureEdit(r.variantMpId, r.prixOverride).ovDraft"
                       />
-                      <button class="btnSm" :disabled="ensureEdit(r.variantMpId, r.prixOverride).ovSaving" @click="saveOverride(r)">
-                        {{ ensureEdit(r.variantMpId, r.prixOverride).ovSaving ? "..." : "OK" }}
+                      <button
+                        class="btn xs"
+                        :disabled="ensureEdit(r.variantMpId, r.prixOverride).ovSaving"
+                        @click="saveOverride(r)"
+                        title="OK"
+                      >
+                        {{ ensureEdit(r.variantMpId, r.prixOverride).ovSaving ? "…" : "OK" }}
                       </button>
-                      <button class="btnSm" :disabled="ensureEdit(r.variantMpId, r.prixOverride).ovSaving" @click="stopAllEdits()">
+                      <button
+                        class="btn xs"
+                        :disabled="ensureEdit(r.variantMpId, r.prixOverride).ovSaving"
+                        @click="stopAllEdits()"
+                        title="Annuler"
+                      >
                         ✕
                       </button>
                     </div>
@@ -301,18 +316,18 @@ async function confirmRestore() {
                   </template>
 
                   <template v-else>
-                    <span class="clickVal" @click="startOverrideEdit(r)">
+                    <span class="clickVal mono" @click="startOverrideEdit(r)">
                       {{ r.prixOverride == null ? "—" : n(r.prixOverride) }}
                     </span>
                   </template>
                 </td>
 
-                <!-- USED (click => open modal restore) -->
+                <!-- USED (click => restore) -->
                 <td class="r" @click.stop>
                   <span
-                    class="usedVal"
+                    class="usedVal mono"
                     :class="{ restore: r.prixOverride != null }"
-                    :title="r.prixOverride != null ? 'Cliquer pour restaurer l’override au prix catalogue' : 'Prix catalogue (aucun override)'"
+                    :title="r.prixOverride != null ? 'Restaurer au catalogue' : 'Catalogue (aucun override)'"
                     @click="openRestoreModal(r)"
                   >
                     {{ n(r.prixUtilise) }}
@@ -321,27 +336,27 @@ async function confirmRestore() {
               </tr>
             </tbody>
           </table>
-
-          <div class="muted small" style="margin-top: 8px">
-            NB: “utilisé” = override si présent, sinon catalogue.
-          </div>
         </div>
       </div>
 
       <!-- MODAL RESTORE -->
       <div v-if="restoreModal.open" class="overlay" @click.self="closeRestoreModal()">
         <div class="modal">
-          <div class="modalTitle">Restaurer au prix catalogue</div>
+          <div class="modalTitle">Restaurer au catalogue</div>
 
           <div class="modalText" v-if="restoreModal.row">
-            <div><b>{{ restoreModal.row.label }}</b></div>
-            <div class="muted small" style="margin-top: 4px">
-              Override actuel : <b>{{ n(restoreModal.row.prixOverride) }}</b> — Catalogue : <b>{{ n(restoreModal.row.prixCatalogue) }}</b>
+            <div class="ell"><b>{{ restoreModal.row.label }}</b></div>
+
+            <div class="muted tiny" style="margin-top: 4px">
+              Ov :
+              <b class="mono">{{ n(restoreModal.row.prixOverride) }}</b>
+              <span class="sep">•</span>
+              Cat :
+              <b class="mono">{{ n(restoreModal.row.prixCatalogue) }}</b>
             </div>
 
             <div class="note">
-              Cette action va mettre <b>prix override = prix catalogue</b> pour cette variante.
-              Les KPIs de la variante seront recalculés.
+              Met <b>override = catalogue</b> pour cette variante.
             </div>
           </div>
 
@@ -350,7 +365,7 @@ async function confirmRestore() {
           <div class="modalActions">
             <button class="btn" :disabled="restoreModal.saving" @click="closeRestoreModal()">Annuler</button>
             <button class="btn primary" :disabled="restoreModal.saving" @click="confirmRestore()">
-              {{ restoreModal.saving ? "..." : "Confirmer" }}
+              {{ restoreModal.saving ? "…" : "Confirmer" }}
             </button>
           </div>
         </div>
@@ -360,73 +375,128 @@ async function confirmRestore() {
 </template>
 
 <style scoped>
+/* ✅ Ultra compact page */
 .page {
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
 }
 
-/* top */
+/* ✅ Top bar ultra compact */
 .top {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
 }
-.title {
+
+.tleft {
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-.h1 {
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1.1;
-  margin: 0;
-}
-.h2 {
-  font-size: 13px;
-  font-weight: 800;
-  margin: 0;
-}
-.muted {
-  color: #6b7280;
-  font-size: 12px;
-}
-.small {
-  font-size: 11px;
+  min-width: 240px;
 }
 
-/* panel */
-.panel {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 10px;
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-.panel.error {
+
+.title {
+  font-size: 16px;
+  font-weight: 900;
+  color: #111827;
+  line-height: 1.05;
+}
+
+.badge {
+  font-size: 10px;
+  font-weight: 900;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.tright {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* alerts */
+.alert {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: #fff;
+  color: #111827;
+  font-size: 12px;
+}
+.alert.error {
   border-color: #ef4444;
   background: #fff5f5;
 }
-.pad {
-  padding: 10px 0;
-}
-.meta {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  font-size: 12px;
+
+/* ✅ card super compacte */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 10px;
 }
 
-/* buttons */
+.cardHead {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 6px;
+}
+
+.h2 {
+  font-size: 12px;
+  font-weight: 900;
+  margin: 0;
+  color: #111827;
+}
+
+.muted {
+  color: #6b7280;
+  font-size: 11px;
+}
+.tiny {
+  font-size: 10px;
+}
+
+.pad {
+  padding: 6px 0;
+}
+
+.ell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ✅ boutons compacts */
 .btn {
   border: 1px solid #d1d5db;
   background: #fff;
-  border-radius: 10px;
-  padding: 7px 10px;
-  font-size: 13px;
+  border-radius: 12px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 900;
   cursor: pointer;
+  line-height: 1;
 }
 .btn:hover {
   background: #f9fafb;
@@ -437,74 +507,128 @@ async function confirmRestore() {
   color: #fff;
 }
 .btn.primary:hover {
-  background: #046a2f;
+  filter: brightness(0.95);
 }
-.btnSm {
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 10px;
+.btn.xs {
   padding: 6px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.btnSm:hover {
-  background: #f9fafb;
+  border-radius: 12px;
+  font-size: 11px;
 }
 
-/* table */
+/* ✅ table ultra dense */
 .tableWrap {
-  overflow: auto;
-  margin-top: 10px;
+  overflow-x: auto;
+  margin-top: 0;
 }
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 11px;
+  table-layout: fixed;
 }
+
 .table th,
 .table td {
   border-bottom: 1px solid #e5e7eb;
-  padding: 7px 8px;
-  vertical-align: top;
+  padding: 6px 7px; /* ✅ plus petit */
+  text-align: left;
+  vertical-align: middle;
 }
+
 .table th {
-  background: #fafafa;
+  font-size: 10px;
   color: #6b7280;
-  font-size: 11px;
+  background: #fafafa;
+  white-space: nowrap;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
+
+.row:hover td {
+  background: #fcfcfd;
+}
+
 .r {
   text-align: right;
 }
 
-/* edit */
-.inputSm {
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  font-size: 12px;
-  padding: 6px 8px;
-  width: 110px;
+/* ✅ colonnes plus serrées */
+.cCat {
+  width: 14%;
 }
-.editCell {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
+.cMp {
+  width: 33%;
 }
-.err {
-  margin-top: 4px;
-  color: #b91c1c;
-  font-size: 11px;
+.cFourn {
+  width: 18%;
+}
+.cPrice {
+  width: 11%;
+}
+.cOv {
+  width: 12%;
+}
+.cUsed {
+  width: 12%;
 }
 
-/* clickable values */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #111827;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.mpCell {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.unit {
+  flex: 0 0 auto;
+}
+
+/* edit ultra compact */
+.inputSm {
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  font-size: 11px;
+  padding: 6px 7px;
+  width: 96px;
+  background: #fff;
+}
+
+.editCell {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.err {
+  margin-top: 3px;
+  color: #b91c1c;
+  font-size: 10px;
+  text-align: right;
+}
+
 .clickVal {
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 900;
 }
 .clickVal:hover {
   text-decoration: underline;
 }
+
 .usedVal {
-  font-weight: 800;
+  font-weight: 900;
 }
 .usedVal.restore {
   cursor: pointer;
@@ -513,7 +637,7 @@ async function confirmRestore() {
   text-decoration: underline;
 }
 
-/* modal */
+/* modal compact */
 .overlay {
   position: fixed;
   inset: 0;
@@ -521,39 +645,44 @@ async function confirmRestore() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 12px;
   z-index: 50;
 }
 .modal {
   width: min(520px, 100%);
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  padding: 14px;
+  border-radius: 16px;
+  padding: 12px;
 }
 .modalTitle {
   font-weight: 900;
-  font-size: 14px;
+  font-size: 13px;
+  color: #111827;
 }
 .modalText {
-  margin-top: 10px;
-  font-size: 13px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.sep {
+  margin: 0 6px;
+  color: #9ca3af;
 }
 .note {
-  margin-top: 10px;
+  margin-top: 8px;
   background: #f9fafb;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 10px;
-  font-size: 12px;
+  border-radius: 14px;
+  padding: 8px;
+  font-size: 11px;
 }
 .modalErr {
-  margin-top: 10px;
+  margin-top: 8px;
   color: #b91c1c;
-  font-size: 12px;
+  font-size: 11px;
 }
 .modalActions {
-  margin-top: 12px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
   gap: 8px;

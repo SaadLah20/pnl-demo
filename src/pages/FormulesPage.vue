@@ -1,6 +1,6 @@
 <!-- src/pages/Variante/Sections/Formules/FormulesPage.vue -->
 <script setup lang="ts">
-import { computed, onMounted, reactive } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 const store = usePnlStore();
@@ -84,6 +84,51 @@ function getItemsRaw(r: FormuleRow): any[] {
 }
 
 /* =========================
+   ✅ AJOUT FORMULE (UI + anti-doublon)
+========================= */
+const addOpen = ref(false);
+const addQ = ref("");
+const addBusy = ref(false);
+const addErr = ref<string | null>(null);
+
+const existingFormuleIds = computed(() => new Set(rows.value.map((r) => String(r.formuleId))));
+const catalogue = computed<any[]>(() => (store.formulesCatalogue ?? []) as any[]);
+
+const filteredCatalogue = computed(() => {
+  const q = addQ.value.trim().toLowerCase();
+  const list = catalogue.value.slice();
+  const out = !q
+    ? list
+    : list.filter((f: any) => {
+        const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""}`.toLowerCase();
+        return blob.includes(q);
+      });
+
+  // on garde l’affichage complet, mais on marque "déjà ajouté"
+  return out;
+});
+
+function isAlreadyInVariant(formuleId: string) {
+  return existingFormuleIds.value.has(String(formuleId));
+}
+
+async function addFormule(formuleId: string) {
+  if (!variant.value) return;
+  if (isAlreadyInVariant(formuleId)) return;
+
+  addBusy.value = true;
+  addErr.value = null;
+  try {
+    await store.addFormuleToActiveVariant(String(formuleId));
+    // garde la popup ouverte (tu peux la fermer si tu veux)
+  } catch (e: any) {
+    addErr.value = e?.message ?? String(e);
+  } finally {
+    addBusy.value = false;
+  }
+}
+
+/* =========================
    Sorting MP: Ciment -> Granulas -> Adjuvant -> Others
 ========================= */
 function normKey(v: any) {
@@ -98,13 +143,7 @@ function catRank(catRaw: any): number {
   const c = normKey(catRaw);
   if (c === "ciment") return 0;
 
-  if (
-    c === "granulats" ||
-    c === "granulat" ||
-    c === "granulas" ||
-    c === "granula" ||
-    c.includes("granul")
-  )
+  if (c === "granulats" || c === "granulat" || c === "granulas" || c === "granula" || c.includes("granul"))
     return 1;
 
   if (c === "adjuvant") return 2;
@@ -119,7 +158,6 @@ function sortedItems(r: FormuleRow) {
     const rb = catRank(b?.mp?.categorie);
     if (ra !== rb) return ra - rb;
 
-    // tie-breaker: keep stable, but sort by label to be deterministic
     const la = String(a?.mp?.label ?? "").toLowerCase();
     const lb = String(b?.mp?.label ?? "").toLowerCase();
     if (la < lb) return -1;
@@ -144,22 +182,11 @@ function cmpPerM3(r: FormuleRow): number {
 
 /* =========================
    Volume verifier (fallback-safe)
-   Σ kg/ρ + eau(C*0.5)/1 + 15L ; target 1000L ; low if <97%
-   ρ from category:
-    - ciment: 3.1
-    - granulats/granulas/...: 2.65
-    - adjuvant: 1.1
 ========================= */
 function getRhoFromCategorie(catRaw: any): number | null {
   const c = normKey(catRaw);
   if (c === "ciment") return 3.1;
-  if (
-    c === "granulats" ||
-    c === "granulat" ||
-    c === "granulas" ||
-    c === "granula" ||
-    c.includes("granul")
-  )
+  if (c === "granulats" || c === "granulat" || c === "granulas" || c === "granula" || c.includes("granul"))
     return 2.65;
   if (c === "adjuvant") return 1.1;
   return null;
@@ -277,48 +304,53 @@ function isOpen(r: FormuleRow) {
 
 <template>
   <div class="page">
+    <!-- ✅ Top ultra compact -->
     <div class="top">
-      <div class="title">
-        <div class="h1">Formules — Composition & CMP</div>
-        <div class="muted">
-          Composition triée : <b>Ciment</b> → <b>Granulas</b> → <b>Adjuvant</b>. Quantités mises en avant.
+      <div class="tleft">
+        <div class="titleRow">
+          <div class="h1">Formules — Composition & CMP</div>
+          <span class="badge">Variante active</span>
+        </div>
+        <div class="muted tiny">
+          Tri: <b>Ciment</b> → <b>Granulas</b> → <b>Adjuvant</b> • Quantités mises en avant.
         </div>
       </div>
 
       <div class="topActions">
+        <!-- ✅ seul ajout demandé -->
+        <button class="btnPrimary" @click="addOpen = true" :disabled="!variant || addBusy">
+          + Ajouter
+        </button>
+
         <button class="btn" @click="store.loadPnls()">Recharger</button>
-        <button class="btnSm" @click="openAll()" :disabled="!variant">Tout ouvrir</button>
-        <button class="btnSm" @click="closeAll()" :disabled="!variant">Tout fermer</button>
+        <button class="btn xs" @click="openAll()" :disabled="!variant">Ouvrir</button>
+        <button class="btn xs" @click="closeAll()" :disabled="!variant">Fermer</button>
       </div>
     </div>
 
-    <div v-if="store.loading" class="panel">Chargement…</div>
-    <div v-else-if="store.error" class="panel error"><b>Erreur :</b> {{ store.error }}</div>
+    <div v-if="store.loading" class="alert">Chargement…</div>
+    <div v-else-if="store.error" class="alert error"><b>Erreur :</b> {{ store.error }}</div>
 
     <template v-else>
-      <div class="panel">
-        <div class="meta">
-          <div class="metaRow"><span class="muted">P&L:</span> <b class="clip">{{ pnlTitle }}</b></div>
-          <div class="metaRow"><span class="muted">Contrat:</span> <b class="clip">{{ contractLabel }}</b></div>
-          <div class="metaRow"><span class="muted">Variante:</span> <b class="clip">{{ variantTitle }}</b></div>
-        </div>
-      </div>
+      <!-- ✅ Meta supprimé pour hauteur minimale -->
 
-      <div class="panel" v-if="!variant">
+      <div class="card" v-if="!variant">
         <div class="muted">Aucune variante active. Sélectionne une variante depuis le Dashboard.</div>
       </div>
 
       <template v-else>
-        <div class="panel slim">
+        <div class="card slim">
           <div class="bar">
             <div class="barLeft">
               <div class="h2">Formules ({{ rows.length }})</div>
-              <div class="muted tiny">CMP = Σ((kg/m³ ÷ 1000) × DH/t) • Volume = Σ(kg/ρ) + Eau(C×0,5) + 15L</div>
+              <div class="muted tiny">
+                CMP = Σ((kg/m³ ÷ 1000) × DH/t) • Volume = Σ(kg/ρ) + Eau(C×0,5) + 15L
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="panel" v-if="rows.length === 0">
+        <div class="card" v-if="rows.length === 0">
           <div class="muted">Aucune formule dans la variante.</div>
         </div>
 
@@ -338,12 +370,12 @@ function isOpen(r: FormuleRow) {
               <div class="right">
                 <div class="cmpBox">
                   <span class="cmpLbl">CMP</span>
-                  <span class="cmpVal">{{ n(cmpPerM3(r)) }}</span>
+                  <span class="cmpVal mono">{{ n(cmpPerM3(r)) }}</span>
                 </div>
 
                 <template v-if="getItemsRaw(r).length">
                   <div class="pills">
-                    <span class="pill">V <b>{{ liters(compositionStatsFor(r).vTotal) }}</b>L</span>
+                    <span class="pill mono">V <b>{{ liters(compositionStatsFor(r).vTotal) }}</b>L</span>
                     <span class="pill" :class="{ ok: compositionStatsFor(r).isOk, low: compositionStatsFor(r).isLow }">
                       {{ compositionStatsFor(r).statusLabel }}
                     </span>
@@ -355,11 +387,11 @@ function isOpen(r: FormuleRow) {
             <div v-if="isOpen(r)" class="body">
               <template v-if="getItemsRaw(r).length">
                 <div v-if="compositionStatsFor(r).isLow" class="banner error">
-                  ⚠️ Volume <b>{{ liters(compositionStatsFor(r).vTotal) }} L</b> &lt; cible <b>{{ compositionStatsFor(r).target }} L</b>
-                  (déficit <b>{{ liters(compositionStatsFor(r).deficitPct) }}%</b>).
+                  ⚠️ Volume <b class="mono">{{ liters(compositionStatsFor(r).vTotal) }}</b> L &lt; cible
+                  <b class="mono">{{ compositionStatsFor(r).target }}</b> L (déficit <b class="mono">{{ liters(compositionStatsFor(r).deficitPct) }}</b>%).
                 </div>
                 <div v-else class="banner ok">
-                  ✅ Volume OK (±3%) — <b>{{ liters(compositionStatsFor(r).vTotal) }} L</b> pour cible <b>{{ compositionStatsFor(r).target }} L</b>.
+                  ✅ Volume OK (±3%) — <b class="mono">{{ liters(compositionStatsFor(r).vTotal) }}</b> L.
                 </div>
 
                 <div v-if="compositionStatsFor(r).missing.length" class="banner warn">
@@ -374,7 +406,6 @@ function isOpen(r: FormuleRow) {
                     <tr>
                       <th>MP</th>
                       <th class="c">Cat.</th>
-                      <!-- ✅ Qty is the main info now -->
                       <th class="r qtyCol">kg/m³</th>
                       <th class="r">DH/t</th>
                       <th class="r">DH/m³</th>
@@ -394,15 +425,14 @@ function isOpen(r: FormuleRow) {
                         </span>
                       </td>
 
-                      <!-- ✅ QUANTITY VERY VISIBLE -->
                       <td class="r qtyCell">
-                        <span class="qtyBig">{{ n(it?.qty ?? 0, 0) }}</span>
+                        <span class="qtyBig mono">{{ n(it?.qty ?? 0, 0) }}</span>
                         <span class="qtyUnit">kg/m³</span>
                       </td>
 
-                      <td class="r">{{ n(it?.mp?.prix ?? 0) }}</td>
+                      <td class="r mono">{{ n(it?.mp?.prix ?? 0) }}</td>
 
-                      <td class="r">
+                      <td class="r mono">
                         <b>{{ n((toNum(it?.qty ?? 0) / 1000) * toNum(it?.mp?.prix ?? 0)) }}</b>
                       </td>
                     </tr>
@@ -415,102 +445,158 @@ function isOpen(r: FormuleRow) {
                   <tfoot>
                     <tr>
                       <td colspan="4" class="tfootLbl">Total CMP (DH/m³)</td>
-                      <td class="r"><b>{{ n(cmpPerM3(r)) }}</b></td>
+                      <td class="r mono"><b>{{ n(cmpPerM3(r)) }}</b></td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
 
               <div class="note">
-                Eau (info) : <b>{{ liters(compositionStatsFor(r).vEau) }}</b> L/m³ — Formule calculée depuis la composition (kg/m³) et les prix MP (DH/t).
+                Eau (info) : <b class="mono">{{ liters(compositionStatsFor(r).vEau) }}</b> L/m³ — Formule calculée depuis la composition (kg/m³) et les prix MP (DH/t).
               </div>
             </div>
           </div>
         </div>
       </template>
     </template>
+
+    <!-- ✅ Modal Ajouter Formule -->
+    <div v-if="addOpen" class="modalWrap" @click.self="addOpen = false">
+      <div class="modal">
+        <div class="modalTop">
+          <div class="modalTitle">Ajouter une formule</div>
+          <button class="x" @click="addOpen = false">✕</button>
+        </div>
+
+        <div class="modalSearch">
+          <input v-model="addQ" class="in" placeholder="Rechercher…" />
+        </div>
+
+        <div v-if="addErr" class="modalErr"><b>Erreur :</b> {{ addErr }}</div>
+
+        <div class="modalList">
+          <button
+            v-for="f in filteredCatalogue"
+            :key="f.id"
+            class="modalItem"
+            :disabled="addBusy || isAlreadyInVariant(String(f.id))"
+            @click="addFormule(String(f.id))"
+          >
+            <div class="miMain">
+              <div class="miTitle">
+                {{ f.label ?? "—" }}
+                <span v-if="isAlreadyInVariant(String(f.id))" class="miTag">Déjà</span>
+              </div>
+              <div class="miSub">
+                {{ f.resistance ?? "—" }} • {{ f.city ?? "—" }} • {{ f.region ?? "—" }}
+              </div>
+            </div>
+
+            <div class="miRight">
+              <span class="miBtn">{{ isAlreadyInVariant(String(f.id)) ? "—" : "Ajouter" }}</span>
+            </div>
+          </button>
+
+          <div v-if="filteredCatalogue.length === 0" class="modalEmpty">Aucune formule.</div>
+        </div>
+
+        <div class="modalFoot">
+          <button class="btn xs" @click="addOpen = false">Fermer</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* ✅ page ultra compacte */
 .page {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
 }
 
-/* top */
+/* top compact */
 .top {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.topActions {
-  display: flex;
+  align-items: flex-end;
   gap: 8px;
-  align-items: center;
   flex-wrap: wrap;
 }
-.title {
+.tleft {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 260px;
+}
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .h1 {
   font-size: 16px;
-  font-weight: 900;
-  line-height: 1.1;
+  font-weight: 950;
+  line-height: 1.05;
   margin: 0;
+  color: #111827;
 }
 .h2 {
-  font-size: 13px;
-  font-weight: 900;
+  font-size: 12px;
+  font-weight: 950;
   margin: 0;
+  color: #111827;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 7px;
+  border-radius: 999px;
 }
 .muted {
   color: #6b7280;
-  font-size: 12px;
+  font-size: 11px;
 }
 .tiny {
-  font-size: 10.5px;
-  color: #6b7280;
+  font-size: 10px;
 }
 
-/* panel */
-.panel {
-  background: #fff;
+.topActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* alerts */
+.alert {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
-  padding: 10px 12px;
-}
-.panel.slim {
   padding: 8px 10px;
+  background: #fff;
+  color: #111827;
+  font-size: 12px;
 }
-.panel.error {
+.alert.error {
   border-color: #ef4444;
   background: #fff5f5;
 }
-.meta {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 12px;
+
+/* cards */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 10px;
 }
-.metaRow {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  max-width: 520px;
-}
-.clip {
-  display: inline-block;
-  max-width: 420px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.card.slim {
+  padding: 8px 10px;
 }
 
 /* buttons */
@@ -518,41 +604,50 @@ function isOpen(r: FormuleRow) {
   border: 1px solid #d1d5db;
   background: #fff;
   border-radius: 12px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 900;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 950;
   cursor: pointer;
+  line-height: 1;
 }
 .btn:hover {
   background: #f9fafb;
 }
-.btnSm {
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 12px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
+.btn.xs {
+  padding: 6px 8px;
+  font-size: 11px;
 }
-.btnSm:hover {
-  background: #f9fafb;
+.btnPrimary {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.9);
+  color: #1d4ed8;
+  border-radius: 12px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+  line-height: 1;
+}
+.btnPrimary:hover {
+  background: rgba(239, 246, 255, 1);
+}
+.btnPrimary:disabled,
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
-/* cards */
+/* list cards */
 .cards {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.card {
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  overflow: hidden;
-  background: #fff;
+.card.card {
+  padding: 0; /* for header/body separation */
 }
 
-/* ultra compact row */
+/* row header ultra compact */
 .rowHead {
   width: 100%;
   border: 0;
@@ -583,21 +678,21 @@ function isOpen(r: FormuleRow) {
   flex: 0 0 auto;
 }
 .name {
-  font-weight: 900;
-  font-size: 12.5px;
+  font-weight: 950;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 380px;
+  max-width: 420px;
 }
 .chip {
-  font-size: 10.5px;
-  padding: 3px 8px;
+  font-size: 10px;
+  padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid #e5e7eb;
   background: #fafafa;
   color: #374151;
-  font-weight: 900;
+  font-weight: 950;
   flex: 0 0 auto;
 }
 .dot {
@@ -605,18 +700,18 @@ function isOpen(r: FormuleRow) {
   flex: 0 0 auto;
 }
 .sub {
-  font-size: 11px;
+  font-size: 10.5px;
   color: #6b7280;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 160px;
+  max-width: 150px;
 }
 
-/* right side: pack in one line */
+/* right side packed */
 .right {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   justify-content: flex-end;
   flex: 0 0 auto;
@@ -625,20 +720,20 @@ function isOpen(r: FormuleRow) {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 5px 9px;
   border: 1px solid #e5e7eb;
   border-radius: 999px;
   background: #fafafa;
   line-height: 1;
 }
 .cmpLbl {
-  font-size: 10.5px;
+  font-size: 10px;
   color: #6b7280;
-  font-weight: 900;
+  font-weight: 950;
 }
 .cmpVal {
-  font-size: 12.5px;
-  font-weight: 900;
+  font-size: 12px;
+  font-weight: 950;
   color: #111827;
 }
 .pills {
@@ -647,13 +742,13 @@ function isOpen(r: FormuleRow) {
   flex-wrap: nowrap;
 }
 .pill {
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
   border: 1px solid #e5e7eb;
   background: #fff;
-  font-size: 11px;
+  font-size: 10.5px;
   color: #374151;
-  font-weight: 900;
+  font-weight: 950;
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -670,19 +765,19 @@ function isOpen(r: FormuleRow) {
   color: #991b1b;
 }
 
-/* body */
+/* body compact */
 .body {
   border-top: 1px solid #e5e7eb;
   padding: 10px;
 }
 
-/* banners */
+/* banners compact */
 .banner {
-  font-size: 12px;
+  font-size: 11px;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  padding: 7px 9px;
+  margin-bottom: 8px;
 }
 .banner.error {
   border-color: #ef4444;
@@ -699,33 +794,36 @@ function isOpen(r: FormuleRow) {
 }
 .miniTag {
   display: inline-flex;
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid #e5e7eb;
   background: #fff;
-  font-size: 11px;
+  font-size: 10.5px;
   margin-left: 6px;
 }
 
-/* table */
+/* table dense */
 .tableWrap {
   overflow: auto;
 }
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 11px;
 }
 .table th,
 .table td {
   border-bottom: 1px solid #e5e7eb;
-  padding: 8px;
+  padding: 6px 7px;
   vertical-align: middle;
 }
 .table th {
   background: #fafafa;
   color: #6b7280;
-  font-size: 11px;
+  font-size: 10px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  white-space: nowrap;
 }
 .r {
   text-align: right;
@@ -734,7 +832,7 @@ function isOpen(r: FormuleRow) {
   text-align: center;
 }
 .pad {
-  padding: 10px 0;
+  padding: 8px 0;
 }
 tfoot td {
   background: #fafafa;
@@ -742,11 +840,11 @@ tfoot td {
 }
 .tfootLbl {
   color: #6b7280;
-  font-size: 11px;
-  font-weight: 900;
+  font-size: 10px;
+  font-weight: 950;
 }
 
-/* MP cell compact */
+/* mp cell */
 .mpCell {
   display: flex;
   align-items: baseline;
@@ -754,29 +852,29 @@ tfoot td {
   flex-wrap: wrap;
 }
 .mpName {
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .mpMuted {
-  font-size: 11px;
+  font-size: 10.5px;
   color: #6b7280;
 }
 
-/* ✅ qty highlight */
+/* qty highlight (kept prominent but compact) */
 .qtyCol {
-  width: 150px;
+  width: 140px;
 }
 .qtyCell {
   white-space: nowrap;
 }
 .qtyBig {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 950;
   letter-spacing: -0.2px;
   color: #111827;
 }
 .qtyUnit {
-  font-size: 11px;
-  font-weight: 900;
+  font-size: 10.5px;
+  font-weight: 950;
   color: #6b7280;
   margin-left: 6px;
 }
@@ -784,12 +882,12 @@ tfoot td {
 /* category pill */
 .catPill {
   display: inline-flex;
-  padding: 3px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid #e5e7eb;
   background: #fff;
-  font-size: 11px;
-  font-weight: 900;
+  font-size: 10.5px;
+  font-weight: 950;
   color: #374151;
 }
 .catPill[data-rank="0"] {
@@ -806,12 +904,17 @@ tfoot td {
 
 /* note */
 .note {
-  margin-top: 10px;
+  margin-top: 8px;
   background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  padding: 10px;
-  font-size: 12px;
+  padding: 8px 9px;
+  font-size: 11px;
+}
+
+/* misc */
+.mono {
+  font-variant-numeric: tabular-nums;
 }
 
 /* responsive */
@@ -820,16 +923,146 @@ tfoot td {
     display: none;
   }
   .name {
-    max-width: 260px;
+    max-width: 280px;
   }
   .pills {
     display: none;
   }
   .qtyCol {
-    width: 130px;
+    width: 120px;
   }
   .qtyBig {
-    font-size: 15px;
+    font-size: 14px;
   }
+}
+
+/* ===== Modal compact ===== */
+.modalWrap {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: grid;
+  place-items: center;
+  z-index: 9999;
+  padding: 12px;
+}
+.modal {
+  width: min(720px, 96vw);
+  max-height: min(74vh, 760px);
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+.modalTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.modalTitle {
+  font-size: 12.5px;
+  font-weight: 950;
+}
+.x {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 950;
+}
+.modalSearch {
+  padding: 9px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.in {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  background: #fafafa;
+  border-radius: 12px;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  outline: none;
+}
+.modalErr {
+  margin: 10px 12px 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(254, 242, 242, 0.9);
+  border-radius: 12px;
+  font-size: 12px;
+}
+.modalList {
+  padding: 10px 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modalItem {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 14px;
+  padding: 9px 10px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.modalItem:hover {
+  background: #f9fafb;
+}
+.modalItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.miTitle {
+  font-size: 12px;
+  font-weight: 950;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.miTag {
+  font-size: 10px;
+  font-weight: 950;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(107, 114, 128, 0.25);
+  background: rgba(243, 244, 246, 0.9);
+  color: #374151;
+}
+.miSub {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: #6b7280;
+}
+.miBtn {
+  font-size: 11px;
+  font-weight: 950;
+  color: #1d4ed8;
+}
+.modalEmpty {
+  padding: 12px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 12px;
+  border: 1px dashed #e5e7eb;
+  border-radius: 14px;
+}
+.modalFoot {
+  border-top: 1px solid #e5e7eb;
+  padding: 9px 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

@@ -96,11 +96,11 @@ function cmpParM3For(vf: any): number {
 type Row = {
   id: string;
   designation: string;
-  cmp: number;  // DH/m³
-  qte: number;  // m³
+  cmp: number; // DH/m³
+  qte: number; // m³
   momd: number; // DH/m³
-  pv: number;   // DH/m³
-  ca: number;   // DH
+  pv: number; // DH/m³
+  ca: number; // DH
 };
 
 const baseRows = computed<Row[]>(() => {
@@ -167,9 +167,6 @@ const rows = computed<Row[]>(() => {
 
 /* =========================
    SYNC au changement de variante
-   - charge drafts
-   - fixe orderIds une fois
-   - tri initial UNE SEULE FOIS au chargement de la page
 ========================= */
 watch(
   () => variant.value?.id,
@@ -278,8 +275,7 @@ function askReset() {
     closeModal();
     loadDraftsFromVariant();
 
-    // ✅ pas de tri ici (tu as demandé : seulement initial + après save)
-    // si tu veux aussi trier après reset => ajoute: applySortNow()
+    // ✅ pas de tri ici
   });
 }
 
@@ -296,47 +292,54 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <!-- ✅ Top ultra compact, sans bloc meta haut -->
     <div class="top">
-      <div class="title">
-        <div class="h1">Qté & MOMD</div>
-        <div class="muted" v-if="variant">
-          Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="contract?.dureeMois"> — Durée {{ contract.dureeMois }} mois</span>
+      <div class="tleft">
+        <div class="titleRow">
+          <div class="h1">Qté & MOMD</div>
+          <span class="badge" v-if="variant">Variante active</span>
         </div>
-        <div class="muted" v-else>Aucune variante active.</div>
+        <div class="muted tiny" v-if="variant">
+          <b class="clip">{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
+          <span v-if="contract?.dureeMois" class="sep">•</span>
+          <span v-if="contract?.dureeMois">Durée <b>{{ contract.dureeMois }}</b> mois</span>
+        </div>
+        <div class="muted tiny" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
-        <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
+        <button class="btn" :disabled="!variant || saving" @click="askReset()">Reset</button>
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
-          {{ saving ? "..." : "Enregistrer" }}
+          {{ saving ? "…" : "Enregistrer" }}
         </button>
       </div>
     </div>
 
-    <div v-if="(store as any).loading" class="panel">Chargement…</div>
-    <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
+    <div v-if="(store as any).loading" class="alert">Chargement…</div>
+    <div v-else-if="(store as any).error" class="alert error"><b>Erreur :</b> {{ (store as any).error }}</div>
 
     <template v-else>
-      <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
+      <div v-if="err" class="alert error"><b>Erreur :</b> {{ err }}</div>
 
-      <div v-if="!variant" class="panel">
+      <div v-if="!variant" class="card">
         <div class="muted">Sélectionne une variante puis reviens ici.</div>
       </div>
 
       <template v-else>
+        <!-- ✅ KPIs compacts -->
         <div class="kpis">
-          <div class="kpi"><div class="kLbl">CMP Moy</div><div class="kVal">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div></div>
-          <div class="kpi"><div class="kLbl">CMP Tot</div><div class="kVal">{{ money(cmpTotal, 2) }}</div></div>
-          <div class="kpi"><div class="kLbl">MOMD Moy</div><div class="kVal">{{ n(momdMoy, 2) }} <span>DH/m³</span></div></div>
-          <div class="kpi"><div class="kLbl">MOMD Tot</div><div class="kVal">{{ money(momdTotal, 2) }}</div></div>
-          <div class="kpi"><div class="kLbl">Transport</div><div class="kVal">{{ n(transportPrixMoyen, 2) }} <span>DH/m³</span></div></div>
-          <div class="kpi"><div class="kLbl">PV Moyen</div><div class="kVal">{{ n(pvMoy, 2) }} <span>DH/m³</span></div></div>
-          <div class="kpi"><div class="kLbl">CA</div><div class="kVal">{{ money(caTotal, 2) }}</div></div>
-          <div class="kpi"><div class="kLbl">Volume Total</div><div class="kVal">{{ n(volumeTotal, 2) }} <span>m³</span></div></div>
+          <div class="kpi"><div class="kLbl">CMP</div><div class="kVal mono">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div></div>
+          <div class="kpi"><div class="kLbl">CMP Tot</div><div class="kVal mono">{{ money(cmpTotal, 2) }}</div></div>
+          <div class="kpi"><div class="kLbl">MOMD</div><div class="kVal mono">{{ n(momdMoy, 2) }} <span>DH/m³</span></div></div>
+          <div class="kpi"><div class="kLbl">MOMD Tot</div><div class="kVal mono">{{ money(momdTotal, 2) }}</div></div>
+          <div class="kpi"><div class="kLbl">Transport</div><div class="kVal mono">{{ n(transportPrixMoyen, 2) }} <span>DH/m³</span></div></div>
+          <div class="kpi"><div class="kLbl">PV</div><div class="kVal mono">{{ n(pvMoy, 2) }} <span>DH/m³</span></div></div>
+          <div class="kpi"><div class="kLbl">CA</div><div class="kVal mono">{{ money(caTotal, 2) }}</div></div>
+          <div class="kpi"><div class="kLbl">Volume</div><div class="kVal mono">{{ n(volumeTotal, 2) }} <span>m³</span></div></div>
         </div>
 
-        <div class="panel">
+        <!-- ✅ Table compacte -->
+        <div class="card pad0">
           <div class="tableWrap">
             <table class="table">
               <colgroup>
@@ -350,25 +353,27 @@ onMounted(async () => {
 
               <thead>
                 <tr>
-                  <th class="th c">Désignation</th>
-                  <th class="th c">CMP (DH/m³)</th>
-                  <th class="th c">Qté (m³)</th>
-                  <th class="th c">MOMD (DH/m³)</th>
-                  <th class="th c">PV (DH/m³)</th>
-                  <th class="th c">CA (DH)</th>
+                  <th class="th">Désignation</th>
+                  <th class="th r">CMP</th>
+                  <th class="th r">Qté</th>
+                  <th class="th r">MOMD</th>
+                  <th class="th r">PV</th>
+                  <th class="th r">CA</th>
                 </tr>
               </thead>
 
               <tbody>
                 <tr v-for="r in rows" :key="r.id">
-                  <td class="designation"><b class="designationText">{{ r.designation }}</b></td>
+                  <td class="designation">
+                    <b class="designationText">{{ r.designation }}</b>
+                  </td>
 
-                  <td class="mono rVal">{{ n(r.cmp, 2) }}</td>
+                  <td class="mono r">{{ n(r.cmp, 2) }}</td>
 
                   <td class="cellInput">
                     <div class="inCell">
                       <input
-                        class="inputSm r"
+                        class="inputSm mono r"
                         type="number"
                         step="1"
                         min="0"
@@ -382,7 +387,7 @@ onMounted(async () => {
                   <td class="cellInput">
                     <div class="inCell">
                       <input
-                        class="inputSm r"
+                        class="inputSm mono r"
                         type="number"
                         step="0.01"
                         min="0"
@@ -393,15 +398,19 @@ onMounted(async () => {
                     </div>
                   </td>
 
-                  <td class="cellPv"><span class="pvPill mono">{{ n(r.pv, 2) }}</span></td>
+                  <td class="r">
+                    <span class="pvPill mono">{{ n(r.pv, 2) }}</span>
+                  </td>
 
-                  <td class="cellCa"><b class="mono">{{ money(r.ca, 2) }}</b></td>
+                  <td class="r">
+                    <b class="mono">{{ money(r.ca, 2) }}</b>
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div class="hint muted">Tri PV appliqué uniquement au chargement initial et après “Enregistrer”.</div>
+          <div class="foot muted tiny">Tri PV : au chargement initial + après “Enregistrer”.</div>
         </div>
       </template>
     </template>
@@ -424,142 +433,305 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:10px; padding:12px; }
+/* ✅ Ultra compact overall */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
 
-.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-.title { display:flex; flex-direction:column; gap:2px; }
-.h1 { font-size:16px; font-weight:800; line-height:1.1; margin:0; }
-.muted { color:#6b7280; font-size:12px; }
-.actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+/* top compact */
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tleft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 260px;
+}
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.h1 {
+  font-size: 16px;
+  font-weight: 950;
+  line-height: 1.05;
+  margin: 0;
+  color: #111827;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.muted {
+  color: #6b7280;
+  font-size: 11px;
+}
+.tiny {
+  font-size: 10px;
+}
+.clip {
+  display: inline-block;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  margin: 0 6px;
+  color: #9ca3af;
+}
 
-.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
-.panel.error { border-color:#ef4444; background:#fff5f5; }
+.actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
+/* alerts */
+.alert {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.alert.error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
+
+/* buttons */
 .btn {
-  border:1px solid #d1d5db;
-  background:#fff;
-  border-radius:10px;
-  padding:7px 10px;
-  font-size:13px;
-  cursor:pointer;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 12px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+  line-height: 1;
 }
-.btn:hover { background:#f9fafb; }
-.btn.primary { background:#007a33; border-color:#007a33; color:#fff; }
-.btn.primary:hover { background:#046a2f; }
-.btn:disabled { opacity:.6; cursor:not-allowed; }
-
-.kpis{
-  display:grid;
-  grid-template-columns: repeat(8, minmax(140px, 1fr));
-  gap:8px;
+.btn:hover {
+  background: #f9fafb;
 }
-@media (max-width: 1400px){ .kpis{ grid-template-columns: repeat(4, minmax(140px, 1fr)); } }
-@media (max-width: 900px){ .kpis{ grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
-
-.kpi{
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:12px;
-  padding:8px 10px;
-  display:flex;
-  flex-direction:column;
-  gap:4px;
+.btn.primary {
+  background: #007a33;
+  border-color: #007a33;
+  color: #fff;
 }
-.kLbl{ font-size:11px; color:#6b7280; }
-.kVal{ font-size:13px; font-weight:900; white-space:nowrap; }
-.kVal span{ font-weight:600; color:#6b7280; margin-left:6px; }
-
-.tableWrap { overflow-x: hidden; }
-.table{
-  width:100%;
-  border-collapse:collapse;
-  font-size:12px;
-  table-layout:fixed;
+.btn.primary:hover {
+  filter: brightness(0.95);
 }
-.colDesignation { width: 250px; }
-.colCmp { width: 120px; }
-.colQte { width: 140px; }
-.colMomd { width: 140px; }
-.colPv { width: 130px; }
-.colCa { width: 150px; }
-
-.th, .table td{
-  border-bottom:1px solid #e5e7eb;
-  padding:8px 6px;
-  vertical-align:middle;
-}
-.th{
-  background:#fafafa;
-  color:#6b7280;
-  font-size:11px;
-  white-space:nowrap;
-}
-.c { text-align:center; }
-.mono{ font-variant-numeric: tabular-nums; }
-.r { text-align:right; }
-.rVal{ text-align:right; }
-
-.designation{ overflow:hidden; }
-.designationText{
-  display:block;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
-.cellInput{ text-align:right; }
-.inCell{
-  display:inline-flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:6px;
-  width:100%;
+/* cards */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 10px;
 }
-.inputSm{
-  border:1px solid #d1d5db;
-  border-radius:10px;
-  font-size:12px;
-  padding:5px 7px;
-  width:90px;
-}
-.unit{
-  color:#6b7280;
-  font-size:11px;
-  min-width:22px;
-  text-align:right;
+.card.pad0 {
+  padding: 0;
 }
 
-.cellPv{ text-align:right; }
-.pvPill{
-  display:inline-block;
-  padding:5px 9px;
-  border-radius:999px;
-  border:1px solid #c7f9d4;
-  background:#ecfdf3;
-  font-weight:900;
-  white-space:nowrap;
+/* ✅ KPIs: 1 ligne dense sur desktop, plus lignes sur petits écrans */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1400px) {
+  .kpis {
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+.kpi {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kLbl {
+  font-size: 10px;
+  color: #6b7280;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.kVal {
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+  color: #111827;
+}
+.kVal span {
+  font-weight: 900;
+  color: #6b7280;
+  margin-left: 6px;
+  font-size: 10.5px;
 }
 
-.cellCa{ text-align:right; }
-.hint{ margin-top:8px; font-size:12px; }
+/* table */
+.tableWrap {
+  overflow-x: auto; /* au cas où sur petits écrans */
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  table-layout: fixed;
+}
+.colDesignation {
+  width: 280px;
+}
+.colCmp {
+  width: 110px;
+}
+.colQte {
+  width: 140px;
+}
+.colMomd {
+  width: 140px;
+}
+.colPv {
+  width: 120px;
+}
+.colCa {
+  width: 160px;
+}
 
-/* modal */
-.modalMask{
-  position:fixed; inset:0;
-  background:rgba(0,0,0,.35);
-  display:flex; align-items:center; justify-content:center;
-  padding:16px;
-  z-index:50;
+.th,
+.table td {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 6px 7px; /* ✅ dense */
+  vertical-align: middle;
 }
-.modal{
-  width:min(520px, 100%);
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:16px;
-  padding:14px;
-  box-shadow:0 10px 30px rgba(0,0,0,.15);
+.th {
+  background: #fafafa;
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 950;
+  white-space: nowrap;
 }
-.modalTitle{ font-weight:900; font-size:14px; margin-bottom:6px; }
-.modalMsg{ color:#374151; font-size:13px; white-space:pre-wrap; }
-.modalActions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.r {
+  text-align: right;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.designation {
+  overflow: hidden;
+}
+.designationText {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cellInput {
+  text-align: right;
+}
+.inCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+.inputSm {
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  font-size: 11px;
+  padding: 6px 7px;
+  width: 92px;
+  background: #fff;
+}
+.unit {
+  color: #6b7280;
+  font-size: 10.5px;
+  min-width: 22px;
+  text-align: right;
+}
+
+.pvPill {
+  display: inline-block;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 122, 51, 0.35);
+  background: rgba(236, 253, 245, 0.75);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.foot {
+  padding: 7px 10px; /* ✅ petit footer */
+  border-top: 1px solid #e5e7eb;
+}
+
+/* modal compact */
+.modalMask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  z-index: 50;
+}
+.modal {
+  width: min(520px, 100%);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+.modalTitle {
+  font-weight: 950;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #111827;
+}
+.modalMsg {
+  color: #374151;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
 </style>

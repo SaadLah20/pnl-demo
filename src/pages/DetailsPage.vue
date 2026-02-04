@@ -129,11 +129,21 @@ const sectionToSidebarItem: Record<string, string> = {
  * pour éviter d'importer le composant sidebar.
  */
 function goToSidebarItem(item: string) {
-  // routes "hard" (dans ton sidebar: routeByItem)
+  // ✅ routes "hard" = exactement comme Sidebar.vue
   const routeByItem: Record<string, string> = {
     Transport: "Transport",
     CAB: "CAB",
     MP: "Mp",
+
+    Maintenance: "Maintenance",
+    "Cout au m3": "cout au m3",
+    "Cout au mois": "CoutMensuel",
+    "Cout employés": "CoutEmployes",
+    "Couts occasionnels": "CoutsOccasionnels",
+    "Autres couts": "AutresCouts",
+
+    Formules: "Formules",
+    "Qté et MOMD": "MomdAndQuantity",
   };
 
   const rn = routeByItem[item];
@@ -142,7 +152,7 @@ function goToSidebarItem(item: string) {
     return;
   }
 
-  // fallback PageView (dans ton sidebar: pageNameMap)
+  // fallback PageView (au cas où un item n'a pas de route)
   const pageNameMap: Record<string, string> = {
     Maintenance: "Variante/Sections/Couts/Maintenance",
     "Cout au m3": "Variante/Sections/Couts/Cout au m3",
@@ -150,15 +160,12 @@ function goToSidebarItem(item: string) {
     "Cout employés": "Variante/Sections/Couts/Cout employés",
     "Couts occasionnels": "Variante/Sections/Couts/Couts occasionnels",
     "Autres couts": "Variante/Sections/Couts/Autres couts",
-
-    // si un jour tu veux rendre ces pages cliquables aussi depuis détails:
-    Formules: "Variante/Sections/Formules/Formules",
-    "Qté et MOMD": "Variante/Sections/Formules/Qté et MOMD",
   };
 
   const pageName = pageNameMap[item] ?? item;
   router.push({ name: "PageView", params: { name: pageName } });
 }
+
 
 function editSection(blockKey: string) {
   const item = sectionToSidebarItem[blockKey];
@@ -232,9 +239,7 @@ const blocks = computed<SectionBlock[]>(() => {
   {
     const key = "Transport";
     const parent = makeFromPerM3(key, "Transport", transportPrixMoyen.value, 0, true);
-    const children: Line[] = [
-      makeFromPerM3(key, "Prix moyen transport", transportPrixMoyen.value, 1, false),
-    ];
+    const children: Line[] = [makeFromPerM3(key, "Prix moyen transport", transportPrixMoyen.value, 1, false)];
     out.push({ key, title: "Transport", parent, children });
   }
 
@@ -405,12 +410,10 @@ function expandAll() {
 
 <template>
   <div class="page">
-    <div class="top">
-      <div>
+    <div class="topbar">
+      <div class="titleWrap">
         <div class="h1">Détails</div>
-        <div class="muted" v-if="variant">
-          {{ variant?.title ?? "Variante" }} — {{ dureeMois }} mois
-        </div>
+        <div class="sub" v-if="variant">{{ variant?.title ?? "Variante" }} — {{ dureeMois }} mois</div>
       </div>
 
       <div class="actions" v-if="variant">
@@ -419,15 +422,15 @@ function expandAll() {
       </div>
     </div>
 
-    <div v-if="store.loading" class="card">Chargement…</div>
-    <div v-else-if="store.error" class="card error"><b>Erreur :</b> {{ store.error }}</div>
+    <div v-if="store.loading" class="panel">Chargement…</div>
+    <div v-else-if="store.error" class="panel error"><b>Erreur :</b> {{ store.error }}</div>
 
     <template v-else>
-      <div v-if="!variant" class="card muted">Aucune variante active.</div>
+      <div v-if="!variant" class="panel muted">Aucune variante active.</div>
 
       <template v-else>
         <!-- KPIs -->
-        <div class="card">
+        <div class="panel">
           <div class="kpiGrid">
             <div class="kpi">
               <div class="k">Volume total</div>
@@ -449,9 +452,12 @@ function expandAll() {
           </div>
         </div>
 
-        <!-- SECTIONS (collapsible + edit) -->
-        <div class="card">
-          <div class="sectionTitle">Sections (hiérarchie)</div>
+        <!-- SECTIONS -->
+        <div class="panel">
+          <div class="sectionHead">
+            <div class="sectionTitle">Sections (hiérarchie)</div>
+            <div class="hint">% = part du CA total (CA = PV moyen × volume total). Les champs à 0 sont masqués.</div>
+          </div>
 
           <div class="tableWrap">
             <table class="table">
@@ -472,12 +478,12 @@ function expandAll() {
                   <tr class="parentRow">
                     <td>
                       <div class="labelCell">
-                        <!-- ✅ toggle uniquement via chevron -->
+                        <!-- toggle uniquement via chevron -->
                         <button class="chevBtn" @click.stop="toggle(b.key)" :aria-label="'toggle ' + b.key">
                           <span class="chev">{{ open[b.key] ? "▾" : "▸" }}</span>
                         </button>
 
-                        <!-- ✅ clic sur le nom => edit/navigate -->
+                        <!-- clic sur le nom => edit/navigate -->
                         <button class="sectionLink" @click.stop="editSection(b.key)" :title="'Ouvrir: ' + b.key">
                           <b>{{ b.parent.label }}</b>
                         </button>
@@ -516,15 +522,11 @@ function expandAll() {
 
                   <!-- If no children -->
                   <tr v-if="open[b.key] && b.children.length === 0" class="childRow empty">
-                    <td class="muted" colspan="6" style="padding-left: 36px;">Aucun détail (valeurs = 0).</td>
+                    <td class="muted" colspan="6" style="padding-left: 40px">Aucun détail (valeurs = 0).</td>
                   </tr>
                 </template>
               </tbody>
             </table>
-          </div>
-
-          <div class="muted" style="margin-top:8px">
-            % = part du CA total (CA = PV moyen × volume total). Les champs à 0 sont masqués.
           </div>
         </div>
       </template>
@@ -533,86 +535,197 @@ function expandAll() {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:10px; padding:12px; }
-.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; }
-.h1 { font-size:16px; font-weight:900; margin:0; }
-.muted { color:#6b7280; font-size:12px; }
+/* Palette proche HeaderDashboard.vue */
+.page{
+  --text:#0f172a;
+  --muted: rgba(15,23,42,0.65);
+  --border: rgba(16,24,40,0.12);
+  --soft: rgba(15,23,42,0.04);
+  --soft2: rgba(15,23,42,0.03);
 
-.actions { display:flex; gap:8px; }
-.btn { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer; }
-.btn:hover { background:#f9fafb; }
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding:10px 10px 14px;
+}
 
-.card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
-.error { border-color:#ef4444; background:#fff5f5; }
+/* top */
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.titleWrap{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.h1{ font-size:14px; font-weight:950; color:var(--text); }
+.sub{ font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-.kpiGrid {
+.actions{ display:flex; gap:8px; align-items:center; }
+.btn{
+  border:1px solid var(--border);
+  background: rgba(255,255,255,0.80);
+  border-radius:14px;
+  padding:7px 10px;
+  font-size:12px;
+  font-weight:900;
+  color: rgba(15,23,42,0.86);
+  cursor:pointer;
+  box-shadow: 0 4px 14px rgba(15,23,42,0.06);
+}
+.btn:hover{
+  background: rgba(32,184,232,0.12);
+  border-color: rgba(32,184,232,0.18);
+}
+
+/* panels */
+.panel{
+  background: rgba(255,255,255,0.92);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:12px;
+  box-shadow: 0 10px 26px rgba(15,23,42,0.06);
+}
+.error{ border-color: rgba(239,68,68,0.45); background: rgba(255,245,245,0.92); }
+.muted{ color:var(--muted); font-size:12px; }
+
+/* KPIs */
+.kpiGrid{
   display:grid;
-  grid-template-columns: repeat(3, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap:10px;
 }
-@media (max-width: 980px) { .kpiGrid { grid-template-columns: 1fr; } }
+@media (max-width: 980px){ .kpiGrid{ grid-template-columns: 1fr; } }
 
-.kpi { border:1px solid #eef2f7; border-radius:12px; padding:10px; background:#fcfcfd; }
-.k { font-size:11px; color:#6b7280; }
-.v { font-size:15px; font-weight:900; margin-top:2px; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
-.u { font-size:12px; font-weight:600; color:#6b7280; }
-.tag { border:1px solid #e5e7eb; background:#fff; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; color:#111827; }
-
-.sectionTitle { font-weight:900; font-size:13px; margin-bottom:10px; }
-
-.tableWrap { overflow:auto; }
-.table { width:100%; border-collapse:collapse; font-size:12px; }
-.table th, .table td { border-bottom:1px solid #e5e7eb; padding:7px 8px; text-align:left; vertical-align:top; }
-.table th { background:#fafafa; color:#6b7280; font-size:11px; }
-.r { text-align:right; }
-
-.editCol { width: 88px; }
-
-/* parent/child */
-.parentRow { background:#fcfcfd; user-select:none; }
-.parentRow:hover { background:#f8fafc; }
-
-.childRow { background:#fff; }
-.childRow.empty { background:#fff; }
-
-.labelCell { display:flex; align-items:center; gap:8px; }
-.labelCell.child { padding-left: 18px; }
-
-.chev { width: 16px; display:inline-block; color:#6b7280; }
-.indent { width: 16px; display:inline-block; color:#9ca3af; }
-
-/* ✅ NEW: toggle button + link */
-.chevBtn{
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 6px;
+.kpi{
+  border:1px solid rgba(16,24,40,0.10);
+  border-radius:16px;
+  padding:10px 10px;
+  background: linear-gradient(180deg, var(--soft2), rgba(255,255,255,0.92));
 }
-.chevBtn:hover{ background:#eef2f7; }
+.k{ font-size:10px; font-weight:950; color: rgba(15,23,42,0.55); letter-spacing:0.2px; }
+.v{
+  font-size:15px;
+  font-weight:950;
+  margin-top:4px;
+  display:flex;
+  gap:8px;
+  align-items:baseline;
+  flex-wrap:wrap;
+  color: var(--text);
+}
+.u{ font-size:11px; font-weight:900; color: rgba(15,23,42,0.55); }
+.tag{
+  border:1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.9);
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:950;
+  color: rgba(15,23,42,0.86);
+}
+
+/* sections head */
+.sectionHead{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:8px;
+}
+.sectionTitle{ font-size:12px; font-weight:950; color: var(--text); }
+.hint{ font-size:11px; color: var(--muted); }
+
+/* table */
+.tableWrap{
+  overflow:auto;
+  border: 1px solid rgba(16,24,40,0.10);
+  border-radius: 14px;
+  background:#fff;
+}
+.table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  font-size:12px;
+}
+.table th, .table td{
+  border-bottom:1px solid rgba(16,24,40,0.10);
+  padding:8px 10px;
+  text-align:left;
+  vertical-align:middle; /* ✅ centrage vertical */
+  white-space:nowrap;
+}
+.table thead th{
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(15,23,42,0.02), rgba(15,23,42,0.04));
+  color: rgba(15,23,42,0.55);
+  font-size:10px;
+  font-weight:950;
+  letter-spacing:0.2px;
+}
+.r{ text-align:right; }
+.editCol{ width: 98px; }
+
+/* rows */
+.parentRow{
+  background: rgba(15,23,42,0.02);
+  user-select:none;
+}
+.parentRow:hover{ background: rgba(32,184,232,0.08); }
+.childRow{ background:#fff; }
+.childRow.empty{ background:#fff; }
+
+.labelCell{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width: 260px;
+}
+.labelCell.child{ padding-left: 18px; }
+
+.chev{ width:16px; display:inline-block; color: rgba(15,23,42,0.55); font-weight:900; }
+.indent{ width:16px; display:inline-block; color: rgba(15,23,42,0.35); }
+
+/* controls */
+.chevBtn{
+  border:1px solid transparent;
+  background: transparent;
+  cursor:pointer;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+.chevBtn:hover{
+  background: rgba(15,23,42,0.04);
+  border-color: rgba(16,24,40,0.10);
+}
 
 .sectionLink{
-  border: 0;
+  border:0;
   background: transparent;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 6px;
-  text-align: left;
-}
-.sectionLink:hover{
-  background:#eef2f7;
-}
-
-/* ✅ NEW: edit button */
-.editBtn{
-  border: 1px solid #d1d5db;
-  background:#fff;
+  cursor:pointer;
+  padding: 2px 6px;
   border-radius: 10px;
+  text-align:left;
+  color: var(--text);
+}
+.sectionLink:hover{ background: rgba(15,23,42,0.04); }
+
+.editBtn{
+  border:1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  border-radius: 14px;
   padding: 6px 10px;
   font-size: 12px;
-  cursor: pointer;
+  font-weight: 950;
+  cursor:pointer;
+  color: rgba(15,23,42,0.86);
 }
 .editBtn:hover{
-  background:#f9fafb;
+  background: rgba(32,184,232,0.12);
+  border-color: rgba(32,184,232,0.18);
 }
 </style>

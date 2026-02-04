@@ -161,12 +161,12 @@ const lines = computed<Line[]>(() => {
   };
 
   return [
-    mk("cab", "Maintenance CAB"),
-    mk("elec", "Maintenance Électricité"),
-    mk("chargeur", "Maintenance Chargeur"),
-    mk("generale", "Maintenance Générale"),
-    mk("bassins", "Maintenance Bassins"),
-    mk("preventive", "Maintenance Préventive"),
+    mk("cab", "CAB"),
+    mk("elec", "Électricité"),
+    mk("chargeur", "Chargeur"),
+    mk("generale", "Générale"),
+    mk("bassins", "Bassins"),
+    mk("preventive", "Préventive"),
   ];
 });
 
@@ -253,57 +253,62 @@ function askReset() {
 
 <template>
   <div class="page">
+    <!-- ✅ Top compact -->
     <div class="top">
-      <div class="title">
-        <div class="h1">Maintenance</div>
-        <div class="muted" v-if="variant">
-          Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
+      <div class="tleft">
+        <div class="titleRow">
+          <div class="h1">Maintenance</div>
+          <span class="badge" v-if="variant">Variante active</span>
         </div>
-        <div class="muted" v-else>Aucune variante active.</div>
+        <div class="muted tiny" v-if="variant">
+          <b class="clip">{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
+          <span v-if="dureeMois" class="sep">•</span>
+          <span v-if="dureeMois">Durée <b>{{ dureeMois }}</b> mois</span>
+        </div>
+        <div class="muted tiny" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
-        <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
+        <button class="btn" :disabled="!variant || saving" @click="askReset()">Reset</button>
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
-          {{ saving ? "..." : "Enregistrer" }}
+          {{ saving ? "…" : "Enregistrer" }}
         </button>
       </div>
     </div>
 
-    <div v-if="(store as any).loading" class="panel">Chargement…</div>
-    <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
+    <div v-if="(store as any).loading" class="alert">Chargement…</div>
+    <div v-else-if="(store as any).error" class="alert error"><b>Erreur :</b> {{ (store as any).error }}</div>
 
     <template v-else>
-      <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
+      <div v-if="err" class="alert error"><b>Erreur :</b> {{ err }}</div>
 
-      <div v-if="!variant" class="panel">
+      <div v-if="!variant" class="card">
         <div class="muted">Sélectionne une variante puis reviens ici.</div>
       </div>
 
       <template v-else>
-        <!-- KPIs (sans Volume/CA/PV moyen) -->
+        <!-- ✅ KPIs denses (4) -->
         <div class="kpis">
           <div class="kpi">
-            <div class="kLbl">Maintenance / mois</div>
-            <div class="kVal">{{ n(mensuelTotal, 2) }} <span>DH/mois</span></div>
+            <div class="kLbl">Mensuel</div>
+            <div class="kVal mono">{{ n(mensuelTotal, 2) }} <span>DH/mois</span></div>
           </div>
           <div class="kpi">
-            <div class="kLbl">Maintenance total</div>
-            <div class="kVal">{{ money(total, 2) }}</div>
+            <div class="kLbl">Total</div>
+            <div class="kVal mono">{{ money(total, 2) }}</div>
           </div>
           <div class="kpi">
-            <div class="kLbl">Maintenance / m³</div>
-            <div class="kVal">{{ n(parM3, 2) }} <span>DH/m³</span></div>
+            <div class="kLbl">DH / m³</div>
+            <div class="kVal mono">{{ n(parM3, 2) }} <span>DH/m³</span></div>
           </div>
           <div class="kpi">
-            <div class="kLbl">% du CA</div>
-            <div class="kVal">{{ n(pctCa, 2) }} <span>%</span></div>
+            <div class="kLbl">% CA</div>
+            <div class="kVal mono">{{ n(pctCa, 2) }} <span>%</span></div>
           </div>
         </div>
 
-        <!-- Table -->
-        <div class="panel">
+        <!-- ✅ Table dense -->
+        <div class="card pad0">
           <div class="tableWrap">
             <table class="table">
               <colgroup>
@@ -318,7 +323,7 @@ function askReset() {
                 <tr>
                   <th class="th">Poste</th>
                   <th class="th r">DH/mois</th>
-                  <th class="th r">Total (DH)</th>
+                  <th class="th r">Total</th>
                   <th class="th r">DH/m³</th>
                   <th class="th r">% CA</th>
                 </tr>
@@ -330,17 +335,18 @@ function askReset() {
                     <b>{{ ln.label }}</b>
                   </td>
 
+                  <!-- ✅ input mensuel => couleur spéciale -->
                   <td class="r">
                     <div class="inCell">
                       <input
-                        class="inputSm r"
+                        class="inputSm mono r inputMonth"
                         type="number"
                         step="0.01"
                         min="0"
                         :value="(edit as any)[ln.key]"
                         @input="(edit as any)[ln.key] = clamp(($event.target as HTMLInputElement).value, 0, 1e12)"
                       />
-                      <span class="unit">DH</span>
+                      <span class="unit unitMonth">DH</span>
                     </div>
                   </td>
 
@@ -351,17 +357,19 @@ function askReset() {
 
                 <tr class="sumRow">
                   <td><b>Total</b></td>
-                  <td class="r"><b>{{ n(mensuelTotal, 2) }}</b> <span class="unit">DH</span></td>
-                  <td class="r"><b>{{ money(total, 2) }}</b></td>
-                  <td class="r"><b>{{ n(parM3, 2) }}</b></td>
-                  <td class="r"><b>{{ n(pctCa, 2) }}%</b></td>
+                  <td class="r">
+                    <b class="mono">{{ n(mensuelTotal, 2) }}</b> <span class="unit unitMonth">DH</span>
+                  </td>
+                  <td class="r"><b class="mono">{{ money(total, 2) }}</b></td>
+                  <td class="r"><b class="mono">{{ n(parM3, 2) }}</b></td>
+                  <td class="r"><b class="mono">{{ n(pctCa, 2) }}%</b></td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div class="muted foot">
-            Durée utilisée : <b>{{ dureeMois }}</b> mois — % calculé sur le CA issu des formules (CMP + Transport + MOMD).
+          <div class="foot muted tiny">
+            Durée : <b>{{ dureeMois }}</b> mois — % sur CA (CMP + Transport + MOMD).
           </div>
         </div>
       </template>
@@ -393,129 +401,298 @@ function askReset() {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:10px; padding:12px; }
+/* ✅ ultra compact page */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
 
-/* top */
-.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-.title { display:flex; flex-direction:column; gap:2px; }
-.h1 { font-size:16px; font-weight:800; line-height:1.1; margin:0; }
-.muted { color:#6b7280; font-size:12px; }
-.actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+/* top compact */
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tleft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 260px;
+}
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.h1 {
+  font-size: 16px;
+  font-weight: 950;
+  line-height: 1.05;
+  margin: 0;
+  color: #111827;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.muted {
+  color: #6b7280;
+  font-size: 11px;
+}
+.tiny {
+  font-size: 10px;
+}
+.clip {
+  display: inline-block;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  margin: 0 6px;
+  color: #9ca3af;
+}
 
-/* panel */
-.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
-.panel.error { border-color:#ef4444; background:#fff5f5; }
+.actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
+/* alerts */
+.alert {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.alert.error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
+
+/* buttons */
 .btn {
-  border:1px solid #d1d5db;
-  background:#fff;
-  border-radius:10px;
-  padding:7px 10px;
-  font-size:13px;
-  cursor:pointer;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 12px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+  line-height: 1;
 }
-.btn:hover { background:#f9fafb; }
-.btn.primary { background:#007a33; border-color:#007a33; color:#fff; }
-.btn.primary:hover { background:#046a2f; }
-.btn:disabled { opacity:.6; cursor:not-allowed; }
-
-/* KPIs */
-.kpis{
-  display:grid;
-  grid-template-columns: repeat(4, minmax(170px, 1fr));
-  gap:8px;
+.btn:hover {
+  background: #f9fafb;
 }
-@media (max-width: 900px){ .kpis{ grid-template-columns: repeat(2, minmax(170px, 1fr)); } }
-
-.kpi{
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:12px;
-  padding:8px 10px;
-  display:flex;
-  flex-direction:column;
-  gap:4px;
+.btn.primary {
+  background: #007a33;
+  border-color: #007a33;
+  color: #fff;
 }
-.kLbl{ font-size:11px; color:#6b7280; }
-.kVal{ font-size:13px; font-weight:900; white-space:nowrap; }
-.kVal span{ font-weight:600; color:#6b7280; margin-left:6px; }
+.btn.primary:hover {
+  filter: brightness(0.95);
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
-/* Table */
-.tableWrap { overflow-x: auto; }
-.table{
-  width:100%;
-  border-collapse:collapse;
-  font-size:12px;
+/* cards */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 10px;
+}
+.card.pad0 {
+  padding: 0;
+}
+
+/* KPIs compact */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+.kpi {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kLbl {
+  font-size: 10px;
+  color: #6b7280;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.kVal {
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+  color: #111827;
+}
+.kVal span {
+  font-weight: 900;
+  color: #6b7280;
+  margin-left: 6px;
+  font-size: 10.5px;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* table dense */
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
   table-layout: fixed;
 }
-.colLabel { width: 260px; }
-.colMensuel { width: 150px; }
-.colTotal { width: 170px; }
-.colM3 { width: 120px; }
-.colPct { width: 90px; }
+.colLabel {
+  width: 230px;
+}
+.colMensuel {
+  width: 160px;
+}
+.colTotal {
+  width: 170px;
+}
+.colM3 {
+  width: 120px;
+}
+.colPct {
+  width: 90px;
+}
 
-.th, .table td{
-  border-bottom:1px solid #e5e7eb;
-  padding:8px 8px;
-  vertical-align:middle;
+.th,
+.table td {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 6px 7px; /* ✅ dense */
+  vertical-align: middle;
 }
-.th{
-  background:#fafafa;
-  color:#6b7280;
-  font-size:11px;
-  white-space:nowrap;
+.th {
+  background: #fafafa;
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 950;
+  white-space: nowrap;
 }
-.r { text-align:right; }
-.mono{ font-variant-numeric: tabular-nums; }
+.r {
+  text-align: right;
+}
 
-.inCell{
-  display:inline-flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:6px;
-  width:100%;
+.inCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
 }
-.inputSm{
-  border:1px solid #d1d5db;
-  border-radius:10px;
-  font-size:12px;
-  padding:5px 7px;
+.inputSm {
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  font-size: 11px;
+  padding: 6px 7px;
   width: 92px;
-  text-align:right;
+  text-align: right;
+  background: #fff;
 }
-.unit{
-  color:#6b7280;
-  font-size:11px;
+.unit {
+  color: #6b7280;
+  font-size: 10.5px;
   min-width: 20px;
-  text-align:right;
+  text-align: right;
 }
 
-.sumRow td{
-  background:#fcfcfd;
-  font-weight:900;
+/* ✅ Distinction des champs mensuels (DH/mois) */
+.inputMonth {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(239, 246, 255, 0.9);
+  font-weight: 950;
+}
+.inputMonth:focus {
+  outline: none;
+  border-color: rgba(29, 78, 216, 0.85);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
 }
 
-.foot{
-  margin-top:8px;
+.unitMonth {
+  color: rgba(29, 78, 216, 0.95);
+  font-weight: 950;
+}
+
+.sumRow td {
+  background: #fcfcfd;
+  font-weight: 950;
+}
+
+.foot {
+  padding: 7px 10px;
+  border-top: 1px solid #e5e7eb;
 }
 
 /* modal */
 .modalMask {
-  position:fixed; inset:0;
-  background:rgba(0,0,0,.35);
-  display:flex; align-items:center; justify-content:center;
-  padding:16px;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
   z-index: 50;
 }
 .modal {
-  width:min(520px, 100%);
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:16px;
-  padding:14px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.15);
+  width: min(520px, 100%);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
-.modalTitle { font-weight:900; font-size:14px; margin-bottom:6px; }
-.modalMsg { color:#374151; font-size:13px; white-space:pre-wrap; }
-.modalActions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.modalTitle {
+  font-weight: 950;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #111827;
+}
+.modalMsg {
+  color: #374151;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
 </style>

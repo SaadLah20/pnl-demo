@@ -226,97 +226,99 @@ const amortPctCa = computed<number>(() => {
 
       <!-- ✅ SINON: UI CAB NORMAL -->
       <template v-else>
-        <!-- KPI unique -->
-        <div class="card kpiCard">
-          <div class="kpiLabel">Amortissement total</div>
-          <div class="kpiValue">
-            {{ money(amortTotal) }}
-            <span class="tag">{{ n(amortPctCa, 2) }}%</span>
-          </div>
-          <div class="muted small">
-            Total = amortissement/mois × durée contrat ({{ dureeMois }} mois). % = part du CA (si CA dispo).
-          </div>
-        </div>
-
-        <!-- CAB core -->
-        <div class="card">
-          <div class="cardTitle">🏗️ Données CAB</div>
-          <div class="muted small" style="margin-top: 4px">
-            Clique sur une valeur pour modifier. Clique ailleurs pour sortir du champ.
-          </div>
-
-          <div class="rows">
-            <!-- Etat -->
-            <div class="row">
-              <div class="label">État</div>
-              <div class="value">
-                <template v-if="activeField === 'etat'">
-                  <select class="input" v-model="draft.etat" @change="markDirty()" data-editor="1">
-                    <option value="NEUVE">NEUVE</option>
-                    <option value="OCCASION">OCCASION</option>
-                  </select>
-                </template>
-                <template v-else>
-                  <span class="click" @click="startEdit('etat')">{{ draft.etat }}</span>
-                </template>
-              </div>
+        <div class="mainGrid">
+          <!-- CAB core -->
+          <div class="card">
+            <div class="cardTitle">🏗️ Données CAB</div>
+            <div class="muted small" style="margin-top: 4px">
+              Clique sur une valeur pour modifier. Clique ailleurs pour sortir du champ.
             </div>
 
-            <!-- Mode -->
-            <div class="row">
-              <div class="label">Mode</div>
-              <div class="value">
-                <template v-if="activeField === 'mode'">
-                  <select class="input" v-model="draft.mode" @change="markDirty()" data-editor="1">
-                    <option value="ACHAT">ACHAT</option>
-                    <option value="LOCATION">LOCATION</option>
-                    <option value="LEASING">LEASING</option>
-                  </select>
-                </template>
-                <template v-else>
-                  <span class="click" @click="startEdit('mode')">{{ draft.mode }}</span>
-                </template>
+            <div class="rows">
+              <!-- Etat -->
+              <div class="row">
+                <div class="label">État</div>
+                <div class="value">
+                  <template v-if="activeField === 'etat'">
+                    <select class="input" v-model="draft.etat" @change="markDirty()" data-editor="1">
+                      <option value="NEUVE">NEUVE</option>
+                      <option value="OCCASION">OCCASION</option>
+                    </select>
+                  </template>
+                  <template v-else>
+                    <span class="click" @click="startEdit('etat')">{{ draft.etat }}</span>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Mode -->
+              <div class="row">
+                <div class="label">Mode</div>
+                <div class="value">
+                  <template v-if="activeField === 'mode'">
+                    <select class="input" v-model="draft.mode" @change="markDirty()" data-editor="1">
+                      <option value="ACHAT">ACHAT</option>
+                      <option value="LOCATION">LOCATION</option>
+                      <option value="LEASING">LEASING</option>
+                    </select>
+                  </template>
+                  <template v-else>
+                    <span class="click" @click="startEdit('mode')">{{ draft.mode }}</span>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Capacite -->
+              <div class="row">
+                <div class="label">Capacité (m³)</div>
+                <div class="value">
+                  <template v-if="activeField === 'capaciteM3'">
+                    <input
+                      class="input right"
+                      type="number"
+                      step="0.1"
+                      v-model.number="draft.capaciteM3"
+                      @input="markDirty()"
+                      data-editor="1"
+                    />
+                  </template>
+                  <template v-else>
+                    <span class="click" @click="startEdit('capaciteM3')">{{ n(draft.capaciteM3, 1) }}</span>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Amort -->
+              <div class="row">
+                <div class="label">Amortissement / mois</div>
+                <div class="value">
+                  <template v-if="activeField === 'amortMois'">
+                    <input
+                      class="input right"
+                      type="number"
+                      step="0.01"
+                      v-model.number="draft.amortMois"
+                      @input="markDirty()"
+                      data-editor="1"
+                    />
+                  </template>
+                  <template v-else>
+                    <span class="click" @click="startEdit('amortMois')"><b>{{ money(draft.amortMois) }}</b></span>
+                  </template>
+                </div>
               </div>
             </div>
+          </div>
 
-            <!-- Capacite -->
-            <div class="row">
-              <div class="label">Capacité (m³)</div>
-              <div class="value">
-                <template v-if="activeField === 'capaciteM3'">
-                  <input
-                    class="input right"
-                    type="number"
-                    step="0.1"
-                    v-model.number="draft.capaciteM3"
-                    @input="markDirty()"
-                    data-editor="1"
-                  />
-                </template>
-                <template v-else>
-                  <span class="click" @click="startEdit('capaciteM3')">{{ n(draft.capaciteM3, 1) }}</span>
-                </template>
-              </div>
+          <!-- KPI unique (à droite, pour réduire la hauteur globale) -->
+          <div class="card kpiCard">
+            <div class="kpiLabel">Amortissement total</div>
+            <div class="kpiValue">
+              {{ money(amortTotal) }}
+              <span class="tag">{{ n(amortPctCa, 2) }}%</span>
             </div>
-
-            <!-- Amort -->
-            <div class="row">
-              <div class="label">Amortissement / mois</div>
-              <div class="value">
-                <template v-if="activeField === 'amortMois'">
-                  <input
-                    class="input right"
-                    type="number"
-                    step="0.01"
-                    v-model.number="draft.amortMois"
-                    @input="markDirty()"
-                    data-editor="1"
-                  />
-                </template>
-                <template v-else>
-                  <span class="click" @click="startEdit('amortMois')"><b>{{ money(draft.amortMois) }}</b></span>
-                </template>
-              </div>
+            <div class="muted small">
+              Total = amortissement/mois × durée contrat ({{ dureeMois }} mois). % = part du CA (si CA dispo).
             </div>
           </div>
         </div>
@@ -343,8 +345,12 @@ h1 { margin:0; font-size:18px; }
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
 .error { border-color:#ef4444; background:#fff5f5; }
 
+/* layout: CAB à gauche, KPI à droite */
+.mainGrid { display:grid; grid-template-columns: 1fr 320px; gap:10px; align-items:start; }
+@media (max-width: 980px) { .mainGrid { grid-template-columns: 1fr; } }
+
 /* KPI */
-.kpiCard { background:#fcfcfd; }
+.kpiCard { background:#fcfcfd; padding:10px; }
 .kpiLabel { font-size:11px; color:#6b7280; }
 .kpiValue { font-size:16px; font-weight:950; margin-top:4px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
 .tag { border:1px solid #e5e7eb; background:#fff; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; color:#111827; }

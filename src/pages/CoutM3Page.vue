@@ -198,80 +198,106 @@ function askReset() {
 <template>
   <div class="page">
     <div class="top">
-      <div class="title">
-        <div class="h1">Coût au m³</div>
-        <div class="muted" v-if="variant">
-          Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="contract?.dureeMois"> — Durée {{ contract.dureeMois }} mois</span>
+      <div class="tleft">
+        <div class="titleRow">
+          <div class="h1">Coût au m³</div>
+          <span class="badge" v-if="variant">Variante active</span>
         </div>
-        <div class="muted" v-else>Aucune variante active.</div>
+
+        <div class="muted tiny" v-if="variant">
+          <b class="clip">{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
+          <span v-if="contract?.dureeMois" class="sep">•</span>
+          <span v-if="contract?.dureeMois">Durée <b>{{ contract.dureeMois }}</b> mois</span>
+        </div>
+        <div class="muted tiny" v-else>Aucune variante active.</div>
       </div>
 
       <div class="actions">
-        <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
+        <button class="btn" :disabled="!variant || saving" @click="askReset()">Reset</button>
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
-          {{ saving ? "..." : "Enregistrer" }}
+          {{ saving ? "…" : "Enregistrer" }}
         </button>
       </div>
     </div>
 
-    <div v-if="(store as any).loading" class="panel">Chargement…</div>
-    <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
+    <div v-if="(store as any).loading" class="alert">Chargement…</div>
+    <div v-else-if="(store as any).error" class="alert error"><b>Erreur :</b> {{ (store as any).error }}</div>
 
     <template v-else>
-      <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
+      <div v-if="err" class="alert error"><b>Erreur :</b> {{ err }}</div>
 
-      <div v-if="!variant" class="panel">
+      <div v-if="!variant" class="card">
         <div class="muted">Sélectionne une variante puis reviens ici.</div>
       </div>
 
       <template v-else>
-        <!-- KPIs (sans Volume/CA/PV affichés ailleurs, mais ici on reste "section-style") -->
+        <!-- ✅ KPI "Prix / m³" spécial -->
         <div class="kpis">
-          <div class="kpi">
-            <div class="kLbl">Prix / m³</div>
-            <div class="kVal">{{ n(coutM3ParM3, 2) }} <span>DH/m³</span></div>
+          <div class="kpi kpiSpecial">
+            <div class="kLbl kLblSpecial">Prix / m³</div>
+            <div class="kVal mono kValSpecial">
+              {{ n(coutM3ParM3, 2) }} <span class="unitSpecial">DH/m³</span>
+            </div>
           </div>
 
           <div class="kpi">
             <div class="kLbl">Total</div>
-            <div class="kVal">{{ money(coutM3Total, 2) }}</div>
+            <div class="kVal mono">{{ money(coutM3Total, 2) }}</div>
           </div>
 
           <div class="kpi">
             <div class="kLbl">/ mois</div>
-            <div class="kVal">{{ money(coutM3ParMois, 2) }}</div>
+            <div class="kVal mono">{{ money(coutM3ParMois, 2) }}</div>
           </div>
 
           <div class="kpi">
             <div class="kLbl">%</div>
-            <div class="kVal">{{ n(coutM3Pct, 2) }} <span>%</span></div>
+            <div class="kVal mono">{{ n(coutM3Pct, 2) }} <span>%</span></div>
           </div>
         </div>
 
-        <!-- Inputs -->
-        <div class="panel">
+        <!-- ✅ Inputs compacts -->
+        <div class="card">
           <div class="grid3">
             <div class="field">
-              <div class="label">Eau (DH/m³)</div>
-              <input class="input r" type="number" step="0.01" min="0" v-model.number="draft.eau" />
+              <div class="label">Eau</div>
+              <div class="inRow">
+                <input class="inputSm mono r inputCompact" type="number" step="0.01" min="0" v-model.number="draft.eau" />
+                <span class="unit">DH/m³</span>
+              </div>
             </div>
 
             <div class="field">
-              <div class="label">Qualité (DH/m³)</div>
-              <input class="input r" type="number" step="0.01" min="0" v-model.number="draft.qualite" />
+              <div class="label">Qualité</div>
+              <div class="inRow">
+                <input
+                  class="inputSm mono r inputCompact"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  v-model.number="draft.qualite"
+                />
+                <span class="unit">DH/m³</span>
+              </div>
             </div>
 
             <div class="field">
-              <div class="label">Déchets (DH/m³)</div>
-              <input class="input r" type="number" step="0.01" min="0" v-model.number="draft.dechets" />
+              <div class="label">Déchets</div>
+              <div class="inRow">
+                <input
+                  class="inputSm mono r inputCompact"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  v-model.number="draft.dechets"
+                />
+                <span class="unit">DH/m³</span>
+              </div>
             </div>
           </div>
 
-          <div class="note">
-            <span class="muted">
-              Calcul: Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (des formules de la variante)
-            </span>
+          <div class="note muted tiny">
+            Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (formules).
           </div>
         </div>
       </template>
@@ -285,11 +311,7 @@ function askReset() {
 
         <div class="modalActions">
           <button class="btn" @click="closeModal()">Fermer</button>
-          <button
-            v-if="modal.mode === 'confirm'"
-            class="btn primary"
-            @click="modal.onConfirm && modal.onConfirm()"
-          >
+          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
             Confirmer
           </button>
         </div>
@@ -299,94 +321,274 @@ function askReset() {
 </template>
 
 <style scoped>
-.page { display:flex; flex-direction:column; gap:10px; padding:12px; }
+/* compact page */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
 
-.top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-.title { display:flex; flex-direction:column; gap:2px; }
-.h1 { font-size:16px; font-weight:800; line-height:1.1; margin:0; }
-.muted { color:#6b7280; font-size:12px; }
-.actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+/* top */
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tleft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 260px;
+}
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.h1 {
+  font-size: 16px;
+  font-weight: 950;
+  line-height: 1.05;
+  margin: 0;
+  color: #111827;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.muted {
+  color: #6b7280;
+  font-size: 11px;
+}
+.tiny {
+  font-size: 10px;
+}
+.clip {
+  display: inline-block;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  margin: 0 6px;
+  color: #9ca3af;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
-.panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
-.panel.error { border-color:#ef4444; background:#fff5f5; }
+/* alerts */
+.alert {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.alert.error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
 
+/* buttons */
 .btn {
-  border:1px solid #d1d5db;
-  background:#fff;
-  border-radius:10px;
-  padding:7px 10px;
-  font-size:13px;
-  cursor:pointer;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 12px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+  line-height: 1;
 }
-.btn:hover { background:#f9fafb; }
-.btn.primary { background:#007a33; border-color:#007a33; color:#fff; }
-.btn.primary:hover { background:#046a2f; }
-.btn:disabled { opacity:.6; cursor:not-allowed; }
-
-/* KPIs: compact 4 cards */
-.kpis{
-  display:grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
-  gap:8px;
+.btn:hover {
+  background: #f9fafb;
 }
-@media (max-width: 980px){ .kpis{ grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
-@media (max-width: 520px){ .kpis{ grid-template-columns: 1fr; } }
-
-.kpi{
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:12px;
-  padding:8px 10px;
-  display:flex;
-  flex-direction:column;
-  gap:4px;
+.btn.primary {
+  background: #007a33;
+  border-color: #007a33;
+  color: #fff;
 }
-.kLbl{ font-size:11px; color:#6b7280; }
-.kVal{ font-size:13px; font-weight:900; white-space:nowrap; }
-.kVal span{ font-weight:600; color:#6b7280; margin-left:6px; }
+.btn.primary:hover {
+  filter: brightness(0.95);
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
-.grid3{
-  display:grid;
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+.r {
+  text-align: right;
+}
+
+/* cards */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 10px;
+}
+
+/* KPIs */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+.kpi {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kLbl {
+  font-size: 10px;
+  color: #6b7280;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.kVal {
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+  color: #111827;
+}
+.kVal span {
+  font-weight: 900;
+  color: #6b7280;
+  margin-left: 6px;
+  font-size: 10.5px;
+}
+
+/* ✅ KPI spécial (Prix / m³) — même palette que inputMonth */
+.kpiSpecial {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(239, 246, 255, 0.9);
+}
+.kLblSpecial {
+  color: rgba(29, 78, 216, 0.95);
+}
+.kValSpecial {
+  color: #111827;
+}
+.unitSpecial {
+  color: rgba(29, 78, 216, 0.95) !important;
+  font-weight: 950 !important;
+}
+
+/* Inputs grid */
+.grid3 {
+  display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
-  gap:10px;
+  gap: 10px;
 }
-@media (max-width: 980px){ .grid3{ grid-template-columns: 1fr; } }
-
-.field { display:flex; flex-direction:column; gap:6px; }
-.label { font-size:11px; color:#6b7280; }
-
-.input{
-  border:1px solid #d1d5db;
-  border-radius:10px;
-  font-size:13px;
-  padding:7px 9px;
-  width:100%;
+@media (max-width: 980px) {
+  .grid3 {
+    grid-template-columns: 1fr;
+  }
 }
-.r { text-align:right; }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 900;
+}
 
-.note{
-  margin-top:10px;
-  padding-top:10px;
-  border-top:1px dashed #e5e7eb;
+/* ✅ input compact */
+.inRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.inputSm {
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  font-size: 11px;
+  padding: 6px 7px;
+  background: #fff;
+}
+.inputCompact {
+  width: 110px;       /* ✅ beaucoup moins large */
+  max-width: 110px;
+}
+.unit {
+  color: #6b7280;
+  font-size: 10.5px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+/* note */
+.note {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
 }
 
 /* modal */
 .modalMask {
-  position:fixed; inset:0;
-  background:rgba(0,0,0,.35);
-  display:flex; align-items:center; justify-content:center;
-  padding:16px;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
   z-index: 50;
 }
 .modal {
-  width:min(520px, 100%);
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:16px;
-  padding:14px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.15);
+  width: min(520px, 100%);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
-.modalTitle { font-weight:900; font-size:14px; margin-bottom:6px; }
-.modalMsg { color:#374151; font-size:13px; white-space:pre-wrap; }
-.modalActions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.modalTitle {
+  font-weight: 950;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #111827;
+}
+.modalMsg {
+  color: #374151;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
 </style>
