@@ -39,6 +39,27 @@ type Metrics = Record<KpiName, KpiValues>;
 const store = usePnlStore();
 
 /* =========================
+   ✅ TOGGLES (AJOUT)
+========================= */
+const withMajorations = computed<boolean>({
+  get: () => Boolean((store as any).headerUseMajorations ?? false),
+  set: (v) => {
+    const s: any = store as any;
+    if (typeof s.setHeaderUseMajorations === "function") s.setHeaderUseMajorations(Boolean(v));
+    else s.headerUseMajorations = Boolean(v);
+  },
+});
+
+const withDevisSurcharge = computed<boolean>({
+  get: () => Boolean((store as any).headerUseDevisSurcharge ?? false),
+  set: (v) => {
+    const s: any = store as any;
+    if (typeof s.setHeaderUseDevisSurcharge === "function") s.setHeaderUseDevisSurcharge(Boolean(v));
+    else s.headerUseDevisSurcharge = Boolean(v);
+  },
+});
+
+/* =========================
    HEADER COLLAPSE (user controlled)
 ========================= */
 const collapsed = ref(false);
@@ -405,12 +426,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Fold button -->
-      <button
-        class="foldBtn"
-        type="button"
-        @click="collapsed = !collapsed"
-:aria-expanded="!collapsed"
-      >
+      <button class="foldBtn" type="button" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
         <ChevronDownIcon class="foldIc" :class="{ up: collapsed }" />
       </button>
     </div>
@@ -483,7 +499,21 @@ onBeforeUnmount(() => {
         </div>
 
         <aside class="summary">
-          <div class="summary__title">Résumé</div>
+          <div class="summary__head">
+            <div class="summary__title">Résumé</div>
+
+            <div class="summary__togglesInline">
+              <label class="toggSm">
+                <input class="toggSm__cb" type="checkbox" v-model="withMajorations" />
+                <span class="toggSm__txt">Majoration</span>
+              </label>
+
+              <label class="toggSm">
+                <input class="toggSm__cb" type="checkbox" v-model="withDevisSurcharge" />
+                <span class="toggSm__txt">Surcharge devis</span>
+              </label>
+            </div>
+          </div>
 
           <div class="summary__grid">
             <div class="sum">
@@ -588,7 +618,7 @@ onBeforeUnmount(() => {
 }
 
 .pill.pnl {
-  flex: 1 1 520px;
+  flex: 1 1 460px; /* ✅ réduit pour laisser place */
 }
 .pill.contract {
   flex: 1 1 420px;
@@ -612,11 +642,10 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 14px;
 
-  padding: 6px 10px;
-
+  padding: 4px 8px; /* ✅ compact */
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px; /* ✅ compact */
 }
 
 /* Controls => readable, flat */
@@ -651,13 +680,13 @@ onBeforeUnmount(() => {
 }
 
 .pill__label {
-  font-size: 11px;
+  font-size: 10px; /* ✅ compact */
   font-weight: 950;
   color: rgba(15, 23, 42, 0.62);
   white-space: nowrap;
 }
 .pill__value {
-  font-size: 13px;
+  font-size: 12px; /* ✅ compact */
   font-weight: 950;
   color: var(--text);
   min-width: 0;
@@ -687,9 +716,9 @@ onBeforeUnmount(() => {
 }
 
 .iconbtn {
-  width: 26px;
-  height: 26px;
-  border-radius: 10px;
+  width: 24px; /* ✅ compact */
+  height: 24px; /* ✅ compact */
+  border-radius: 9px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
   display: inline-flex;
@@ -702,8 +731,8 @@ onBeforeUnmount(() => {
   border-color: rgba(2, 132, 199, 0.18);
 }
 .ic {
-  width: 15px;
-  height: 15px;
+  width: 14px; /* ✅ compact */
+  height: 14px; /* ✅ compact */
   color: rgba(15, 23, 42, 0.75);
 }
 
@@ -728,9 +757,9 @@ onBeforeUnmount(() => {
 
 /* fold button */
 .foldBtn {
-  width: 34px;
-  height: 34px;
-  border-radius: 14px;
+  width: 32px; /* ✅ compact */
+  height: 32px; /* ✅ compact */
+  border-radius: 13px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(255, 255, 255, 0.9);
   display: inline-flex;
@@ -744,8 +773,8 @@ onBeforeUnmount(() => {
   border-color: rgba(2, 132, 199, 0.18);
 }
 .foldIc {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   transition: transform 160ms ease;
   color: rgba(15, 23, 42, 0.75);
 }
@@ -1105,14 +1134,55 @@ onBeforeUnmount(() => {
   padding: 9px 9px 7px;
   overflow: hidden;
 }
+
+/* ✅ head + toggles inline */
+.summary__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .summary__title {
   font-size: 11px;
   font-weight: 950;
   text-transform: uppercase;
   letter-spacing: 0.35px;
   color: rgba(15, 23, 42, 0.68);
-  margin-bottom: 6px;
+  margin-bottom: 0; /* ✅ important */
 }
+
+.summary__togglesInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.toggSm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(15, 23, 42, 0.02);
+  line-height: 1;
+  user-select: none;
+}
+.toggSm__cb {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+.toggSm__txt {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.75);
+  white-space: nowrap;
+}
+
 .summary__grid {
   display: grid;
   gap: 7px;

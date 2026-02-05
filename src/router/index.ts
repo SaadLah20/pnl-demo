@@ -19,9 +19,8 @@ import CoutsOccasionnelsPage from "@/pages/CoutsOccasionnelsPage.vue";
 import AutresCoutsPage from "@/pages/AutresCoutsPage.vue";
 import MajorationsPage from "@/pages/MajorationPage.vue";
 
-
-
-
+// ✅ NEW: Comparateur de variantes
+import ComparateurVariantesPage from "@/pages/ComparateurVariantesPage.vue";
 
 const routes = [
   // ✅ Page dédiée Mes P&L
@@ -31,21 +30,25 @@ const routes = [
     component: MesPnlPage,
   },
 
-    { path: "/CAB", name: "CAB", component: CabPage },
-        { path: "/mp", name: "Mp", component: MpPage },
-                { path: "/Transport", name: "Transport", component: TransportPage },
-                { path: "/formules", name: "Formules", component: FormulesPage },
-                { path: "/MomdAndQuantity", name: "MomdAndQuantity", component: MomdAndQuantity },
-{ path: "/maintenance", name: "Maintenance", component: MaintenancePage },
-{ path: "/cout-m3", name: "cout au m3", component: CoutM3 },
-{ path: "/cout-mois", name: "CoutMensuel", component: CoutMensuelPage },
-{ path: "/cout-employes", name: "CoutEmployes", component: CoutEmployesPage },
-{ path: "/couts-occasionnels", name: "CoutsOccasionnels", component: CoutsOccasionnelsPage },
-{ path: "/autres-couts", name: "AutresCouts", component: AutresCoutsPage },
-{ path: "/majorations", name: "Majorations", component: MajorationsPage },
+  { path: "/CAB", name: "CAB", component: CabPage },
+  { path: "/mp", name: "Mp", component: MpPage },
+  { path: "/Transport", name: "Transport", component: TransportPage },
+  { path: "/formules", name: "Formules", component: FormulesPage },
+  { path: "/MomdAndQuantity", name: "MomdAndQuantity", component: MomdAndQuantity },
+  { path: "/maintenance", name: "Maintenance", component: MaintenancePage },
+  { path: "/cout-m3", name: "cout au m3", component: CoutM3 },
+  { path: "/cout-mois", name: "CoutMensuel", component: CoutMensuelPage },
+  { path: "/cout-employes", name: "CoutEmployes", component: CoutEmployesPage },
+  { path: "/couts-occasionnels", name: "CoutsOccasionnels", component: CoutsOccasionnelsPage },
+  { path: "/autres-couts", name: "AutresCouts", component: AutresCoutsPage },
+  { path: "/majorations", name: "Majorations", component: MajorationsPage },
 
-
-        
+  // ✅ NEW: Comparateur de variantes
+  {
+    path: "/comparateur-variantes",
+    name: "ComparateurVariantes",
+    component: ComparateurVariantesPage,
+  },
 
   // ✅ Répertoire MP
   {
@@ -62,10 +65,10 @@ const routes = [
   },
 
   {
-  path: "/pnl-archives",
-  name: "PnlArchives",
-  component: PnlArchivePage,
-},
+    path: "/pnl-archives",
+    name: "PnlArchives",
+    component: PnlArchivePage,
+  },
 
   { path: "/details", name: "Details", component: DetailsPage },
 

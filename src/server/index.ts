@@ -5,7 +5,6 @@ import { prisma } from "./db";
 import { getPnls } from "./pnl.repo";
 import { Prisma } from "@prisma/client";
 
-
 const app = express();
 
 app.use(cors());
@@ -420,8 +419,6 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
   const body = req.body ?? {};
 
   try {
-    // ✅ Autoriser UNIQUEMENT les champs réellement existants dans Contract
-    // (d'après ton message Prisma)
     const allowed = [
       "dureeMois",
       "terrain",
@@ -446,7 +443,6 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
 
     const data: any = pick(body, allowed);
 
-    // casts propres (optionnel mais recommandé)
     if (data.dureeMois !== undefined) data.dureeMois = numOr0(data.dureeMois);
     if (data.postes !== undefined) data.postes = Math.trunc(numOr0(data.postes));
 
@@ -454,8 +450,6 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
     if (data.delayPenalty !== undefined) data.delayPenalty = Number(data.delayPenalty ?? 0);
     if (data.chillerRent !== undefined) data.chillerRent = Number(data.chillerRent ?? 0);
 
-    // 🔥 IMPORTANT : on ignore explicitement "status" si le front l'envoie
-    // (ça évite l'erreur Prisma)
     delete data.status;
 
     const updated = await prisma.contract.update({ where: { id }, data });
@@ -465,8 +459,6 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
     return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
-
-
 
 app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response) => {
   try {
@@ -487,420 +479,71 @@ app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response)
    VARIANT CRUD + UPDATE (partial payload)
 ========================================================= */
 
-type VariantCreateMode = "INITIALISEE" | "ZERO" | "INITIEE" | "COMPOSEE";
-
-function asMode(v: any): VariantCreateMode {
-  const s = String(v ?? "").trim().toUpperCase();
-  if (s === "ZERO") return "ZERO";
-  if (s === "INITIEE" || s === "INITIÉE") return "INITIEE";
-  if (s === "COMPOSEE" || s === "COMPOSÉE") return "COMPOSEE";
-  return "INITIALISEE";
-}
-
-async function ensureAutresCoutsDefault(tx: Prisma.TransactionClient, variantId: string) {
-  const sec = await tx.sectionAutresCouts.upsert({
-    where: { variantId },
-    create: { variantId, category: "COUTS_CHARGES" },
-    update: {},
-  });
-
-  // Ajoute au moins 1 item par défaut (si vide)
-  const cnt = await tx.autreCoutItem.count({ where: { variantId } });
-  if (cnt === 0) {
-    await tx.autreCoutItem.create({
-      data: {
-        sectionId: sec.id,
-        variantId,
-        label: "Frais généraux",
-        unite: "POURCENT_CA",
-        valeur: 0,
-      },
-    });
-  }
-}
-
-async function initVariantZero(tx: Prisma.TransactionClient, variantId: string) {
-  await tx.sectionTransport.create({
-    data: {
-      variantId,
-      category: "LOGISTIQUE_APPRO",
-      type: "MOYENNE",
-      prixMoyen: 0,
-      volumePompePct: 0,
-      prixAchatPompe: 0,
-      prixVentePompe: 0,
-    },
-  });
-
-  await tx.sectionCab.create({
-    data: {
-      variantId,
-      category: "LOGISTIQUE_APPRO",
-      etat: "NEUVE",
-      mode: "ACHAT",
-      capaciteM3: 0,
-      amortMois: 0,
-    },
-  });
-
-  await tx.sectionMaintenance.create({
-    data: {
-      variantId,
-      category: "COUTS_CHARGES",
-      cab: 0,
-      elec: 0,
-      chargeur: 0,
-      generale: 0,
-      bassins: 0,
-      preventive: 0,
-    },
-  });
-
-  await tx.sectionCoutM3.create({
-    data: {
-      variantId,
-      category: "COUTS_CHARGES",
-      eau: 0,
-      qualite: 0,
-      dechets: 0,
-    },
-  });
-
-  await tx.sectionCoutMensuel.create({
-    data: {
-      variantId,
-      category: "COUTS_CHARGES",
-      electricite: 0,
-      gasoil: 0,
-      location: 0,
-      securite: 0,
-      hebergements: 0,
-      locationTerrain: 0,
-      telephone: 0,
-      troisG: 0,
-      taxeProfessionnelle: 0,
-      locationVehicule: 0,
-      locationAmbulance: 0,
-      locationBungalows: 0,
-      epi: 0,
-    },
-  });
-
-  await tx.sectionCoutOccasionnel.create({
-    data: {
-      variantId,
-      category: "COUTS_CHARGES",
-      genieCivil: 0,
-      installation: 0,
-      transport: 0,
-      demontage: 0,
-      remisePointCentrale: 0,
-      silots: 0,
-      localAdjuvant: 0,
-      bungalows: 0,
-    },
-  });
-
-  await tx.sectionEmployes.create({
-    data: {
-      variantId,
-      category: "COUTS_CHARGES",
-      responsableNb: 0,
-      responsableCout: 0,
-      centralistesNb: 0,
-      centralistesCout: 0,
-      manoeuvreNb: 0,
-      manoeuvreCout: 0,
-      coordinateurExploitationNb: 0,
-      coordinateurExploitationCout: 0,
-      technicienLaboNb: 0,
-      technicienLaboCout: 0,
-      femmeMenageNb: 0,
-      femmeMenageCout: 0,
-      gardienNb: 0,
-      gardienCout: 0,
-      maintenancierNb: 0,
-      maintenancierCout: 0,
-      panierRepasNb: 0,
-      panierRepasCout: 0,
-    },
-  });
-
-  await tx.sectionMatierePremiere.create({
-    data: { variantId, category: "LOGISTIQUE_APPRO" },
-  });
-
-  await tx.sectionFormules.create({
-    data: { variantId, category: "FORMULES" },
-  });
-
-  await tx.sectionMajorations.create({
-    data: { variantId, category: "MAJORATIONS" },
-  });
-
-  await tx.sectionDevis.create({
-    data: { variantId, category: "DEVIS" },
-  });
-
-  await ensureAutresCoutsDefault(tx, variantId);
-}
-
-function rnd(min: number, max: number) {
-  return Math.round((min + Math.random() * (max - min)) * 100) / 100;
-}
-
-async function initVariantInitiee(tx: Prisma.TransactionClient, variantId: string) {
-  // base zero
-  await initVariantZero(tx, variantId);
-
-  // randomise quelques champs (placeholder)
-  await tx.sectionTransport.update({
-    where: { variantId },
-    data: {
-      type: Math.random() > 0.5 ? "MOYENNE" : "PAR_ZONE",
-      prixMoyen: rnd(50, 120),
-      volumePompePct: rnd(0, 80),
-      prixAchatPompe: rnd(0, 150),
-      prixVentePompe: rnd(0, 220),
-    },
-  });
-
-  await tx.sectionMaintenance.update({
-    where: { variantId },
-    data: {
-      cab: rnd(0, 30000),
-      elec: rnd(0, 30000),
-      chargeur: rnd(0, 30000),
-      generale: rnd(0, 15000),
-      bassins: rnd(0, 8000),
-      preventive: rnd(0, 12000),
-    },
-  });
-
-  await tx.sectionCoutM3.update({
-    where: { variantId },
-    data: { eau: rnd(0, 6), qualite: rnd(0, 4), dechets: rnd(0, 4) },
-  });
-
-  // random formules (si catalogue présent)
-  const secForm = await tx.sectionFormules.findUnique({ where: { variantId } });
-  if (secForm) {
-    const all = await tx.formuleCatalogue.findMany({ select: { id: true } });
-    const pickN = all.sort(() => 0.5 - Math.random()).slice(0, Math.min(2, all.length));
-    for (const f of pickN) {
-      await tx.variantFormule.create({
-        data: {
-          variantId,
-          sectionId: secForm.id,
-          formuleId: f.id,
-          volumeM3: rnd(10, 150),
-          momd: rnd(0, 25),
-          cmpOverride: null,
-        },
-      });
-    }
-    await syncVariantMpsFromFormules(tx, variantId);
-  }
-}
-
-async function cloneVariantFrom(tx: Prisma.TransactionClient, sourceVariantId: string, targetVariantId: string) {
-  const src = await tx.variant.findUnique({
-    where: { id: sourceVariantId },
-    include: {
-      transport: true,
-      cab: true,
-      maintenance: true,
-      coutM3: true,
-      coutMensuel: true,
-      coutOccasionnel: true,
-      employes: true,
-      autresCouts: { include: { items: true } },
-      devis: true,
-      majorations: true,
-      mp: true,
-      formules: true,
-      variantMps: true,
-      variantFormules: true,
-    },
-  });
-  if (!src) throw new Error("SOURCE_VARIANT_NOT_FOUND");
-
-  // Sections (copie brute)
-  if (src.transport) {
-    const { id: _id, variantId: _v, ...data } = src.transport as any;
-    await tx.sectionTransport.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.cab) {
-    const { id: _id, variantId: _v, ...data } = src.cab as any;
-    await tx.sectionCab.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.maintenance) {
-    const { id: _id, variantId: _v, ...data } = src.maintenance as any;
-    await tx.sectionMaintenance.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.coutM3) {
-    const { id: _id, variantId: _v, ...data } = src.coutM3 as any;
-    await tx.sectionCoutM3.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.coutMensuel) {
-    const { id: _id, variantId: _v, ...data } = src.coutMensuel as any;
-    await tx.sectionCoutMensuel.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.coutOccasionnel) {
-    const { id: _id, variantId: _v, ...data } = src.coutOccasionnel as any;
-    await tx.sectionCoutOccasionnel.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.employes) {
-    const { id: _id, variantId: _v, ...data } = src.employes as any;
-    await tx.sectionEmployes.create({ data: { variantId: targetVariantId, ...data } });
-  }
-
-  // bare sections
-  if (src.mp) {
-    const { id: _id, variantId: _v, ...data } = src.mp as any;
-    await tx.sectionMatierePremiere.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.formules) {
-    const { id: _id, variantId: _v, ...data } = src.formules as any;
-    await tx.sectionFormules.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.majorations) {
-    const { id: _id, variantId: _v, ...data } = src.majorations as any;
-    await tx.sectionMajorations.create({ data: { variantId: targetVariantId, ...data } });
-  }
-  if (src.devis) {
-    const { id: _id, variantId: _v, ...data } = src.devis as any;
-    await tx.sectionDevis.create({ data: { variantId: targetVariantId, ...data } });
-  }
-
-  // Autres couts
-  const secAc = await tx.sectionAutresCouts.create({
-    data: { variantId: targetVariantId, category: src.autresCouts?.category ?? "COUTS_CHARGES" },
-  });
-  const items = (src.autresCouts?.items ?? []) as any[];
-  if (items.length) {
-    await tx.autreCoutItem.createMany({
-      data: items.map((it) => ({
-        sectionId: secAc.id,
-        variantId: targetVariantId,
-        label: String(it.label ?? ""),
-        unite: String(it.unite ?? "FORFAIT"),
-        valeur: Number(it.valeur ?? 0),
-      })),
-    });
-  } else {
-    await ensureAutresCoutsDefault(tx, targetVariantId);
-  }
-
-  // Variant formules + sync MP
-  const secForm = await tx.sectionFormules.findUnique({ where: { variantId: targetVariantId } });
-  if (secForm) {
-    for (const vf of src.variantFormules ?? []) {
-      await tx.variantFormule.create({
-        data: {
-          variantId: targetVariantId,
-          sectionId: secForm.id,
-          formuleId: vf.formuleId,
-          volumeM3: Number(vf.volumeM3 ?? 0),
-          momd: Number(vf.momd ?? 0),
-          cmpOverride: vf.cmpOverride ?? null,
-        },
-      });
-    }
-  }
-  await syncVariantMpsFromFormules(tx, targetVariantId);
-
-  // MP overrides (si existants)
-  const secMp = await tx.sectionMatierePremiere.findUnique({ where: { variantId: targetVariantId } });
-  if (secMp) {
-    for (const vm of src.variantMps ?? []) {
-      await tx.variantMp.upsert({
-        where: { variantId_mpId: { variantId: targetVariantId, mpId: vm.mpId } },
-        create: {
-          variantId: targetVariantId,
-          sectionId: secMp.id,
-          mpId: vm.mpId,
-          prix: Number(vm.prix ?? 0),
-          comment: vm.comment ?? null,
-          prixOverride: vm.prixOverride ?? null,
-        },
-        update: {
-          prix: Number(vm.prix ?? 0),
-          comment: vm.comment ?? null,
-          prixOverride: vm.prixOverride ?? null,
-        },
-      });
-    }
-  }
-}
-
+// ✅ CREATE VARIANT (IMPORTANT : ne pas spread req.body sinon champs inconnus -> Prisma error)
 app.post("/variants", async (req: Request, res: Response) => {
   try {
     const body = req.body ?? {};
-    const mode = asMode(body.createMode);
+
     const contractId = String(body.contractId ?? "");
     if (!contractId) return res.status(400).json({ error: "contractId required" });
 
-    const title = String(body.title ?? "Variante");
-    const description = body.description == null ? null : String(body.description);
-    const status = body.status === undefined ? undefined : String(body.status);
-    const sourceVariantId = body.sourceVariantId ? String(body.sourceVariantId) : "";
+const created = await prisma.$transaction(async (tx) => {
+  const v = await tx.variant.create({
+    data: {
+      contractId,
+      title: String(body.title ?? "Variante"),
+      description: body.description == null ? null : String(body.description),
+      status: String(body.status ?? "INITIALISEE"),
+    },
+  });
 
-    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const v = await tx.variant.create({
-        data: {
-          contractId,
-          title,
-          description,
-          ...(status ? { status } : {}),
-        },
-      });
+  // ✅ créer la section AutresCouts
+  const sec = await tx.sectionAutresCouts.create({
+    data: {
+      variantId: v.id,
+      category: "COUTS_CHARGES",
+    },
+  });
 
-      if (mode === "ZERO") {
-        await initVariantZero(tx, v.id);
-      } else if (mode === "INITIEE") {
-        await initVariantInitiee(tx, v.id);
-      } else if (mode === "COMPOSEE") {
-        if (!sourceVariantId) throw new Error("sourceVariantId required for COMPOSEE");
-        await cloneVariantFrom(tx, sourceVariantId, v.id);
-      } else {
-        // INITIALISEE => on crée juste un squelette "autres couts" pour compat UI
-        await ensureAutresCoutsDefault(tx, v.id);
-      }
+  // ✅ créer 1 item par défaut (variantId obligatoire)
+  await tx.autreCoutItem.create({
+    data: {
+      variantId: v.id,
+      sectionId: sec.id,
+      label: "Frais généraux",
+      unite: "POURCENT_CA",
+      valeur: 0,
+      // order: 1, // si ce champ existe chez toi
+    },
+  });
 
-      return v;
-    });
+  return v;
+});
 
-    const variant = await getFullVariant(created.id);
-    return res.json({ ok: true, variant });
+
+    res.json(created);
   } catch (err: any) {
     console.error(err);
-    return res.status(400).json({ error: err?.message ?? "Bad Request" });
+    res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
 
-// ✅ UPDATE VARIANT
+// ✅ UPDATE VARIANT (ton code complet déjà OK)
 app.put("/variants/:id", async (req: Request, res: Response) => {
   const variantId = String(req.params.id);
   const body = req.body ?? {};
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-
       /* =========================================================
          VARIANT META (title / status / description)
       ========================================================= */
-      if (
-        body.title !== undefined ||
-        body.status !== undefined ||
-        body.description !== undefined
-      ) {
+      if (body.title !== undefined || body.status !== undefined || body.description !== undefined) {
         const data: any = {};
         if (body.title !== undefined) data.title = String(body.title ?? "");
         if (body.status !== undefined) data.status = String(body.status ?? "");
         if (body.description !== undefined) {
-          data.description =
-            body.description == null ? null : String(body.description);
+          data.description = body.description == null ? null : String(body.description);
         }
 
         await tx.variant.update({
@@ -913,14 +556,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
          TRANSPORT
       ========================================================= */
       if (body.transport) {
-        const allowed = [
-          "category",
-          "type",
-          "prixMoyen",
-          "volumePompePct",
-          "prixAchatPompe",
-          "prixVentePompe",
-        ];
+        const allowed = ["category", "type", "prixMoyen", "volumePompePct", "prixAchatPompe", "prixVentePompe"];
         const data = pick(body.transport, allowed);
 
         await upsertPartialSection({
@@ -967,15 +603,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
          MAINTENANCE
       ========================================================= */
       if (body.maintenance) {
-        const allowed = [
-          "category",
-          "cab",
-          "elec",
-          "chargeur",
-          "generale",
-          "bassins",
-          "preventive",
-        ];
+        const allowed = ["category", "cab", "elec", "chargeur", "generale", "bassins", "preventive"];
         const data = pick(body.maintenance, allowed);
 
         await upsertPartialSection({
@@ -1020,10 +648,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       if (body.coutMensuel) {
         const incoming = { ...(body.coutMensuel ?? {}) };
 
-        if (
-          incoming.locationGroupes !== undefined &&
-          incoming.location === undefined
-        ) {
+        if (incoming.locationGroupes !== undefined && incoming.location === undefined) {
           incoming.location = incoming.locationGroupes;
         }
         delete incoming.locationGroupes;
@@ -1081,10 +706,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       if (body.coutOccasionnel) {
         const incoming = { ...(body.coutOccasionnel ?? {}) };
 
-        if (
-          incoming.installationCab !== undefined &&
-          incoming.installation === undefined
-        ) {
+        if (incoming.installationCab !== undefined && incoming.installation === undefined) {
           incoming.installation = incoming.installationCab;
         }
         delete incoming.installationCab;
@@ -1158,11 +780,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
 
         await tx.autreCoutItem.deleteMany({ where: { variantId } });
 
-        const items = body.autresCouts.items as Array<{
-          label: string;
-          unite: string;
-          valeur: number;
-        }>;
+        const items = body.autresCouts.items as Array<{ label: string; unite: string; valeur: number }>;
 
         if (items.length) {
           await tx.autreCoutItem.createMany({
@@ -1187,9 +805,7 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
             data: {
               volumeM3: Number(it.volumeM3 ?? 0),
               momd: Number(it.momd ?? 0),
-              ...(it.cmpOverride !== undefined
-                ? { cmpOverride: it.cmpOverride }
-                : {}),
+              ...(it.cmpOverride !== undefined ? { cmpOverride: it.cmpOverride } : {}),
             } as any,
           });
         }
@@ -1198,16 +814,13 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       }
     });
 
-    // ✅ UNE SEULE REPONSE, ICI
     const variant = await getFullVariant(variantId);
     return res.json({ ok: true, variant });
-
   } catch (err: any) {
     console.error(err);
     return res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
-
 
 // ✅ Add formule to variant (sync MP)
 app.post("/variants/:id/formules", async (req: Request, res: Response) => {
@@ -1303,74 +916,6 @@ app.delete("/variants/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
-
-/* =========================================================
-   MAJORATIONS
-   - Stockées dans sectionAutresCouts.majorations (JSON string)
-   - Impact uniquement les KPIs du header
-========================================================= */
-
-app.get("/variants/:id/majorations", async (req, res) => {
-  const variantId = String(req.params.id);
-
-  try {
-    const section = await prisma.sectionAutresCouts.findUnique({
-      where: { variantId },
-      select: { majorations: true },
-    });
-
-    let parsed: Record<string, number> = {};
-    try {
-      parsed = section?.majorations
-        ? JSON.parse(section.majorations)
-        : {};
-    } catch {
-      parsed = {};
-    }
-
-    res.json({ majorations: parsed });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Failed to load majorations" });
-  }
-});
-
-app.put("/variants/:id/majorations", async (req, res) => {
-  const variantId = String(req.params.id);
-  const incoming = req.body?.majorations ?? {};
-
-  const safe: Record<string, number> = {};
-  if (incoming && typeof incoming === "object") {
-    for (const [k, v] of Object.entries(incoming)) {
-      const n = Number(v);
-      safe[k] = Number.isFinite(n) ? n : 0;
-    }
-  }
-
-  try {
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.sectionAutresCouts.upsert({
-        where: { variantId },
-        create: {
-          variantId,
-          category: "COUTS_CHARGES",
-          majorations: JSON.stringify(safe),
-        },
-        update: {
-          majorations: JSON.stringify(safe),
-        },
-      });
-    });
-
-    // on renvoie la variante complète mise à jour
-    const fullVariant = await getFullVariant(variantId);
-    res.json(fullVariant);
-  } catch (e) {
-    console.error(e);
-    res.status(400).json({ error: "Failed to save majorations" });
-  }
-});
-
 
 app.listen(3001, () => {
   console.log("API running on http://localhost:3001");

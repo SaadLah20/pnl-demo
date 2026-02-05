@@ -56,8 +56,7 @@ export const usePnlStore = defineStore("pnl", {
     pnls: [] as any[],
     activePnlId: null as string | null,
     activeVariantId: null as string | null,
-    // preview majorations (temporaire) : n’impacte que les KPIs du header
-    headerMajorationsPreview: null as Record<string, number> | null,
+
 
     // catalogues
     mpCatalogue: [] as any[],
@@ -65,6 +64,10 @@ export const usePnlStore = defineStore("pnl", {
 
     loading: false,
     error: null as string | null,
+    headerUseMajorations: false,
+    headerUseDevisSurcharge: false,
+    // preview majorations (temporaire) : n’impacte que les KPIs du header
+    headerMajorationsPreview: null as Record<string, number> | null,
   }),
 
   getters: {
@@ -97,13 +100,43 @@ export const usePnlStore = defineStore("pnl", {
       return null;
     },
 
-    activeHeaderKPIs(): any {
-      const variant = (this as any).activeVariant;
-      if (!variant) return null;
+activeHeaderKPIs(): any {
+  const variant = (this as any).activeVariant;
+  if (!variant) return null;
 
-      const dureeMois = (this as any).activeContract?.dureeMois ?? 0;
-      return computeHeaderKpis(variant, dureeMois, (this as any).headerMajorationsPreview);
-    },
+  const dureeMois = (this as any).activeContract?.dureeMois ?? 0;
+
+  const useMaj = Boolean((this as any).headerUseMajorations);
+  const preview = (this as any).headerMajorationsPreview as Record<string, number> | null;
+
+  // ✅ Si "Avec majoration" n'est PAS coché => calcul BASE garanti
+  // - ignore les majorations persistées
+  // - ignore le preview (même si "Appliquer" a été cliqué)
+  const vForCalc = useMaj
+    ? variant
+    : {
+        ...variant,
+        autresCouts: {
+          ...(variant.autresCouts ?? {}),
+          majorations: null, // force "pas de majorations" dans computeHeaderKpis
+        },
+      };
+
+  // ✅ Placeholder: surcharge devis (ne fait rien pour l'instant)
+  if (Boolean((this as any).headerUseDevisSurcharge)) {
+    // TODO: appliquer surcharge devis (bloc volontairement vide)
+  }
+
+  // ✅ Si useMaj = true, on passe le preview si ton computeHeaderKpis le supporte.
+  // Si computeHeaderKpis ne supporte PAS le 3e paramètre, garde la ligne sans preview.
+  if (useMaj && preview) {
+    return computeHeaderKpis(vForCalc, dureeMois, preview);
+  }
+
+  return computeHeaderKpis(vForCalc, dureeMois);
+},
+
+
   },
 
   actions: {
@@ -128,6 +161,12 @@ export const usePnlStore = defineStore("pnl", {
 },
 clearHeaderMajorationsPreview() {
   this.headerMajorationsPreview = null;
+},
+setHeaderUseMajorations(v: boolean) {
+  (this as any).headerUseMajorations = Boolean(v);
+},
+setHeaderUseDevisSurcharge(v: boolean) {
+  (this as any).headerUseDevisSurcharge = Boolean(v);
 },
 
 async saveMajorations(variantId: string, majorations: Record<string, number>) {

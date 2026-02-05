@@ -79,6 +79,7 @@ const routeByItem: Record<string, string> = {
   "Couts occasionnels": "CoutsOccasionnels",
   "Autres couts": "AutresCouts",
     "Majorations": "Majorations",
+"Comparateur de variantes": "ComparateurVariantes",
 
 };
 
@@ -122,6 +123,7 @@ watch(
     else if (route.name === "MpCatalogue") activeItem.value = "Répertoire MP";
     else if (route.name === "Details") activeItem.value = "Détails";
     else if (route.name === "PnlArchives") activeItem.value = "P&L archivés";
+    else if (route.name === "ComparateurVariantes") activeItem.value = "Comparateur de variantes";
     else if (route.name === "CAB") activeItem.value = "CAB";
     else if (route.name === "FormulesCatalogue") activeItem.value = "Catalogue formules";
     else if (route.name === "Mp") activeItem.value = "MP";

@@ -103,6 +103,12 @@ async function save() {
     await (store as any).saveMajorations(String(variant.value.id), {
       ...draft.map,
     });
+    // après await saveMajorations(...)
+(store as any).clearHeaderMajorationsPreview();
+
+// ✅ IMPORTANT: ne pas forcer l’activation du toggle ici
+// (tu veux rester BASE tant que l’utilisateur n’a pas coché)
+
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -172,6 +178,37 @@ const groups = computed<Group[]>(() => {
       { key: "coutMensuel.gasoil", label: "Gasoil" },
       { key: "coutMensuel.telephone", label: "Téléphone" },
       { key: "coutMensuel.securite", label: "Sécurité" },
+    ],
+  });
+
+  /* ---------- Employés ---------- */
+  res.push({
+    title: "Employés",
+    rows: [
+      { key: "employes.responsable", label: "Responsable" },
+      { key: "employes.centralistes", label: "Centralistes" },
+      { key: "employes.manoeuvre", label: "Manœuvre" },
+      { key: "employes.coordinateurExploitation", label: "Coordinateur exploitation" },
+      { key: "employes.technicienLabo", label: "Technicien labo" },
+      { key: "employes.femmeMenage", label: "Femme de ménage" },
+      { key: "employes.gardien", label: "Gardien" },
+      { key: "employes.maintenancier", label: "Maintenancier" },
+      { key: "employes.panierRepas", label: "Panier repas" },
+    ],
+  });
+
+  /* ---------- Coûts occasionnels ---------- */
+  res.push({
+    title: "Coûts occasionnels",
+    rows: [
+      { key: "coutOccasionnel.genieCivil", label: "Génie civil" },
+      { key: "coutOccasionnel.installation", label: "Installation" },
+      { key: "coutOccasionnel.transport", label: "Transport" },
+      { key: "coutOccasionnel.demontage", label: "Démontage" },
+      { key: "coutOccasionnel.remisePointCentrale", label: "Remise à point centrale" },
+      { key: "coutOccasionnel.silots", label: "Silots" },
+      { key: "coutOccasionnel.localAdjuvant", label: "Local adjuvant" },
+      { key: "coutOccasionnel.bungalows", label: "Bungalows" },
     ],
   });
 
@@ -481,8 +518,8 @@ function closeAll() {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 8px;               /* proximité label ↔ input */
-  padding: 6px 0;         /* hauteur ligne réduite */
+  gap: 8px;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(16,24,40,0.06);
 }
 .maj__item:last-child { border-bottom: 0; }
@@ -503,10 +540,10 @@ function closeAll() {
   gap: 6px;
 }
 .maj__input {
-  width: 96px;            /* plus compact */
+  width: 96px;
   text-align: right;
   border-radius: 12px;
-  padding: 7px 9px;       /* plus bas */
+  padding: 7px 9px;
   border: 1px solid rgba(32, 184, 232, 0.45);
   background: rgba(32, 184, 232, 0.12);
   font-weight: 950;
