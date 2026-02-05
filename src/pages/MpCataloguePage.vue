@@ -131,7 +131,8 @@ const activeFiltersCount = computed(() => {
 
 const filtered = computed<any[]>(() => {
   const s = q.value.trim().toLowerCase();
-  return rows.value.filter((r) => {
+
+  const list = rows.value.filter((r) => {
     if (s) {
       const blob = `${r.categorie ?? ""} ${r.label ?? ""} ${r.unite ?? ""} ${r.prix ?? ""} ${r.fournisseur ?? ""} ${r.city ?? ""} ${r.region ?? ""} ${r.comment ?? ""}`.toLowerCase();
       if (!blob.includes(s)) return false;
@@ -141,7 +142,15 @@ const filtered = computed<any[]>(() => {
     if (filters.region && norm(r.region) !== filters.region) return false;
     return true;
   });
+
+  // ✅ TRI: Label A→Z (accent-insensitive)
+  list.sort((a, b) =>
+    String(a?.label ?? "").localeCompare(String(b?.label ?? ""), "fr", { sensitivity: "base" })
+  );
+
+  return list;
 });
+
 
 /* =========================
    PAGINATION
