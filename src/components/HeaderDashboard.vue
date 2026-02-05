@@ -367,6 +367,19 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <!-- ✅ Toggles à droite du P&L -->
+      <div class="hdToggles" aria-label="Options header">
+        <label class="toggSm">
+          <input class="toggSm__cb" type="checkbox" v-model="withMajorations" />
+          <span class="toggSm__txt">Majoration</span>
+        </label>
+
+        <label class="toggSm">
+          <input class="toggSm__cb" type="checkbox" v-model="withDevisSurcharge" />
+          <span class="toggSm__txt">Surcharge devis</span>
+        </label>
+      </div>
+
       <!-- Contrat selector -->
       <div class="pill contract control">
         <div class="pill__head contractHead">
@@ -501,18 +514,6 @@ onBeforeUnmount(() => {
         <aside class="summary">
           <div class="summary__head">
             <div class="summary__title">Résumé</div>
-
-            <div class="summary__togglesInline">
-              <label class="toggSm">
-                <input class="toggSm__cb" type="checkbox" v-model="withMajorations" />
-                <span class="toggSm__txt">Majoration</span>
-              </label>
-
-              <label class="toggSm">
-                <input class="toggSm__cb" type="checkbox" v-model="withDevisSurcharge" />
-                <span class="toggSm__txt">Surcharge devis</span>
-              </label>
-            </div>
           </div>
 
           <div class="summary__grid">
@@ -618,7 +619,8 @@ onBeforeUnmount(() => {
 }
 
 .pill.pnl {
-  flex: 1 1 460px; /* ✅ réduit pour laisser place */
+  flex: 0 1 360px; /* ✅ réduit pour laisser place aux toggles */
+  max-width: 420px;
 }
 .pill.contract {
   flex: 1 1 420px;
@@ -631,6 +633,11 @@ onBeforeUnmount(() => {
   .pill.contract,
   .pill.variant {
     flex: 1 1 100%;
+    max-width: none;
+  }
+  .hdToggles {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 
@@ -734,6 +741,53 @@ onBeforeUnmount(() => {
   width: 14px; /* ✅ compact */
   height: 14px; /* ✅ compact */
   color: rgba(15, 23, 42, 0.75);
+}
+
+/* ✅ Toggles container à droite du P&L (même hauteur visuelle, no wrap) */
+.hdToggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+
+  background: #ffffff;
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  border-radius: 14px;
+  padding: 4px 8px;
+
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Toggle pill small (réutilisé) */
+.toggSm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(15, 23, 42, 0.02);
+  line-height: 1;
+  user-select: none;
+
+  min-width: 0;
+  max-width: 180px;
+}
+.toggSm__cb {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+.toggSm__txt {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.75);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Select overlay clickable */
@@ -1135,7 +1189,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* ✅ head + toggles inline */
+/* ✅ head (toggles removed) */
 .summary__head {
   display: flex;
   align-items: center;
@@ -1150,37 +1204,7 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.35px;
   color: rgba(15, 23, 42, 0.68);
-  margin-bottom: 0; /* ✅ important */
-}
-
-.summary__togglesInline {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-}
-
-.toggSm {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.10);
-  background: rgba(15, 23, 42, 0.02);
-  line-height: 1;
-  user-select: none;
-}
-.toggSm__cb {
-  width: 13px;
-  height: 13px;
-  margin: 0;
-}
-.toggSm__txt {
-  font-size: 10px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.75);
-  white-space: nowrap;
+  margin-bottom: 0;
 }
 
 .summary__grid {

@@ -917,6 +917,55 @@ app.delete("/variants/:id", async (req: Request, res: Response) => {
   }
 });
 
+/* =========================================================
+   MAJORATIONS (persistées)
+   Attendu par le front: PUT /variants/:id/majorations
+   Stockage: SectionAutresCouts.majorations (JSON string)
+   Réponse: variante complète (objet direct)
+========================================================= */
+app.put("/variants/:id/majorations", async (req: Request, res: Response) => {
+  try {
+    const variantId = String(req.params.id);
+    const incoming = req.body?.majorations;
+
+    const map: Record<string, number> =
+      incoming && typeof incoming === "object" ? incoming : {};
+
+    // normaliser en nombres
+    const normalized: Record<string, number> = {};
+    for (const [k, v] of Object.entries(map)) {
+      const n = Number(v);
+      normalized[k] = Number.isFinite(n) ? n : 0;
+    }
+
+    const majorationsJson = JSON.stringify(normalized);
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.sectionAutresCouts.upsert({
+        where: { variantId },
+        create: {
+          variantId,
+          category: "COUTS_CHARGES",
+          majorations: majorationsJson,
+        },
+        update: {
+          majorations: majorationsJson,
+        },
+      });
+    });
+
+    const variant = await getFullVariant(variantId);
+    if (!variant) return res.status(404).json({ error: "Variant not found" });
+
+    // ⬅️ IMPORTANT: renvoyer l'objet variante direct (store attend updated.id)
+    return res.json(variant);
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
+
 app.listen(3001, () => {
   console.log("API running on http://localhost:3001");
 });
