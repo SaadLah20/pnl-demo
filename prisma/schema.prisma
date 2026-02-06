@@ -38,18 +38,23 @@ model Contract {
   matierePremiere String
   maintenance     String
   chargeuse       String
-  branchementEau  String
-  consoEau        String
-  branchementElec String
-  consoElec       String
 
-  postes       Int
-  sundayPrice  Float
-  delayPenalty Float
-  chillerRent  Float
+  branchementEau String?
+  consoEau       String?
+  branchementElec String?
+  consoElec      String?
+
+  postes      Int?
+  sundayPrice Float?
+  delayPenalty Float?
+  chillerRent Float?
 
   variants Variant[]
 }
+
+// =======================
+// VARIANT
+// =======================
 
 model Variant {
   id          String  @id @default(uuid())
@@ -92,160 +97,156 @@ model SectionMatierePremiere {
   items VariantMp[]
 }
 
-model SectionTransport {
+model VariantMp {
   id        String @id @default(uuid())
-  variantId String @unique
-  category  String
-  type      String
-  prixMoyen Float?
+  variantId String
+  sectionId String
+  mpId      String
+  prix      Float?
+  comment   String?
 
-  volumePompePct Float?
-  prixAchatPompe Float?
-  prixVentePompe Float?
+  variant  Variant               @relation(fields: [variantId], references: [id])
+  section  SectionMatierePremiere @relation(fields: [sectionId], references: [id])
+  mp       MpCatalogue           @relation(fields: [mpId], references: [id])
+}
 
-  variant Variant @relation(fields: [variantId], references: [id])
+model SectionTransport {
+  id              String  @id @default(uuid())
+  variantId        String  @unique
+  category         String
+  type             String
+  prixMoyen         Float   @default(0)
+  volumePompePct    Float?
+  prixAchatPompe    Float?
+  prixVentePompe    Float?
+  variant          Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCab {
-  id         String  @id @default(uuid())
-  variantId  String  @unique
-  category   String
-  etat       String
-  mode       String
-  capaciteM3 Float
-  amortMois  Float
-  variant    Variant @relation(fields: [variantId], references: [id])
+  id        String  @id @default(uuid())
+  variantId String  @unique
+  category  String
+  etat      String
+  mode      String
+  capaciteM3 Float  @default(0)
+  amortMois Int     @default(0)
+  variant   Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionMaintenance {
-  id         String  @id @default(uuid())
-  variantId  String  @unique
-  category   String
-  cab        Float
-  elec       Float
-  chargeur   Float
-  generale   Float
-  bassins    Float
-  preventive Float
-  variant    Variant @relation(fields: [variantId], references: [id])
+  id        String  @id @default(uuid())
+  variantId String  @unique
+  category  String
+  cab       Float   @default(0)
+  elec      Float   @default(0)
+  chargeur  Float   @default(0)
+  generale  Float   @default(0)
+  bassins   Float   @default(0)
+  preventive Float  @default(0)
+  variant   Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCoutM3 {
   id        String  @id @default(uuid())
   variantId String  @unique
   category  String
-  eau       Float
-  qualite   Float
-  dechets   Float
+  eau       Float   @default(0)
+  qualite   Float   @default(0)
+  dechets   Float   @default(0)
   variant   Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCoutMensuel {
-  id          String  @id @default(uuid())
-  variantId   String  @unique
-  category    String
-
-  // existants
-  electricite Float
-  gasoil      Float
-  location    Float     // ⚠️ on le garde (compat). Tu peux l’utiliser comme "Location groupes"
-  securite    Float
-
-  // ✅ nouveaux champs (defaults => pas de casse)
-  hebergements         Float @default(0)
-  locationTerrain      Float @default(0)
-  telephone            Float @default(0)
-  troisG               Float @default(0)
-  taxeProfessionnelle  Float @default(0)
-  locationVehicule     Float @default(0)
-  locationAmbulance    Float @default(0)
-  locationBungalows    Float @default(0)
-  epi                  Float @default(0)
-
-  variant     Variant @relation(fields: [variantId], references: [id])
+  id                 String  @id @default(uuid())
+  variantId           String  @unique
+  category            String
+  electricite         Float   @default(0)
+  gasoil              Float   @default(0)
+  location            Float   @default(0)
+  securite            Float   @default(0)
+  hebergements        Float   @default(0)
+  locationTerrain     Float   @default(0)
+  telephone           Float   @default(0)
+  troisG              Float   @default(0)
+  taxeProfessionnelle Float   @default(0)
+  locationVehicule    Float   @default(0)
+  locationAmbulance   Float   @default(0)
+  locationBungalows   Float   @default(0)
+  epi                 Float   @default(0)
+  variant             Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCoutOccasionnel {
-  id           String  @id @default(uuid())
-  variantId    String  @unique
-  category     String
-
-  // existants
-  genieCivil   Float
-  installation Float   // "Installation de la CAB"
-  transport    Float
-
-  // ✅ nouveaux champs
-  demontage            Float @default(0)
-  remisePointCentrale  Float @default(0)
-  silots               Float @default(0)
-  localAdjuvant        Float @default(0)
-  bungalows            Float @default(0)
-
-  variant      Variant @relation(fields: [variantId], references: [id])
+  id                 String  @id @default(uuid())
+  variantId           String  @unique
+  category            String
+  genieCivil          Float   @default(0)
+  installation        Float   @default(0)
+  transport           Float   @default(0)
+  demontage           Float   @default(0)
+  remisePointCentrale Float   @default(0)
+  silots              Float   @default(0)
+  localAdjuvant       Float   @default(0)
+  bungalows           Float   @default(0)
+  variant             Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionEmployes {
-  id               String  @id @default(uuid())
-  variantId        String  @unique
-  category         String
-
-  // existants
-  responsableNb    Float
-  responsableCout  Float
-  centralistesNb   Float
-  centralistesCout Float
-
-  // ✅ nouveaux rôles (Nb peut être 1.5 etc => Float OK)
-  manoeuvreNb                     Float @default(0)
-  manoeuvreCout                   Float @default(0)
-
-  coordinateurExploitationNb      Float @default(0)
-  coordinateurExploitationCout    Float @default(0)
-
-  technicienLaboNb                Float @default(0)
-  technicienLaboCout              Float @default(0)
-
-  femmeMenageNb                   Float @default(0)
-  femmeMenageCout                 Float @default(0)
-
-  gardienNb                       Float @default(0)
-  gardienCout                     Float @default(0)
-
-  maintenancierNb                 Float @default(0)
-  maintenancierCout               Float @default(0)
-
-  panierRepasNb                   Float @default(0)
-  panierRepasCout                 Float @default(0)
-
-  variant          Variant @relation(fields: [variantId], references: [id])
-}
-
-model SectionAutresCouts {
   id        String  @id @default(uuid())
   variantId String  @unique
   category  String
-  majorations String @default("{}") // <-- AJOUT
   variant   Variant @relation(fields: [variantId], references: [id])
+
+  // ✅ Champs employés
+  responsableNb                  Int   @default(0)
+  responsableCout                Float @default(0)
+
+  centralistesNb                 Int   @default(0)
+  centralistesCout               Float @default(0)
+
+  manoeuvreNb                    Int   @default(0)
+  manoeuvreCout                  Float @default(0)
+
+  coordinateurExploitationNb     Int   @default(0)
+  coordinateurExploitationCout   Float @default(0)
+
+  technicienLaboNb               Int   @default(0)
+  technicienLaboCout             Float @default(0)
+
+  femmeMenageNb                  Int   @default(0)
+  femmeMenageCout                Float @default(0)
+
+  gardienNb                      Int   @default(0)
+  gardienCout                    Float @default(0)
+
+  maintenancierNb                Int   @default(0)
+  maintenancierCout              Float @default(0)
+
+  panierRepasNb                  Int   @default(0)
+  panierRepasCout                Float @default(0)
+}
+
+
+model SectionAutresCouts {
+  id          String  @id @default(uuid())
+  variantId   String  @unique
+  category    String
+  majorations String  @default("{}") // <-- AJOUT
+  variant     Variant @relation(fields: [variantId], references: [id])
 
   items AutreCoutItem[]
 }
 
 model AutreCoutItem {
-  id String @id @default(uuid())
-
-  sectionId String
-  section   SectionAutresCouts @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-
+  id        String @id @default(uuid())
   variantId String
-  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  sectionId String
+  label     String
+  unite     String
+  valeur    Float
 
-  label  String
-  unite  String
-  valeur Float
-
-  @@index([variantId])
-  @@index([sectionId])
+  variant Variant          @relation(fields: [variantId], references: [id])
+  section SectionAutresCouts @relation(fields: [sectionId], references: [id])
 }
 
 model SectionFormules {
@@ -255,6 +256,20 @@ model SectionFormules {
   variant   Variant @relation(fields: [variantId], references: [id])
 
   items VariantFormule[]
+}
+
+model VariantFormule {
+  id         String  @id @default(uuid())
+  variantId  String
+  sectionId  String
+  formuleId  String
+  volumeM3   Float   @default(0)
+  momd       Float   @default(0)
+  cmpOverride Float?
+
+  variant Variant         @relation(fields: [variantId], references: [id])
+  section SectionFormules @relation(fields: [sectionId], references: [id])
+  formule FormuleCatalogue @relation(fields: [formuleId], references: [id])
 }
 
 model SectionMajorations {
@@ -268,12 +283,28 @@ model SectionDevis {
   id        String  @id @default(uuid())
   variantId String  @unique
   category  String
+
+  // legacy/global surcharge (kept for backward compatibility)
   surcharge Float   @default(0)
+
+  // ✅ devis content (JSON strings) — allows later Word/PDF export
+  meta               String @default("{}")  // { date, titreProjet, client, ... }
+  intro              String @default("")    // free text
+  rappel              String @default("{}") // { dureeMois, quantiteM3, ... }
+  chargeFournisseur  String @default("[]")  // DevisLineItem[]
+  chargeClient       String @default("[]")  // DevisLineItem[]
+  prixComplementaires String @default("[]") // DevisLineItem[]
+  validiteTexte      String @default("")    // free text (validité)
+  signature          String @default("{}")  // { nom, poste, telephone }
+
+  // ✅ surcharges par formule (map JSON: { [variantFormuleId]: number })
+  surcharges         String @default("{}")
+
   variant   Variant @relation(fields: [variantId], references: [id])
 }
 
 // =======================
-// REPERTOIRES GLOBAUX
+// CATALOGUES
 // =======================
 
 model MpCatalogue {
@@ -281,14 +312,14 @@ model MpCatalogue {
   categorie   String
   label       String
   unite       String
-  prix        Float
-  fournisseur String
-  city        String
-  region      String
+  prix        Float   @default(0)
+  fournisseur String?
+  city        String?
+  region      String?
   comment     String?
 
   formuleItems FormuleCatalogueItem[]
-  variantItems VariantMp[]
+  variantMps   VariantMp[]
 }
 
 model FormuleCatalogue {
@@ -299,51 +330,16 @@ model FormuleCatalogue {
   region     String
   comment    String?
 
-  items        FormuleCatalogueItem[]
-  variantItems VariantFormule[]
+  items FormuleCatalogueItem[]
+  variantLinks VariantFormule[]
 }
 
 model FormuleCatalogueItem {
   id        String @id @default(uuid())
   formuleId String
   mpId      String
-  qty       Float
+  qty       Float  @default(0)
 
   formule FormuleCatalogue @relation(fields: [formuleId], references: [id])
   mp      MpCatalogue      @relation(fields: [mpId], references: [id])
-
-  @@unique([formuleId, mpId])
-}
-
-model VariantMp {
-  id          String  @id @default(uuid())
-  variantId   String
-  sectionId   String?
-  mpId        String
-  prix        Float
-  comment     String?
-  prixOverride Float?
-
-  variant Variant                 @relation(fields: [variantId], references: [id])
-  section SectionMatierePremiere? @relation(fields: [sectionId], references: [id])
-  mp      MpCatalogue             @relation(fields: [mpId], references: [id])
-
-  @@unique([variantId, mpId])
-}
-
-model VariantFormule {
-  id        String  @id @default(uuid())
-  variantId String
-  sectionId String?
-  formuleId String
-  volumeM3  Float
-  momd      Float
-
-  cmpOverride Float?
-
-  variant Variant          @relation(fields: [variantId], references: [id])
-  section SectionFormules? @relation(fields: [sectionId], references: [id])
-  formule FormuleCatalogue @relation(fields: [formuleId], references: [id])
-
-  @@unique([variantId, formuleId])
 }

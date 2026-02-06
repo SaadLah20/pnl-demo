@@ -22,6 +22,9 @@ import MajorationsPage from "@/pages/MajorationPage.vue";
 // ✅ NEW: Comparateur de variantes
 import ComparateurVariantesPage from "@/pages/ComparateurVariantesPage.vue";
 
+// ✅ NEW: Devis
+import DevisPage from "@/pages/DevisPage.vue";
+
 const routes = [
   // ✅ Page dédiée Mes P&L
   {
@@ -42,6 +45,9 @@ const routes = [
   { path: "/couts-occasionnels", name: "CoutsOccasionnels", component: CoutsOccasionnelsPage },
   { path: "/autres-couts", name: "AutresCouts", component: AutresCoutsPage },
   { path: "/majorations", name: "Majorations", component: MajorationsPage },
+
+  // ✅ NEW: Devis
+  { path: "/devis", name: "Devis", component: DevisPage },
 
   // ✅ NEW: Comparateur de variantes
   {

@@ -50,15 +50,72 @@ function applyMajoration(value: number, pct: number): number {
   return value * (1 + pct / 100);
 }
 
+/* =========================
+   DEVIS SURCHARGE (persisted + preview)
+   - Persisted: variant.devis.surcharges (JSON string or object)
+   - Preview: 4th param (store.headerDevisSurchargesPreview)
+   - Applied only when `useDevisSurcharge` is true
+========================= */
+function readPersistedDevisSurcharges(variant: any): Record<string, number> {
+  try {
+    // prefer explicit column if exists
+    const raw =
+      variant?.devis?.surcharges ??
+      variant?.devis?.surcharge ??
+      variant?.devis?.meta ??
+      variant?.devis?.data;
+
+    if (!raw) return {};
+    if (typeof raw === "object") {
+      // allow nested shape { surcharges: { ... } }
+      const maybe = (raw as any).surcharges ?? raw;
+      return maybe && typeof maybe === "object" ? (maybe as Record<string, number>) : {};
+    }
+
+    const parsed = JSON.parse(String(raw));
+    if (!parsed || typeof parsed !== "object") return {};
+    const maybe = (parsed as any).surcharges ?? parsed;
+    return maybe && typeof maybe === "object" ? (maybe as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getDevisSurchargeM3(
+  formuleItem: any,
+  persisted: Record<string, number>,
+  preview?: Record<string, number> | null
+): number {
+  const map = (preview && typeof preview === "object" ? preview : persisted) as any;
+  if (!map || typeof map !== "object") return 0;
+
+  // try multiple keys to be resilient to schema/UI storage
+  const keys = [
+    String(formuleItem?.id ?? ""),
+    String(formuleItem?.variantFormuleId ?? ""),
+    String(formuleItem?.formuleId ?? ""),
+    String(formuleItem?.formule?.id ?? ""),
+    String(formuleItem?.formule?.label ?? ""),
+  ].filter((k) => k && k !== "undefined" && k !== "null");
+
+  for (const k of keys) {
+    if (k in map) return n(map[k]);
+  }
+  return 0;
+}
+
 export function computeHeaderKpis(
   variant: any,
   dureeMois: number,
-  previewMajorations?: Record<string, number> | null
+  previewMajorations?: Record<string, number> | null,
+  previewDevisSurcharges?: Record<string, number> | null,
+  useDevisSurcharge: boolean = false
 ): HeaderKPIs {
   const formulesItems = variant?.formules?.items ?? [];
   const mpItems = variant?.mp?.items ?? [];
 
   const persistedMajorations = readPersistedMajorations(variant);
+  const persistedDevisSurcharges = readPersistedDevisSurcharges(variant);
 
   const duree = n(dureeMois);
   const dureeJours = duree > 0 ? Math.round(duree * 30) : null;
@@ -117,8 +174,12 @@ export function computeHeaderKpis(
     const momd = n(f?.momd);
     const cmp = cmpFormuleM3(f?.formule);
 
-    // PV = CMP + Transport + MOMD (transport est déjà majoré)
-    const pv = cmp + transportMoyenM3 + momd;
+    // PV = CMP + Transport + MOMD (+ surcharge devis optionnelle)
+    const surchargeM3 = useDevisSurcharge
+      ? getDevisSurchargeM3(f, persistedDevisSurcharges, previewDevisSurcharges)
+      : 0;
+
+    const pv = cmp + transportMoyenM3 + momd + surchargeM3;
     return pv * vol;
   });
 

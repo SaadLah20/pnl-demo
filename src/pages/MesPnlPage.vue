@@ -1,14 +1,14 @@
+<!-- src/pages/MesPnlPage.vue -->
 <script setup lang="ts">
-import { computed, reactive, ref, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, reactive, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 import VariantCreateModal, {
-  type VariantCreateModeUi,
-  type VariantCreateZeroPayload,
   type VariantCreateNextPayload,
+  type VariantCreateZeroPayload,
 } from "@/components/VariantCreateModal.vue";
-
 import VariantWizardModal, {
+  type ComposePayload,
   type InitieePayload,
   type VariantCreateMode,
 } from "@/components/VariantWizardModal.vue";
@@ -157,7 +157,7 @@ const activeContractId = computed(() => {
 /* =========================================================
    UI state
 ========================================================= */
-const q = ref("");
+const q = ref(""); // search P&L only
 const openPnl = reactive<Record<string, boolean>>({});
 function isOpenPnl(id: string) {
   if (openPnl[id] === undefined) openPnl[id] = false;
@@ -174,6 +174,7 @@ function collapseAllPnls() {
    FILTERS/ SORT (P&L ONLY)
 ========================================================= */
 const filterOpen = ref(false);
+
 const pnlStatusFilter = ref<string>("");
 const pnlCityFilter = ref<string>("");
 const pnlClientFilter = ref<string>("");
@@ -285,15 +286,6 @@ function openVariant(pnlId: string, contractId: string, variantId: string) {
   if ((store as any).setActiveVariant) (store as any).setActiveVariant(variantId);
 }
 
-function findPnlIdByContractId(contractId: string): string | null {
-  for (const p of pnls.value) {
-    for (const c of p.contracts ?? []) {
-      if (String(c.id) === String(contractId)) return String(p.id);
-    }
-  }
-  return null;
-}
-
 /* =========================================================
    VIEW MODAL
 ========================================================= */
@@ -313,7 +305,7 @@ function closeView() {
 }
 
 /* =========================================================
-   EDIT/CREATE MODAL (PNL + Contract + Variant edit)
+   EDIT MODAL (PNL / CONTRACT / VARIANT UPDATE ONLY)
 ========================================================= */
 type EditMode = "pnl" | "contract" | "variant";
 const editOpen = ref(false);
@@ -321,12 +313,13 @@ const editMode = ref<EditMode>("pnl");
 const editBusy = ref(false);
 const editErr = ref<string | null>(null);
 
+/** create flags */
 const isCreate = ref(false);
-const createPnlId = ref<string | null>(null);
-const createContractId = ref<string | null>(null);
+const createPnlId = ref<string | null>(null);      // for creating contract
 
 const draft = reactive<any>({
   id: "",
+
   // pnl
   title: "",
   client: "",
@@ -334,8 +327,9 @@ const draft = reactive<any>({
   city: "",
   status: "",
   createdAt: "",
+
   // contract
-  ref: "",
+  ref: "", // non modifiable
   dureeMois: 0,
   cab: "LHM",
   installation: "LHM",
@@ -353,7 +347,8 @@ const draft = reactive<any>({
   sundayPrice: 0,
   delayPenalty: 0,
   chillerRent: 0,
-  // variant edit
+
+  // variant
   description: "",
 });
 
@@ -361,36 +356,35 @@ function resetDraft() {
   editErr.value = null;
   isCreate.value = false;
   createPnlId.value = null;
-  createContractId.value = null;
 
-  Object.assign(draft, {
-    id: "",
-    title: "",
-    client: "",
-    model: "",
-    city: "",
-    status: "",
-    createdAt: "",
-    ref: "",
-    dureeMois: 0,
-    cab: "LHM",
-    installation: "LHM",
-    genieCivil: "LHM",
-    transport: "LHM",
-    terrain: "LHM",
-    matierePremiere: "LHM",
-    maintenance: "LHM",
-    chargeuse: "LHM",
-    branchementEau: "LHM",
-    consoEau: "LHM",
-    branchementElec: "LHM",
-    consoElec: "LHM",
-    postes: 1,
-    sundayPrice: 0,
-    delayPenalty: 0,
-    chillerRent: 0,
-    description: "",
-  });
+  draft.id = "";
+  draft.title = "";
+  draft.client = "";
+  draft.model = "";
+  draft.city = "";
+  draft.status = "";
+  draft.createdAt = "";
+
+  draft.ref = "";
+  draft.dureeMois = 0;
+  draft.cab = "LHM";
+  draft.installation = "LHM";
+  draft.genieCivil = "LHM";
+  draft.transport = "LHM";
+  draft.terrain = "LHM";
+  draft.matierePremiere = "LHM";
+  draft.maintenance = "LHM";
+  draft.chargeuse = "LHM";
+  draft.branchementEau = "LHM";
+  draft.consoEau = "LHM";
+  draft.branchementElec = "LHM";
+  draft.consoElec = "LHM";
+  draft.postes = 1;
+  draft.sundayPrice = 0;
+  draft.delayPenalty = 0;
+  draft.chillerRent = 0;
+
+  draft.description = "";
 }
 
 function openEdit(mode: EditMode, data: any) {
@@ -447,7 +441,6 @@ function openCreateContract(pnlId: string) {
   editOpen.value = true;
   isCreate.value = true;
   createPnlId.value = pnlId;
-
   draft.ref = "";
   draft.dureeMois = 0;
   draft.postes = 1;
@@ -487,12 +480,10 @@ async function saveEdit() {
         matierePremiere: draft.matierePremiere,
         maintenance: draft.maintenance,
         chargeuse: draft.chargeuse,
-
         branchementEau: draft.branchementEau,
         consoEau: draft.consoEau,
         branchementElec: draft.branchementElec,
         consoElec: draft.consoElec,
-
         postes: Number(draft.postes ?? 1),
         sundayPrice: Number(draft.sundayPrice ?? 0),
         delayPenalty: Number(draft.delayPenalty ?? 0),
@@ -503,7 +494,10 @@ async function saveEdit() {
         if (!createPnlId.value) throw new Error("pnlId manquant pour créer un contrat.");
         await apiJson(`/contracts`, {
           method: "POST",
-          body: JSON.stringify({ pnlId: createPnlId.value, ...payload }),
+          body: JSON.stringify({
+            pnlId: createPnlId.value,
+            ...payload,
+          }),
         });
       } else {
         await apiJson(`/contracts/${draft.id}`, {
@@ -541,16 +535,16 @@ async function saveEdit() {
 }
 
 /* =========================================================
-   CREATE VARIANT FLOW (2 MODALS)
+   VARIANT CREATION (2-step modals)
 ========================================================= */
-const createOpen = ref(false);
-const wizardOpen = ref(false);
-
-const wizardMode = ref<VariantCreateMode>("INITIEE");
-const createContractTarget = ref<string | null>(null);
-
-// base data from modal 1
-const createBase = ref<VariantCreateNextPayload | null>(null);
+function findPnlIdByContractId(contractId: string): string | null {
+  for (const p of pnls.value) {
+    for (const c of p.contracts ?? []) {
+      if (String(c.id) === String(contractId)) return String(p.id);
+    }
+  }
+  return null;
+}
 
 const allVariantsFlat = computed(() => {
   const out: Array<{ id: string; title: string; contractTitle?: string | null; pnlTitle?: string | null }> = [];
@@ -569,128 +563,127 @@ const allVariantsFlat = computed(() => {
   return out;
 });
 
-function openCreateVariant(contractId: string) {
-  createContractTarget.value = contractId;
-  createBase.value = null;
-  createOpen.value = true;
-}
+const createOpen = ref(false);
+const createContractId = ref<string | null>(null);
+const createDefaultTitle = ref<string | undefined>(undefined);
 
-async function createVariantBase(payload: {
+const wizardOpen = ref(false);
+const wizardMode = ref<VariantCreateMode>("INITIEE");
+
+const createBase = reactive<{
   contractId: string;
   title: string;
   description: string | null;
-  status: string;
-}) {
-  // ✅ création “pure” (sans createMode DB) : le backend doit accepter ces champs
-  const created = await apiJson(`/variants`, {
-    method: "POST",
-    body: JSON.stringify({
-      contractId: payload.contractId,
-      title: payload.title,
-      description: payload.description,
-      status: payload.status,
-    }),
-  });
+  status: "INITIALISEE" | "ENCOURS" | "ANNULEE" | "CLOTUREE";
+  createMode: "ZERO" | "INITIEE" | "COMPOSEE";
+}>({
+  contractId: "",
+  title: "Variante",
+  description: null,
+  status: "INITIALISEE",
+  createMode: "ZERO",
+});
 
-  const newVarId = String(created?.variant?.id ?? created?.id ?? "");
-  if (!newVarId) throw new Error("Réponse API invalide : id variante manquant.");
-
-  return { created, newVarId };
+function openCreateVariant(contractId: string) {
+  createContractId.value = contractId;
+  createDefaultTitle.value = "Variante";
+  createOpen.value = true;
 }
 
-async function finalizeReloadAndSelect(contractId: string, newVarId: string) {
+function closeCreateModal() {
+  createOpen.value = false;
+}
+
+function closeWizardModal() {
+  wizardOpen.value = false;
+}
+
+async function afterVariantCreated(contractId: string, newVariantId: string) {
   const pnlIdForContract = findPnlIdByContractId(contractId);
+  const keepAfter = { pnlId: pnlIdForContract, contractId, variantId: newVariantId };
 
   await store.loadPnls?.();
 
-  if (pnlIdForContract && (store as any).setActivePnl) (store as any).setActivePnl(pnlIdForContract);
-  if ((store as any).setActiveContract) (store as any).setActiveContract(contractId);
-  if ((store as any).setActiveVariant) (store as any).setActiveVariant(newVarId);
+  if (keepAfter?.pnlId && (store as any).setActivePnl) (store as any).setActivePnl(keepAfter.pnlId);
+  if (keepAfter?.contractId && (store as any).setActiveContract) (store as any).setActiveContract(keepAfter.contractId);
+  if (keepAfter?.variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(keepAfter.variantId);
 
-  if (pnlIdForContract) openPnl[String(pnlIdForContract)] = true;
+  if (keepAfter?.pnlId) openPnl[String(keepAfter.pnlId)] = true;
 }
 
 async function handleCreateSave(payload: VariantCreateZeroPayload) {
-  // ZERO : on crée la variante, puis on “init” via PUT /variants/:id avec ton initVariantZero côté backend ou payload minimal
-  if (!createContractTarget.value) throw new Error("contractId manquant");
-
-  const { newVarId } = await createVariantBase(payload);
-
-  // ✅ Option : si ton backend a une init ZERO spécifique, appelle-la ici
-  // Sinon : laisse vide (et tu initialises sur la page de variante)
-  // Ici on met un payload minimal (meta seulement) pour ne rien casser.
-  await apiJson(`/variants/${newVarId}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      title: payload.title,
-      status: payload.status,
-      description: payload.description,
-    }),
+  // ZERO => create directly
+  const created = await apiJson(`/variants`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 
+  const newVarId = String(created?.variant?.id ?? created?.id ?? "");
+  if (newVarId) await afterVariantCreated(payload.contractId, newVarId);
+
   createOpen.value = false;
-  await finalizeReloadAndSelect(payload.contractId, newVarId);
 }
 
 function handleCreateNext(payload: VariantCreateNextPayload) {
-  // ouvre wizard modal
-  createBase.value = payload;
-  wizardMode.value = payload.createMode as VariantCreateMode;
+  // INITIEE / COMPOSEE => go wizard
+  createBase.contractId = payload.contractId;
+  createBase.title = payload.title;
+  createBase.description = payload.description;
+  createBase.status = payload.status;
+  createBase.createMode = payload.createMode;
+
+  wizardMode.value = payload.createMode;
+  createOpen.value = false;
   wizardOpen.value = true;
 }
 
 async function handleSaveInitiee(payload: InitieePayload) {
-  if (!createBase.value) throw new Error("Base manquante.");
-  const base = createBase.value;
+  // send create request with initiee payload
+  const body = {
+    contractId: createBase.contractId,
+    title: createBase.title,
+    description: createBase.description,
+    status: createBase.status,
+    createMode: "INITIEE",
+    initiee: payload,
+  };
 
-  const { newVarId } = await createVariantBase(base);
-
-  // 🔥 Ici tu branches TON initVariant (backend ou payload builder).
-  // Pour ne pas casser ton app, je laisse un body “placeholder”
-  // -> Remplace par ton algo qui remplit sections + formules pour atteindre EBIT cible.
-  await apiJson(`/variants/${newVarId}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      title: base.title,
-      status: base.status,
-      description: base.description,
-      // TODO: remplacer par initVariant(payload)
-      // initiee: payload,
-    }),
+  const created = await apiJson(`/variants`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 
+  const newVarId = String(created?.variant?.id ?? created?.id ?? "");
+  if (newVarId) await afterVariantCreated(createBase.contractId, newVarId);
+
   wizardOpen.value = false;
-  createOpen.value = false;
-  await finalizeReloadAndSelect(base.contractId, newVarId);
 }
 
-async function handleSaveComposee(payload: { sections: any[] }) {
-  if (!createBase.value) throw new Error("Base manquante.");
-  const base = createBase.value;
+async function handleSaveComposee(payload: ComposePayload) {
+  const body = {
+    contractId: createBase.contractId,
+    title: createBase.title,
+    description: createBase.description,
+    status: createBase.status,
+    createMode: "COMPOSEE",
+    composee: payload,
+  };
 
-  const { newVarId } = await createVariantBase(base);
-
-  // ✅ Ici, la composition par sections doit être appliquée via backend OU via fetch source variants + PUT payload.
-  // Je laisse un body “placeholder” (car tes endpoints sources varient selon ton backend).
-  await apiJson(`/variants/${newVarId}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      title: base.title,
-      status: base.status,
-      description: base.description,
-      // TODO: remplacer par "applyComposeSections(payload.sections)"
-      // composee: payload,
-    }),
+  const created = await apiJson(`/variants`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 
+  const newVarId = String(created?.variant?.id ?? created?.id ?? "");
+  if (newVarId) await afterVariantCreated(createBase.contractId, newVarId);
+
   wizardOpen.value = false;
-  createOpen.value = false;
-  await finalizeReloadAndSelect(base.contractId, newVarId);
 }
 </script>
 
 <template>
   <div class="page">
+    <!-- HEADER -->
     <div class="header">
       <div class="titleBlock">
         <h1>Mes P&amp;L</h1>
@@ -702,6 +695,7 @@ async function handleSaveComposee(payload: { sections: any[] }) {
       </div>
     </div>
 
+    <!-- ONE-LINE COMPACT SEARCH + FILTER BUTTON (P&L ONLY) -->
     <div class="toolbarOneLine card">
       <div class="searchMini">
         <span class="icon">⌕</span>
@@ -751,6 +745,7 @@ async function handleSaveComposee(payload: { sections: any[] }) {
       </div>
     </div>
 
+    <!-- LIST -->
     <div v-if="store.loading" class="card">Chargement…</div>
     <div v-else-if="store.error" class="card card--error"><b>Erreur :</b> {{ store.error }}</div>
 
@@ -794,7 +789,12 @@ async function handleSaveComposee(payload: { sections: any[] }) {
 
           <div v-if="(p.contracts ?? []).length === 0" class="muted">Aucun contrat.</div>
 
-          <div v-for="c in (p.contracts ?? [])" :key="c.id" class="contract" :class="{ activeContract: c.id === activeContractId }">
+          <div
+            v-for="c in (p.contracts ?? [])"
+            :key="c.id"
+            class="contract"
+            :class="{ activeContract: c.id === activeContractId }"
+          >
             <div class="row contractRow">
               <div class="tree"><div class="branch"></div><div class="node"></div></div>
 
@@ -832,7 +832,12 @@ async function handleSaveComposee(payload: { sections: any[] }) {
 
               <div v-if="(c.variants ?? []).length === 0" class="muted indent2">Aucune variante.</div>
 
-              <div v-for="v in (c.variants ?? [])" :key="v.id" class="row variantRow" :class="{ activeVariant: v.id === activeVariantId }">
+              <div
+                v-for="v in (c.variants ?? [])"
+                :key="v.id"
+                class="row variantRow"
+                :class="{ activeVariant: v.id === activeVariantId }"
+              >
                 <div class="tree tree--deep"><div class="branch"></div><div class="node"></div></div>
 
                 <div class="main">
@@ -857,10 +862,11 @@ async function handleSaveComposee(payload: { sections: any[] }) {
             </div>
           </div>
         </div>
+
       </div>
     </div>
 
-    <!-- VIEW + EDIT MODALS (inchangés) -->
+    <!-- MODALS -->
     <Teleport to="body">
       <!-- VIEW MODAL -->
       <div v-if="viewOpen" class="modalOverlay" @click.self="closeView()">
@@ -894,7 +900,45 @@ async function handleSaveComposee(payload: { sections: any[] }) {
                   <div class="rowKV"><div class="k">Postes</div><div class="v"><b>{{ labelFrom(POSTES_2, viewData?.postes) }}</b></div></div>
                 </div>
               </div>
-              <!-- ... (inchangé, même contenu que ton fichier) ... -->
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Responsabilités</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Cab</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.cab) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Installation</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.installation) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Génie civil</div><div class="v"><b>{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Transport</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.transport) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Terrain</div><div class="v"><b>{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Matière première</div><div class="v"><b>{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Maintenance</div><div class="v"><b>{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Chargeuse</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</b></div></div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Eau</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Branchement eau</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Conso eau</div><div class="v"><b>{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</b></div></div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Électricité</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Branchement élec</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</b></div></div>
+                  <div class="rowKV"><div class="k">Conso élec</div><div class="v"><b>{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</b></div></div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Paramètres financiers</div>
+                <div class="sectionGrid">
+                  <div class="rowKV"><div class="k">Dim./fériés</div><div class="v"><b>{{ viewData?.sundayPrice ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Pénalité délai</div><div class="v"><b>{{ viewData?.delayPenalty ?? 0 }}</b></div></div>
+                  <div class="rowKV"><div class="k">Location chiller</div><div class="v"><b>{{ viewData?.chillerRent ?? 0 }}</b></div></div>
+                </div>
+              </div>
             </div>
 
             <div v-else class="kv">
@@ -917,7 +961,7 @@ async function handleSaveComposee(payload: { sections: any[] }) {
             <div class="modalTitle">
               <b v-if="editMode === 'pnl'">{{ isCreate ? "Créer" : "Modifier" }} — P&amp;L</b>
               <b v-else-if="editMode === 'contract'">{{ isCreate ? "Créer" : "Modifier" }} — Contrat</b>
-              <b v-else>{{ isCreate ? "Créer" : "Modifier" }} — Variante</b>
+              <b v-else>{{ "Modifier" }} — Variante</b>
               <div class="modalSub idTiny" v-if="!isCreate">ID : {{ idShort(draft.id) }}</div>
               <div class="modalSub idTiny" v-else>Création</div>
             </div>
@@ -927,8 +971,182 @@ async function handleSaveComposee(payload: { sections: any[] }) {
           <div class="modalBody">
             <div v-if="editErr" class="alert"><b>Erreur :</b> {{ editErr }}</div>
 
-            <!-- PNL / CONTRACT / VARIANT edit : même contenu que ton fichier actuel -->
-            <!-- (pour gagner du temps, je ne réécris pas tout ici) -->
+            <!-- PNL -->
+            <div v-if="editMode === 'pnl'" class="formGrid">
+              <div class="f">
+                <div class="k">Titre</div>
+                <input class="in" v-model="draft.title" placeholder="Titre du P&L" />
+              </div>
+              <div class="f">
+                <div class="k">Client</div>
+                <input class="in" v-model="draft.client" placeholder="Nom du client" />
+              </div>
+              <div class="f">
+                <div class="k">Ville</div>
+                <input class="in" v-model="draft.city" placeholder="Ville" />
+              </div>
+              <div class="f">
+                <div class="k">Statut</div>
+                <select class="in" v-model="draft.status">
+                  <option value="ENCOURS">ENCOURS</option>
+                  <option value="PERDU">PERDU</option>
+                  <option value="ADJUGE">ADJUGÉ</option>
+                  <option value="ARCHIVED">ARCHIVED</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Modèle (non modifiable)</div>
+                <input class="in in--disabled" v-model="draft.model" disabled />
+              </div>
+              <div class="f">
+                <div class="k">Date de création</div>
+                <input class="in in--disabled" :value="fmtDate(draft.createdAt)" disabled />
+              </div>
+            </div>
+
+            <!-- CONTRACT -->
+            <div v-else-if="editMode === 'contract'" class="stack">
+              <div class="sectionBox">
+                <div class="sectionTitle">Synthèse</div>
+                <div class="formGrid sectionForm">
+                  <div class="f">
+                    <div class="k">Référence (auto)</div>
+                    <input class="in in--disabled" :value="draft.ref || (isCreate ? 'Générée automatiquement' : '-')" disabled />
+                  </div>
+                  <div class="f">
+                    <div class="k">Durée (mois)</div>
+                    <input class="in r" type="number" step="1" v-model.number="draft.dureeMois" />
+                  </div>
+                  <div class="f">
+                    <div class="k">Nombre de postes</div>
+                    <select class="in" v-model.number="draft.postes">
+                      <option v-for="o in POSTES_2" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Responsabilités</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Cab</div>
+                    <select class="in" v-model="draft.cab">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Installation</div>
+                    <select class="in" v-model="draft.installation">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Génie civil</div>
+                    <select class="in" v-model="draft.genieCivil">
+                      <option v-for="o in GENIE_CIVIL_4" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Transport jusqu’au chantier</div>
+                    <select class="in" v-model="draft.transport">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Terrain</div>
+                    <select class="in" v-model="draft.terrain">
+                      <option v-for="o in TERRAIN_4" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Matière première</div>
+                    <select class="in" v-model="draft.matierePremiere">
+                      <option v-for="o in MATIERE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Maintenance</div>
+                    <select class="in" v-model="draft.maintenance">
+                      <option v-for="o in MAINTENANCE_4" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+
+                  <div class="f"><div class="k">Chargeuse</div>
+                    <select class="in" v-model="draft.chargeuse">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Eau</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Branchement Eau</div>
+                    <select class="in" v-model="draft.branchementEau">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                  <div class="f"><div class="k">Consommation Eau</div>
+                    <select class="in" v-model="draft.consoEau">
+                      <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Électricité</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Branchement Électricité</div>
+                    <select class="in" v-model="draft.branchementElec">
+                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                  <div class="f"><div class="k">Consommation Électricité</div>
+                    <select class="in" v-model="draft.consoElec">
+                      <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sectionBox">
+                <div class="sectionTitle">Paramètres financiers</div>
+                <div class="formGrid sectionForm">
+                  <div class="f"><div class="k">Prix dimanches / fériés</div>
+                    <input class="in r" type="number" step="0.01" v-model.number="draft.sundayPrice" />
+                  </div>
+                  <div class="f"><div class="k">Forfait pénalité délai</div>
+                    <input class="in r" type="number" step="0.01" v-model.number="draft.delayPenalty" />
+                  </div>
+                  <div class="f"><div class="k">Location Chiller</div>
+                    <input class="in r" type="number" step="0.01" v-model.number="draft.chillerRent" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- VARIANT UPDATE -->
+            <div v-else class="formGrid">
+              <div class="f">
+                <div class="k">Titre</div>
+                <input class="in" v-model="draft.title" placeholder="Titre de la variante" />
+              </div>
+              <div class="f">
+                <div class="k">Statut</div>
+                <select class="in" v-model="draft.status">
+                  <option value="INITIALISEE">INITIALISÉE</option>
+                  <option value="ENCOURS">ENCOURS</option>
+                  <option value="ANNULEE">ANNULÉE</option>
+                  <option value="CLOTUREE">CLÔTURÉE</option>
+                </select>
+              </div>
+              <div class="f f--full">
+                <div class="k">Description</div>
+                <textarea class="in" rows="4" v-model="draft.description" placeholder="Description (optionnelle)"></textarea>
+              </div>
+            </div>
           </div>
 
           <div class="modalFoot">
@@ -941,30 +1159,29 @@ async function handleSaveComposee(payload: { sections: any[] }) {
       </div>
     </Teleport>
 
-    <!-- ✅ NEW CREATE MODALS -->
+    <!-- ✅ NEW VARIANT MODALS -->
     <VariantCreateModal
-      v-model="createOpen"
-      :contract-id="createContractTarget"
-      default-title="Variante"
+      :open="createOpen"
+      :contract-id="createContractId"
+      :default-title="createDefaultTitle"
+      @close="closeCreateModal"
       @save="handleCreateSave"
       @next="handleCreateNext"
-      @close="createOpen = false"
     />
 
     <VariantWizardModal
-      v-model="wizardOpen"
+      :open="wizardOpen"
       :mode="wizardMode"
-      :base="createBase"
       :all-variants="allVariantsFlat"
-      @saveInitiee="handleSaveInitiee"
-      @saveComposee="handleSaveComposee"
-      @close="wizardOpen = false"
+      @close="closeWizardModal"
+      @submit-initiee="handleSaveInitiee"
+      @submit-composee="handleSaveComposee"
     />
   </div>
 </template>
 
 <style scoped>
-/* ✅ je reprends exactement ton style existant (identique à ton fichier), pas de changement ici */
+/* (identique à ton style actuel, gardé volontairement) */
 .page { padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #f6f7f9; min-height: 100%; box-sizing: border-box; }
 
 .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
@@ -1090,11 +1307,26 @@ async function handleSaveComposee(payload: { sections: any[] }) {
 .rowKV .k { font-size: 12px; color: #6b7280; font-weight: 700; }
 .rowKV .v { font-size: 12.5px; color: #111827; }
 
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.f { display: flex; flex-direction: column; gap: 6px; }
+.f--full { grid-column: 1 / -1; }
+.in { border: 1px solid #e5e7eb; border-radius: 12px; padding: 9px 10px; font-size: 13px; outline: none; background: #fff; }
+.in:focus { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99,102,241,0.10); }
+.in--disabled { background: #f9fafb; color: #6b7280; }
+.r { text-align: right; }
+
 .alert { border: 1px solid #fecaca; background: #fff5f5; color: #991b1b; border-radius: 12px; padding: 10px; margin-bottom: 12px; }
+
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.sectionBox { border: 1px solid #eef0f4; border-radius: 14px; background: #fcfcfd; padding: 10px; }
+.sectionTitle { font-size: 12px; font-weight: 900; color: #111827; margin-bottom: 8px; }
+.sectionGrid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.sectionForm { margin-top: 2px; }
 
 @media (max-width: 900px) {
   .actions { justify-content: flex-start; }
   .rowKV { grid-template-columns: 140px 1fr; }
+  .formGrid { grid-template-columns: 1fr; }
   .toolbarOneLine { flex-wrap: wrap; }
   .popover { right: auto; left: 0; }
   .popGrid { grid-template-columns: 1fr; }

@@ -487,39 +487,38 @@ app.post("/variants", async (req: Request, res: Response) => {
     const contractId = String(body.contractId ?? "");
     if (!contractId) return res.status(400).json({ error: "contractId required" });
 
-const created = await prisma.$transaction(async (tx) => {
-  const v = await tx.variant.create({
-    data: {
-      contractId,
-      title: String(body.title ?? "Variante"),
-      description: body.description == null ? null : String(body.description),
-      status: String(body.status ?? "INITIALISEE"),
-    },
-  });
+    const created = await prisma.$transaction(async (tx) => {
+      const v = await tx.variant.create({
+        data: {
+          contractId,
+          title: String(body.title ?? "Variante"),
+          description: body.description == null ? null : String(body.description),
+          status: String(body.status ?? "INITIALISEE"),
+        },
+      });
 
-  // ✅ créer la section AutresCouts
-  const sec = await tx.sectionAutresCouts.create({
-    data: {
-      variantId: v.id,
-      category: "COUTS_CHARGES",
-    },
-  });
+      // ✅ créer la section AutresCouts
+      const sec = await tx.sectionAutresCouts.create({
+        data: {
+          variantId: v.id,
+          category: "COUTS_CHARGES",
+        },
+      });
 
-  // ✅ créer 1 item par défaut (variantId obligatoire)
-  await tx.autreCoutItem.create({
-    data: {
-      variantId: v.id,
-      sectionId: sec.id,
-      label: "Frais généraux",
-      unite: "POURCENT_CA",
-      valeur: 0,
-      // order: 1, // si ce champ existe chez toi
-    },
-  });
+      // ✅ créer 1 item par défaut (variantId obligatoire)
+      await tx.autreCoutItem.create({
+        data: {
+          variantId: v.id,
+          sectionId: sec.id,
+          label: "Frais généraux",
+          unite: "POURCENT_CA",
+          valeur: 0,
+          // order: 1, // si ce champ existe chez toi
+        },
+      });
 
-  return v;
-});
-
+      return v;
+    });
 
     res.json(created);
   } catch (err: any) {
@@ -822,6 +821,132 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
   }
 });
 
+/* =========================================================
+   MAJORATIONS (persistées)
+   Attendu par le front: PUT /variants/:id/majorations
+   Stockage: SectionAutresCouts.majorations (JSON string)
+   Réponse: variante complète (objet direct)
+========================================================= */
+app.put("/variants/:id/majorations", async (req: Request, res: Response) => {
+  try {
+    const variantId = String(req.params.id);
+    const incoming = req.body?.majorations;
+
+    const map: Record<string, number> = incoming && typeof incoming === "object" ? incoming : {};
+
+    const normalized: Record<string, number> = {};
+    for (const [k, v] of Object.entries(map)) {
+      const x = Number(v);
+      normalized[k] = Number.isFinite(x) ? x : 0;
+    }
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.sectionAutresCouts.upsert({
+        where: { variantId },
+        create: {
+          variantId,
+          category: "COUTS_CHARGES",
+          majorations: JSON.stringify(normalized),
+        },
+        update: {
+          majorations: JSON.stringify(normalized),
+        },
+      });
+    });
+
+    const variant = await getFullVariant(variantId);
+    if (!variant) return res.status(404).json({ error: "Variant not found" });
+
+    return res.json(variant);
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
+/* =========================================================
+   DEVIS (édition + surcharge par formule)
+   PUT /variants/:id/devis
+   body: {
+     meta?, intro?, rappel?, chargeFournisseur?, chargeClient?,
+     prixComplementaires?, validiteTexte?, signature?, surcharges?
+   }
+   Réponse: variante complète (objet direct)
+========================================================= */
+app.put("/variants/:id/devis", async (req: Request, res: Response) => {
+  try {
+    const variantId = String(req.params.id);
+    const body = req.body ?? {};
+
+    const toJson = (v: any, fallback: any) => {
+      try {
+        if (v === undefined) return undefined;
+        return JSON.stringify(v ?? fallback);
+      } catch {
+        return JSON.stringify(fallback);
+      }
+    };
+
+    // Normaliser surcharges en map number
+    const surchargesIn = body?.surcharges;
+    let surchargesNorm: Record<string, number> | undefined = undefined;
+    if (surchargesIn !== undefined) {
+      const map: Record<string, number> =
+        surchargesIn && typeof surchargesIn === "object" ? surchargesIn : {};
+      const normalized: Record<string, number> = {};
+      for (const [k, v] of Object.entries(map)) {
+        const x = Number(v);
+        normalized[k] = Number.isFinite(x) ? x : 0;
+      }
+      surchargesNorm = normalized;
+    }
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.sectionDevis.upsert({
+        where: { variantId },
+        create: {
+          variantId,
+          category: "DEVIS",
+          surcharge: 0,
+
+          meta: JSON.stringify(body?.meta ?? {}),
+          intro: String(body?.intro ?? ""),
+          rappel: JSON.stringify(body?.rappel ?? {}),
+          chargeFournisseur: JSON.stringify(body?.chargeFournisseur ?? []),
+          chargeClient: JSON.stringify(body?.chargeClient ?? []),
+          prixComplementaires: JSON.stringify(body?.prixComplementaires ?? []),
+          validiteTexte: String(body?.validiteTexte ?? ""),
+          signature: JSON.stringify(body?.signature ?? {}),
+          surcharges: JSON.stringify(surchargesNorm ?? body?.surcharges ?? {}),
+        },
+        update: {
+          ...(body.meta !== undefined ? { meta: toJson(body.meta, {}) } : {}),
+          ...(body.intro !== undefined ? { intro: String(body.intro ?? "") } : {}),
+          ...(body.rappel !== undefined ? { rappel: toJson(body.rappel, {}) } : {}),
+          ...(body.chargeFournisseur !== undefined
+            ? { chargeFournisseur: toJson(body.chargeFournisseur, []) }
+            : {}),
+          ...(body.chargeClient !== undefined ? { chargeClient: toJson(body.chargeClient, []) } : {}),
+          ...(body.prixComplementaires !== undefined
+            ? { prixComplementaires: toJson(body.prixComplementaires, []) }
+            : {}),
+          ...(body.validiteTexte !== undefined ? { validiteTexte: String(body.validiteTexte ?? "") } : {}),
+          ...(body.signature !== undefined ? { signature: toJson(body.signature, {}) } : {}),
+          ...(surchargesNorm !== undefined ? { surcharges: JSON.stringify(surchargesNorm) } : {}),
+        } as any,
+      });
+    });
+
+    const variant = await getFullVariant(variantId);
+    if (!variant) return res.status(404).json({ error: "Variant not found" });
+
+    return res.json(variant);
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
 // ✅ Add formule to variant (sync MP)
 app.post("/variants/:id/formules", async (req: Request, res: Response) => {
   try {
@@ -916,55 +1041,6 @@ app.delete("/variants/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: err?.message ?? "Bad Request" });
   }
 });
-
-/* =========================================================
-   MAJORATIONS (persistées)
-   Attendu par le front: PUT /variants/:id/majorations
-   Stockage: SectionAutresCouts.majorations (JSON string)
-   Réponse: variante complète (objet direct)
-========================================================= */
-app.put("/variants/:id/majorations", async (req: Request, res: Response) => {
-  try {
-    const variantId = String(req.params.id);
-    const incoming = req.body?.majorations;
-
-    const map: Record<string, number> =
-      incoming && typeof incoming === "object" ? incoming : {};
-
-    // normaliser en nombres
-    const normalized: Record<string, number> = {};
-    for (const [k, v] of Object.entries(map)) {
-      const n = Number(v);
-      normalized[k] = Number.isFinite(n) ? n : 0;
-    }
-
-    const majorationsJson = JSON.stringify(normalized);
-
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.sectionAutresCouts.upsert({
-        where: { variantId },
-        create: {
-          variantId,
-          category: "COUTS_CHARGES",
-          majorations: majorationsJson,
-        },
-        update: {
-          majorations: majorationsJson,
-        },
-      });
-    });
-
-    const variant = await getFullVariant(variantId);
-    if (!variant) return res.status(404).json({ error: "Variant not found" });
-
-    // ⬅️ IMPORTANT: renvoyer l'objet variante direct (store attend updated.id)
-    return res.json(variant);
-  } catch (e: any) {
-    console.error(e);
-    return res.status(400).json({ error: e?.message ?? "Bad Request" });
-  }
-});
-
 
 app.listen(3001, () => {
   console.log("API running on http://localhost:3001");

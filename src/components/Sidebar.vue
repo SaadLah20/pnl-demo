@@ -80,6 +80,7 @@ const routeByItem: Record<string, string> = {
   "Autres couts": "AutresCouts",
     "Majorations": "Majorations",
 "Comparateur de variantes": "ComparateurVariantes",
+"Devis": "Devis",
 
 };
 
@@ -137,6 +138,7 @@ watch(
     else if (route.name === "CoutsOccasionnels") activeItem.value = "Couts occasionnels";
     else if (route.name === "AutresCouts") activeItem.value = "Autres couts";
     else if (route.name === "Majorations") activeItem.value = "Majorations";
+    else if (route.name === "Devis") activeItem.value = "Devis";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 
