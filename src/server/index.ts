@@ -545,19 +545,12 @@ type ComposeSectionKey =
  * - {fromVariantId} => copie depuis cette variante
  * - undefined => si importAll=true => baseVariantId, sinon ZERO
  */
-function pickComposeSource(
-  composee: { baseVariantId?: string; importAll?: boolean; bySection?: any },
-  key: ComposeSectionKey
-): string | null {
-  const bySection = composee?.bySection ?? {};
+function pickComposeSourceStrict(bySection: any, key: ComposeSectionKey): string | null {
   const raw = bySection?.[key];
 
-  // explicit ZERO
+  // si tu veux ZERO => il faut que le front envoie null ou "ZERO"
   if (raw === null) return null;
-  if (raw === undefined) {
-    const base = String(composee.baseVariantId ?? "").trim();
-    return composee.importAll && base ? base : null;
-  }
+  if (raw === undefined) return null;
 
   if (typeof raw === "string") {
     const s = raw.trim();
@@ -575,6 +568,7 @@ function pickComposeSource(
 
   return null;
 }
+
 
 async function applyComposee(
   tx: Prisma.TransactionClient,
@@ -801,7 +795,7 @@ async function applyComposee(
   ];
 
   for (const [k, fn] of steps) {
-    const srcId = pickComposeSource(composee, k);
+const srcId = pickComposeSourceStrict(composee.bySection, k);
     if (!srcId) continue; // ZERO -> garder squelette
     await fn(srcId);
   }
