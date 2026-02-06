@@ -49,6 +49,26 @@ function numOr0(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function intOr0(v: any): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+/** Normalise createMode tolérant (accents / casse / espaces) -> "ZERO" | "INITIEE" | "COMPOSEE" */
+function normalizeCreateMode(v: any): "ZERO" | "INITIEE" | "COMPOSEE" {
+  const raw = String(v ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[-_]/g, "");
+
+  if (raw === "INITIEE" || raw === "INITIE" || raw === "INIT") return "INITIEE";
+  if (raw === "COMPOSEE" || raw === "COMPOSE" || raw === "COMP") return "COMPOSEE";
+  return "ZERO";
+}
+
 async function getFullVariant(variantId: string) {
   return prisma.variant.findUnique({
     where: { id: variantId },
@@ -89,9 +109,7 @@ async function syncVariantMpsFromFormules(tx: Prisma.TransactionClient, variantI
 
   const vfs = await tx.variantFormule.findMany({
     where: { variantId },
-    include: {
-      formule: { include: { items: true } },
-    },
+    include: { formule: { include: { items: true } } },
   });
 
   const usedMpIds = new Set<string>();
@@ -163,6 +181,629 @@ async function upsertPartialSection(params: {
         ...data,
       },
     });
+  }
+}
+
+/** Crée toutes les sections nécessaires avec valeurs à 0 (squelette) */
+async function ensureVariantSkeleton(tx: Prisma.TransactionClient, variantId: string) {
+  await tx.sectionTransport.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "LOGISTIQUE_APPRO",
+      type: "MOYENNE",
+      prixMoyen: 0,
+      volumePompePct: null,
+      prixAchatPompe: null,
+      prixVentePompe: null,
+    },
+    update: {},
+  });
+
+  await tx.sectionCab.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "LOGISTIQUE_APPRO",
+      etat: "NEUVE",
+      mode: "ACHAT",
+      capaciteM3: 0,
+      amortMois: 0,
+    },
+    update: {},
+  });
+
+  await tx.sectionMaintenance.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "COUTS_CHARGES",
+      cab: 0,
+      elec: 0,
+      chargeur: 0,
+      generale: 0,
+      bassins: 0,
+      preventive: 0,
+    },
+    update: {},
+  });
+
+  await tx.sectionCoutM3.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "COUTS_CHARGES",
+      eau: 0,
+      qualite: 0,
+      dechets: 0,
+    },
+    update: {},
+  });
+
+  await tx.sectionCoutMensuel.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "COUTS_CHARGES",
+      electricite: 0,
+      gasoil: 0,
+      location: 0,
+      securite: 0,
+      hebergements: 0,
+      locationTerrain: 0,
+      telephone: 0,
+      troisG: 0,
+      taxeProfessionnelle: 0,
+      locationVehicule: 0,
+      locationAmbulance: 0,
+      locationBungalows: 0,
+      epi: 0,
+    },
+    update: {},
+  });
+
+  await tx.sectionCoutOccasionnel.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "COUTS_CHARGES",
+      genieCivil: 0,
+      installation: 0,
+      transport: 0,
+      demontage: 0,
+      remisePointCentrale: 0,
+      silots: 0,
+      localAdjuvant: 0,
+      bungalows: 0,
+    },
+    update: {},
+  });
+
+  await tx.sectionEmployes.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "COUTS_CHARGES",
+
+      responsableNb: 0,
+      responsableCout: 0,
+
+      centralistesNb: 0,
+      centralistesCout: 0,
+
+      manoeuvreNb: 0,
+      manoeuvreCout: 0,
+
+      coordinateurExploitationNb: 0,
+      coordinateurExploitationCout: 0,
+
+      technicienLaboNb: 0,
+      technicienLaboCout: 0,
+
+      femmeMenageNb: 0,
+      femmeMenageCout: 0,
+
+      gardienNb: 0,
+      gardienCout: 0,
+
+      maintenancierNb: 0,
+      maintenancierCout: 0,
+
+      panierRepasNb: 0,
+      panierRepasCout: 0,
+    } as any,
+    update: {},
+  });
+
+  const autres = await tx.sectionAutresCouts.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "COUTS_CHARGES",
+      majorations: JSON.stringify({}),
+    } as any,
+    update: {},
+  });
+
+  // si aucun item -> créer un item par défaut
+  const count = await tx.autreCoutItem.count({ where: { variantId } });
+  if (count === 0) {
+    await tx.autreCoutItem.create({
+      data: {
+        variantId,
+        sectionId: autres.id,
+        label: "Frais généraux",
+        unite: "POURCENT_CA",
+        valeur: 0,
+      },
+    });
+  }
+
+  await tx.sectionFormules.upsert({
+    where: { variantId },
+    create: { variantId, category: "FORMULES" },
+    update: {},
+  });
+
+  await tx.sectionDevis.upsert({
+    where: { variantId },
+    create: {
+      variantId,
+      category: "DEVIS",
+      surcharge: 0,
+      meta: JSON.stringify({}),
+      intro: "",
+      rappel: JSON.stringify({}),
+      chargeFournisseur: JSON.stringify([]),
+      chargeClient: JSON.stringify([]),
+      prixComplementaires: JSON.stringify([]),
+      validiteTexte: "",
+      signature: JSON.stringify({}),
+      surcharges: JSON.stringify({}),
+    } as any,
+    update: {},
+  });
+
+  await tx.sectionMajorations.upsert({
+    where: { variantId },
+    create: { variantId, category: "COUTS_CHARGES" },
+    update: {},
+  });
+}
+
+async function applyInitiee(
+  tx: Prisma.TransactionClient,
+  params: {
+    variantId: string;
+    contractId: string;
+    initiee: {
+      volumeEstimeM3: number;
+      resistances: string[];
+      ebitCiblePct: number;
+      etatCentrale: "EXISTANTE" | "NEUVE";
+    };
+  }
+) {
+  const { variantId, contractId, initiee } = params;
+
+  await ensureVariantSkeleton(tx, variantId);
+
+  // Baseline non-zéro (tu pourras raffiner après)
+  await tx.sectionTransport.update({
+    where: { variantId },
+    data: {
+      type: "MOYENNE",
+      prixMoyen: 79.6,
+      volumePompePct: 0,
+      prixAchatPompe: 0,
+      prixVentePompe: 0,
+    },
+  });
+
+  await tx.sectionCab.update({
+    where: { variantId },
+    data: {
+      etat: initiee.etatCentrale === "EXISTANTE" ? "EXISTANTE" : "NEUVE",
+      mode: "ACHAT",
+      capaciteM3: 2.0,
+      amortMois: 30000,
+    },
+  });
+
+  await tx.sectionMaintenance.update({
+    where: { variantId },
+    data: { cab: 3000, elec: 2500, chargeur: 1500, generale: 2000, bassins: 1000, preventive: 2000 },
+  });
+
+  await tx.sectionCoutM3.update({
+    where: { variantId },
+    data: { eau: 3, qualite: 2, dechets: 1.75 },
+  });
+
+  await tx.sectionCoutMensuel.update({
+    where: { variantId },
+    data: { electricite: 42000, gasoil: 15000, location: 12000, securite: 5370 },
+  });
+
+  await tx.sectionCoutOccasionnel.update({
+    where: { variantId },
+    data: { genieCivil: 1200000, installation: 580000, transport: 0 },
+  });
+
+  await tx.sectionEmployes.update({
+    where: { variantId },
+    data: { responsableNb: 1, responsableCout: 25000, centralistesNb: 4, centralistesCout: 13140 } as any,
+  });
+
+  // Autres coûts baseline
+  const autres = await tx.sectionAutresCouts.findUnique({ where: { variantId } });
+  if (autres) {
+    await tx.autreCoutItem.deleteMany({ where: { variantId } });
+    await tx.autreCoutItem.createMany({
+      data: [
+        { variantId, sectionId: autres.id, label: "Frais généraux", unite: "POURCENT_CA", valeur: 6 },
+        { variantId, sectionId: autres.id, label: "Location chargeuse", unite: "MOIS", valeur: 22000 },
+      ],
+    });
+  }
+
+  // -------- formules catalogue selon ville + résistances
+  const contract = await tx.contract.findUnique({
+    where: { id: contractId },
+    include: { pnl: true },
+  });
+  const city = String(contract?.pnl?.city ?? "");
+
+  const requested = (initiee.resistances ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  const uniqueRequested = [...new Set(requested)].slice(0, 5);
+
+  const allCityFormules = await tx.formuleCatalogue.findMany({
+    where: city ? { city } : undefined,
+    orderBy: { label: "asc" },
+  });
+
+  const basePool =
+    allCityFormules.length > 0
+      ? allCityFormules
+      : await tx.formuleCatalogue.findMany({ orderBy: { label: "asc" } });
+
+  if (basePool.length === 0) {
+    // pas de catalogue => rien à lier
+    return;
+  }
+
+  const pickRandom = () => {
+    const idx = Math.floor(Math.random() * basePool.length);
+    return basePool[idx]!;
+  };
+
+  const picked: Array<{ formuleId: string; resistance: string }> = [];
+
+  for (const r of uniqueRequested) {
+    const matches = basePool.filter((f) => String(f.resistance ?? "").trim() === r);
+    const chosen = matches.length > 0 ? matches[0]! : pickRandom();
+    picked.push({ formuleId: chosen.id, resistance: String(chosen.resistance ?? "") });
+  }
+
+  if (picked.length === 0) {
+    const rnd = pickRandom();
+    picked.push({ formuleId: rnd.id, resistance: String(rnd.resistance ?? "") });
+  }
+
+  const uniqueById = new Map<string, { formuleId: string; resistance: string }>();
+  for (const p of picked) uniqueById.set(p.formuleId, p);
+  const finalFormules = [...uniqueById.values()];
+
+  const secFormules = await tx.sectionFormules.upsert({
+    where: { variantId },
+    create: { variantId, category: "FORMULES" },
+    update: {},
+  });
+
+  await tx.variantFormule.deleteMany({ where: { variantId } });
+
+  const totalVol = numOr0(initiee.volumeEstimeM3);
+  const n = finalFormules.length;
+  const per = n > 0 ? totalVol / n : 0;
+
+  for (const f of finalFormules) {
+    await tx.variantFormule.create({
+      data: {
+        variantId,
+        sectionId: secFormules.id,
+        formuleId: f.formuleId,
+        volumeM3: per,
+        momd: 0,
+        cmpOverride: null,
+      },
+    });
+  }
+
+  await syncVariantMpsFromFormules(tx, variantId);
+
+  // (EBIT cible) — pas d'algo d'optim ici pour l'instant
+  void initiee.ebitCiblePct;
+}
+
+type ComposeSectionKey =
+  | "transport"
+  | "cab"
+  | "maintenance"
+  | "coutM3"
+  | "coutMensuel"
+  | "coutOccasionnel"
+  | "employes"
+  | "autresCouts"
+  | "formules"
+  | "majorations"
+  | "devis";
+
+/**
+ * ✅ Respect strict de bySection:
+ * - null / "ZERO" / "" => ZERO (ne copie pas)
+ * - string => copie depuis cette variante
+ * - {fromVariantId} => copie depuis cette variante
+ * - undefined => si importAll=true => baseVariantId, sinon ZERO
+ */
+function pickComposeSource(
+  composee: { baseVariantId?: string; importAll?: boolean; bySection?: any },
+  key: ComposeSectionKey
+): string | null {
+  const bySection = composee?.bySection ?? {};
+  const raw = bySection?.[key];
+
+  // explicit ZERO
+  if (raw === null) return null;
+  if (raw === undefined) {
+    const base = String(composee.baseVariantId ?? "").trim();
+    return composee.importAll && base ? base : null;
+  }
+
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return null;
+    if (s.toUpperCase() === "ZERO") return null;
+    return s;
+  }
+
+  if (raw && typeof raw === "object") {
+    const id = String(raw.fromVariantId ?? "").trim();
+    if (!id) return null;
+    if (id.toUpperCase() === "ZERO") return null;
+    return id;
+  }
+
+  return null;
+}
+
+async function applyComposee(
+  tx: Prisma.TransactionClient,
+  params: {
+    variantId: string;
+    composee: {
+      baseVariantId?: string;
+      importAll?: boolean;
+      bySection: Record<ComposeSectionKey, any>;
+    };
+  }
+) {
+  const { variantId, composee } = params;
+
+  await ensureVariantSkeleton(tx, variantId);
+
+  const copyTransport = async (fromId: string) => {
+    const src = await tx.sectionTransport.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+    await tx.sectionTransport.update({
+      where: { variantId },
+      data: {
+        category: src.category,
+        type: src.type,
+        prixMoyen: src.prixMoyen,
+        volumePompePct: src.volumePompePct,
+        prixAchatPompe: src.prixAchatPompe,
+        prixVentePompe: src.prixVentePompe,
+      },
+    });
+  };
+
+  const copyCab = async (fromId: string) => {
+    const src = await tx.sectionCab.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+    await tx.sectionCab.update({
+      where: { variantId },
+      data: {
+        category: src.category,
+        etat: src.etat,
+        mode: src.mode,
+        capaciteM3: src.capaciteM3,
+        amortMois: src.amortMois,
+      },
+    });
+  };
+
+  const copyMaintenance = async (fromId: string) => {
+    const src = await tx.sectionMaintenance.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+    await tx.sectionMaintenance.update({
+      where: { variantId },
+      data: {
+        category: src.category,
+        cab: src.cab,
+        elec: src.elec,
+        chargeur: src.chargeur,
+        generale: src.generale,
+        bassins: src.bassins,
+        preventive: src.preventive,
+      },
+    });
+  };
+
+  const copyCoutM3 = async (fromId: string) => {
+    const src = await tx.sectionCoutM3.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+    await tx.sectionCoutM3.update({
+      where: { variantId },
+      data: { category: src.category, eau: src.eau, qualite: src.qualite, dechets: src.dechets },
+    });
+  };
+
+  const copyCoutMensuel = async (fromId: string) => {
+    const src = await tx.sectionCoutMensuel.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+
+    await tx.sectionCoutMensuel.update({
+      where: { variantId },
+      data: {
+        category: src.category,
+        electricite: src.electricite,
+        gasoil: src.gasoil,
+        location: src.location,
+        securite: src.securite,
+        hebergements: src.hebergements,
+        locationTerrain: src.locationTerrain,
+        telephone: src.telephone,
+        troisG: src.troisG,
+        taxeProfessionnelle: src.taxeProfessionnelle,
+        locationVehicule: src.locationVehicule,
+        locationAmbulance: src.locationAmbulance,
+        locationBungalows: src.locationBungalows,
+        epi: src.epi,
+      } as any,
+    });
+  };
+
+  const copyCoutOcc = async (fromId: string) => {
+    const src = await tx.sectionCoutOccasionnel.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+
+    await tx.sectionCoutOccasionnel.update({
+      where: { variantId },
+      data: {
+        category: src.category,
+        genieCivil: src.genieCivil,
+        installation: src.installation,
+        transport: src.transport,
+        demontage: src.demontage,
+        remisePointCentrale: src.remisePointCentrale,
+        silots: src.silots,
+        localAdjuvant: src.localAdjuvant,
+        bungalows: src.bungalows,
+      } as any,
+    });
+  };
+
+  const copyEmployes = async (fromId: string) => {
+    const src = await tx.sectionEmployes.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+
+    // on copie tout sauf id/variantId
+    const data: any = { ...src };
+    delete data.id;
+    delete data.variantId;
+
+    await tx.sectionEmployes.update({ where: { variantId }, data });
+  };
+
+  const copyAutresCouts = async (fromId: string) => {
+    const srcSec = await tx.sectionAutresCouts.findUnique({ where: { variantId: fromId } });
+    const dstSec = await tx.sectionAutresCouts.findUnique({ where: { variantId } });
+    if (!dstSec) return;
+
+    await tx.sectionAutresCouts.update({
+      where: { variantId },
+      data: { majorations: (srcSec as any)?.majorations ?? JSON.stringify({}) } as any,
+    });
+
+    const srcItems = await tx.autreCoutItem.findMany({ where: { variantId: fromId } });
+
+    await tx.autreCoutItem.deleteMany({ where: { variantId } });
+
+    if (srcItems.length) {
+      await tx.autreCoutItem.createMany({
+        data: srcItems.map((it) => ({
+          variantId,
+          sectionId: dstSec.id,
+          label: it.label,
+          unite: it.unite,
+          valeur: it.valeur,
+        })),
+      });
+    }
+  };
+
+  const copyFormules = async (fromId: string) => {
+    const dstSec = await tx.sectionFormules.upsert({
+      where: { variantId },
+      create: { variantId, category: "FORMULES" },
+      update: {},
+    });
+
+    const srcLinks = await tx.variantFormule.findMany({ where: { variantId: fromId } });
+
+    await tx.variantFormule.deleteMany({ where: { variantId } });
+
+    if (srcLinks.length) {
+      await tx.variantFormule.createMany({
+        data: srcLinks.map((l) => ({
+          variantId,
+          sectionId: dstSec.id,
+          formuleId: l.formuleId,
+          volumeM3: l.volumeM3,
+          momd: l.momd,
+          cmpOverride: l.cmpOverride,
+        })),
+      });
+    }
+
+    await syncVariantMpsFromFormules(tx, variantId);
+  };
+
+  const copyDevis = async (fromId: string) => {
+    const src = await tx.sectionDevis.findUnique({ where: { variantId: fromId } });
+    if (!src) return;
+
+    await tx.sectionDevis.update({
+      where: { variantId },
+      data: {
+        category: src.category,
+        surcharge: src.surcharge,
+        meta: src.meta,
+        intro: src.intro,
+        rappel: src.rappel,
+        chargeFournisseur: src.chargeFournisseur,
+        chargeClient: src.chargeClient,
+        prixComplementaires: src.prixComplementaires,
+        validiteTexte: src.validiteTexte,
+        signature: src.signature,
+        surcharges: src.surcharges,
+      } as any,
+    });
+  };
+
+  const copyMajorations = async (_fromId: string) => {
+    // no-op (majorations déjà via sectionAutresCouts.majorations)
+    return;
+  };
+
+  const steps: Array<[ComposeSectionKey, (fromId: string) => Promise<void>]> = [
+    ["transport", copyTransport],
+    ["cab", copyCab],
+    ["maintenance", copyMaintenance],
+    ["coutM3", copyCoutM3],
+    ["coutMensuel", copyCoutMensuel],
+    ["coutOccasionnel", copyCoutOcc],
+    ["employes", copyEmployes],
+    ["autresCouts", copyAutresCouts],
+    ["formules", copyFormules],
+    ["devis", copyDevis],
+    ["majorations", copyMajorations],
+  ];
+
+  for (const [k, fn] of steps) {
+    const srcId = pickComposeSource(composee, k);
+    if (!srcId) continue; // ZERO -> garder squelette
+    await fn(srcId);
   }
 }
 
@@ -400,7 +1041,6 @@ app.put("/pnls/:id", async (req: Request, res: Response) => {
         city: req.body?.city === undefined ? undefined : String(req.body.city),
         region: req.body?.region === undefined ? undefined : String(req.body.region),
         status: req.body?.status === undefined ? undefined : String(req.body.status),
-        // ⚠️ model non modifiable volontairement
       },
     });
 
@@ -443,8 +1083,8 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
 
     const data: any = pick(body, allowed);
 
-    if (data.dureeMois !== undefined) data.dureeMois = numOr0(data.dureeMois);
-    if (data.postes !== undefined) data.postes = Math.trunc(numOr0(data.postes));
+    if (data.dureeMois !== undefined) data.dureeMois = intOr0(data.dureeMois);
+    if (data.postes !== undefined) data.postes = intOr0(data.postes);
 
     if (data.sundayPrice !== undefined) data.sundayPrice = Number(data.sundayPrice ?? 0);
     if (data.delayPenalty !== undefined) data.delayPenalty = Number(data.delayPenalty ?? 0);
@@ -479,7 +1119,7 @@ app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response)
    VARIANT CRUD + UPDATE (partial payload)
 ========================================================= */
 
-// ✅ CREATE VARIANT (IMPORTANT : ne pas spread req.body sinon champs inconnus -> Prisma error)
+// ✅ CREATE VARIANT (respecte createMode + initiee/composee)
 app.post("/variants", async (req: Request, res: Response) => {
   try {
     const body = req.body ?? {};
@@ -487,7 +1127,9 @@ app.post("/variants", async (req: Request, res: Response) => {
     const contractId = String(body.contractId ?? "");
     if (!contractId) return res.status(400).json({ error: "contractId required" });
 
-    const created = await prisma.$transaction(async (tx) => {
+    const createMode = normalizeCreateMode(body.createMode);
+
+    const createdVariantId = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const v = await tx.variant.create({
         data: {
           contractId,
@@ -497,30 +1139,48 @@ app.post("/variants", async (req: Request, res: Response) => {
         },
       });
 
-      // ✅ créer la section AutresCouts
-      const sec = await tx.sectionAutresCouts.create({
-        data: {
-          variantId: v.id,
-          category: "COUTS_CHARGES",
-        },
-      });
+      // Toujours créer un squelette complet (ZERO)
+      await ensureVariantSkeleton(tx, v.id);
 
-      // ✅ créer 1 item par défaut (variantId obligatoire)
-      await tx.autreCoutItem.create({
-        data: {
-          variantId: v.id,
-          sectionId: sec.id,
-          label: "Frais généraux",
-          unite: "POURCENT_CA",
-          valeur: 0,
-          // order: 1, // si ce champ existe chez toi
-        },
-      });
+      // Appliquer INITIEE
+      if (createMode === "INITIEE") {
+        const initiee = body.initiee ?? body.initie ?? body.initiation ?? body.payload ?? null;
+        if (initiee && typeof initiee === "object") {
+          await applyInitiee(tx, {
+            variantId: v.id,
+            contractId,
+            initiee: {
+              volumeEstimeM3: numOr0((initiee as any).volumeEstimeM3),
+              resistances: Array.isArray((initiee as any).resistances)
+                ? (initiee as any).resistances.map((x: any) => String(x))
+                : [],
+              ebitCiblePct: numOr0((initiee as any).ebitCiblePct),
+              etatCentrale: String((initiee as any).etatCentrale ?? "NEUVE") === "EXISTANTE" ? "EXISTANTE" : "NEUVE",
+            },
+          });
+        }
+      }
 
-      return v;
+      // Appliquer COMPOSEE
+      if (createMode === "COMPOSEE") {
+        const composeeRaw = body.composee ?? body.compose ?? null;
+        if (composeeRaw && typeof composeeRaw === "object") {
+          await applyComposee(tx, {
+            variantId: v.id,
+            composee: {
+              baseVariantId: (composeeRaw as any).baseVariantId ? String((composeeRaw as any).baseVariantId) : undefined,
+              importAll: Boolean((composeeRaw as any).importAll ?? false),
+              bySection: ((composeeRaw as any).bySection ?? {}) as any,
+            },
+          });
+        }
+      }
+
+      return v.id;
     });
 
-    res.json(created);
+    const full = await getFullVariant(createdVariantId);
+    return res.json(full ?? { id: createdVariantId });
   } catch (err: any) {
     console.error(err);
     res.status(400).json({ error: err?.message ?? "Bad Request" });
@@ -823,9 +1483,6 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
 
 /* =========================================================
    MAJORATIONS (persistées)
-   Attendu par le front: PUT /variants/:id/majorations
-   Stockage: SectionAutresCouts.majorations (JSON string)
-   Réponse: variante complète (objet direct)
 ========================================================= */
 app.put("/variants/:id/majorations", async (req: Request, res: Response) => {
   try {
@@ -865,13 +1522,7 @@ app.put("/variants/:id/majorations", async (req: Request, res: Response) => {
 });
 
 /* =========================================================
-   DEVIS (édition + surcharge par formule)
-   PUT /variants/:id/devis
-   body: {
-     meta?, intro?, rappel?, chargeFournisseur?, chargeClient?,
-     prixComplementaires?, validiteTexte?, signature?, surcharges?
-   }
-   Réponse: variante complète (objet direct)
+   DEVIS
 ========================================================= */
 app.put("/variants/:id/devis", async (req: Request, res: Response) => {
   try {
@@ -887,7 +1538,6 @@ app.put("/variants/:id/devis", async (req: Request, res: Response) => {
       }
     };
 
-    // Normaliser surcharges en map number
     const surchargesIn = body?.surcharges;
     let surchargesNorm: Record<string, number> | undefined = undefined;
     if (surchargesIn !== undefined) {
@@ -923,13 +1573,9 @@ app.put("/variants/:id/devis", async (req: Request, res: Response) => {
           ...(body.meta !== undefined ? { meta: toJson(body.meta, {}) } : {}),
           ...(body.intro !== undefined ? { intro: String(body.intro ?? "") } : {}),
           ...(body.rappel !== undefined ? { rappel: toJson(body.rappel, {}) } : {}),
-          ...(body.chargeFournisseur !== undefined
-            ? { chargeFournisseur: toJson(body.chargeFournisseur, []) }
-            : {}),
+          ...(body.chargeFournisseur !== undefined ? { chargeFournisseur: toJson(body.chargeFournisseur, []) } : {}),
           ...(body.chargeClient !== undefined ? { chargeClient: toJson(body.chargeClient, []) } : {}),
-          ...(body.prixComplementaires !== undefined
-            ? { prixComplementaires: toJson(body.prixComplementaires, []) }
-            : {}),
+          ...(body.prixComplementaires !== undefined ? { prixComplementaires: toJson(body.prixComplementaires, []) } : {}),
           ...(body.validiteTexte !== undefined ? { validiteTexte: String(body.validiteTexte ?? "") } : {}),
           ...(body.signature !== undefined ? { signature: toJson(body.signature, {}) } : {}),
           ...(surchargesNorm !== undefined ? { surcharges: JSON.stringify(surchargesNorm) } : {}),

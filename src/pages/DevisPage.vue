@@ -1,445 +1,691 @@
-<!-- src/pages/DevisPage.vue (FICHIER COMPLET) -->
+<!-- src/pages/DevisPage.vue -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
-type DevisLineItem = { label: string; unite?: string; qty?: number; prix?: number; note?: string };
+import {
+  InformationCircleIcon,
+  ArrowPathIcon,
+  CheckBadgeIcon,
+} from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
 
-const variant = computed<any | null>(() => (store as any).activeVariant ?? null);
-const contract = computed<any | null>(() => (store as any).activeContract ?? null);
-const pnl = computed<any | null>(() => (store as any).activePnl ?? null);
-
-const saving = ref(false);
+const loading = ref(false);
+const busy = reactive({ reload: false, save: false, apply: false });
 const error = ref<string | null>(null);
 
-const applyMajorations = ref(false);
-
-const draft = reactive({
-  meta: { date: "", titreProjet: "", client: "", lieu: "" },
-  intro: "",
-  rappel: { dureeMois: 0, quantiteM3: 0 },
-  chargeFournisseur: [] as DevisLineItem[],
-  chargeClient: [] as DevisLineItem[],
-  prixComplementaires: [] as DevisLineItem[],
-  validiteTexte: "",
-  signature: { nom: "", poste: "", telephone: "" },
-  surcharges: {} as Record<string, number>, // { [variantFormuleId]: surcharge }
-});
-
-function n(v: any): number {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : 0;
+function n(x: any): number {
+  const v = Number(x);
+  return Number.isFinite(v) ? v : 0;
 }
-function money(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "MAD",
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(n(v));
+function money2(v: any) {
+  const x = n(v);
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
 }
-function roundToNearest5(x: number): number {
+function money0(v: any) {
+  const x = n(v);
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(x);
+}
+function int(v: any) {
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n(v));
+}
+function pricePerKg(prixTonne: number): number {
+  const p = n(prixTonne);
+  if (p <= 0) return 0;
+  return p / 1000; // DH/tonne -> DH/kg
+}
+function roundTo5(x: number): number {
   const v = n(x);
+  if (!Number.isFinite(v)) return 0;
   return Math.round(v / 5) * 5;
 }
-function parseJson(raw: any, fallback: any) {
-  try {
-    if (!raw) return fallback;
-    if (typeof raw === "object") return raw;
-    return JSON.parse(String(raw));
-  } catch {
-    return fallback;
-  }
-}
 
+/* =========================
+   STATE
+========================= */
+const variant = computed<any | null>(() => (store as any).activeVariant ?? null);
+const contract = computed<any | null>(() => (store as any).activeContract ?? null);
+
+const dureeMois = computed(() => n(contract.value?.dureeMois ?? 0));
 const rows = computed<any[]>(() => variant.value?.formules?.items ?? []);
 const volumeTotal = computed(() => rows.value.reduce((s, r) => s + n(r?.volumeM3), 0));
 
-function readPersistedMajorations(v: any): Record<string, number> {
+/* =========================
+   TOGGLES
+   - Appliquer majorations => show/hide colonne "Prix avec majorations"
+========================= */
+const withMajorations = computed({
+  get: () => Boolean((store as any).headerUseMajorations),
+  set: (v: boolean) => (store as any).setHeaderUseMajorations(Boolean(v)),
+});
+
+const withDevisSurcharge = computed({
+  get: () => Boolean((store as any).headerUseDevisSurcharge),
+  set: (v: boolean) => (store as any).setHeaderUseDevisSurcharge(Boolean(v)),
+});
+
+/* =========================
+   DRAFT SURCHARGES
+   - only editable column
+   - key = variantFormule.id
+========================= */
+const draft = reactive({
+  surcharges: {} as Record<string, number>,
+  applyToDashboardOnSave: true,
+});
+
+function rowKey(r: any): string {
+  return String(r?.id ?? r?.variantFormuleId ?? r?.formuleId ?? r?.formule?.id ?? "");
+}
+function getSurcharge(r: any): number {
+  const k = rowKey(r);
+  return n(draft.surcharges[k] ?? 0);
+}
+function setSurcharge(r: any, v: any) {
+  const k = rowKey(r);
+  draft.surcharges[k] = n(v);
+}
+
+/* =========================
+   LOAD persisted devis.surcharges (if exists)
+========================= */
+function loadPersisted() {
+  draft.surcharges = {};
+  const v = variant.value;
+  if (!v) return;
+
+  const raw = v?.devis?.surcharges ?? v?.devis?.meta ?? v?.devis?.data ?? null;
+  if (!raw) return;
+
   try {
-    const raw = v?.autresCouts?.majorations;
-    if (!raw) return {};
-    if (typeof raw === "object") return raw as Record<string, number>;
-    const parsed = JSON.parse(String(raw));
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+    const obj = typeof raw === "object" ? raw : JSON.parse(String(raw));
+    const map = (obj?.surcharges ?? obj) as any;
+    if (map && typeof map === "object") {
+      for (const [k, val] of Object.entries(map)) draft.surcharges[String(k)] = n(val);
+    }
   } catch {
-    return {};
+    // ignore
   }
 }
-function getMajPct(key: string, persisted: Record<string, number>): number {
-  return n((persisted as any)[key]);
-}
-function applyPct(value: number, pct: number): number {
-  return value * (1 + pct / 100);
-}
-function pricePerKg(prixDhPerTonne: number): number {
-  const p = n(prixDhPerTonne);
-  return p > 0 ? p / 1000 : 0;
-}
+
+onMounted(async () => {
+  await reload();
+});
+
+watch(
+  () => variant.value?.id,
+  () => loadPersisted()
+);
+
+/* =========================
+   COMPUTES (BASE)
+   - CMP base = sum(qtyKg * prixKg) using variant MP override or catalogue
+   - PV base = CMP + Transport + MOMD
+========================= */
 function mpPrixUsed(mpId: string): number {
-  const items = variant.value?.mp?.items ?? [];
-  const vmp = items.find((x: any) => String(x.mpId) === String(mpId));
+  const mpItems = variant.value?.mp?.items ?? [];
+  const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
   if (vmp?.prix != null) return n(vmp.prix);
   return n(vmp?.mp?.prix);
 }
-function cmpFormuleM3(formule: any, withMaj: boolean, persistedMaj: Record<string, number>): number {
+
+function cmpFormuleBaseM3(formule: any): number {
   const compo = formule?.items ?? [];
   return (compo ?? []).reduce((s: number, it: any) => {
     const mpId = String(it?.mpId ?? "");
     const qtyKg = n(it?.qty);
-    const prixDhT = mpPrixUsed(mpId);
-    const prixKgBase = pricePerKg(prixDhT);
-
-    if (!withMaj) return s + qtyKg * prixKgBase;
-
-    const pct = getMajPct(`mp:${mpId}`, persistedMaj);
-    const prixKg = applyPct(prixKgBase, pct);
+    const prixKg = pricePerKg(mpPrixUsed(mpId));
     return s + qtyKg * prixKg;
   }, 0);
 }
-function transportM3(withMaj: boolean, persistedMaj: Record<string, number>): number {
-  const base = n(variant.value?.transport?.prixMoyen);
-  if (!withMaj) return base;
-  const pct = getMajPct("transport.prixMoyen", persistedMaj);
-  return applyPct(base, pct);
+
+const transportBaseM3 = computed(() => n(variant.value?.transport?.prixMoyen ?? 0));
+
+function pvBaseM3(r: any): number {
+  const cmp = cmpFormuleBaseM3(r?.formule);
+  const momd = n(r?.momd);
+  return cmp + transportBaseM3.value + momd;
 }
 
-function prixCalcule(row: any): number {
-  const formule = row?.formule;
-  const cmpOverride = row?.cmpOverride;
-  const cmp = cmpOverride != null ? n(cmpOverride) : cmpFormuleM3(formule, false, {});
-  const t = transportM3(false, {});
-  const momd = n(row?.momd);
-  return cmp + t + momd;
-}
-function prixCalculeAvecMajDirect(row: any, persistedMaj: Record<string, number>): number {
-  const formule = row?.formule;
-  const cmpOverride = row?.cmpOverride;
-  const cmp = cmpOverride != null ? n(cmpOverride) : cmpFormuleM3(formule, true, persistedMaj);
-  const t = transportM3(true, persistedMaj);
-  const momd = n(row?.momd);
-  return cmp + t + momd;
-}
+/* =========================
+   IMPACT MAJORATIONS (/m3)
+   - impact = (CA_majoré - CA_base) / volume
+   - CA comes from computeHeaderKpis (includes MP + transport + autres majorations)
+========================= */
+const impactMajorationM3 = computed(() => {
+  const v = variant.value;
+  const vol = volumeTotal.value;
+  if (!v || vol <= 0) return 0;
 
-const impactMajPerM3 = computed(() => {
-  if (!variant.value) return 0;
-  if (!applyMajorations.value) return 0;
+  const d = dureeMois.value;
 
-  const persistedMaj = readPersistedMajorations(variant.value);
-  const volTot = volumeTotal.value;
-  if (volTot <= 0) return 0;
+  // base: same variant but force majorations null
+  const vBase = {
+    ...v,
+    autresCouts: {
+      ...(v.autresCouts ?? {}),
+      majorations: null,
+    },
+  };
 
-  const caBase = rows.value.reduce((s, r) => s + prixCalcule(r) * n(r?.volumeM3), 0);
-  const caMaj = rows.value.reduce((s, r) => s + prixCalculeAvecMajDirect(r, persistedMaj) * n(r?.volumeM3), 0);
+  const kBase = computeHeaderKpis(vBase, d, null);
+  const kMaj = computeHeaderKpis(v, d, null);
 
-  return (caMaj - caBase) / volTot;
+  const deltaCA = n(kMaj?.caTotal) - n(kBase?.caTotal);
+  return deltaCA / vol;
 });
 
-function prixAvecMajoration(row: any): number {
-  return prixCalcule(row) + impactMajPerM3.value;
-}
-function prixPondere(row: any): number {
-  const base = applyMajorations.value ? prixAvecMajoration(row) : prixCalcule(row);
-  return roundToNearest5(base);
-}
-function getSurcharge(row: any): number {
-  return n(draft.surcharges[String(row?.id ?? "")]);
-}
-function setSurcharge(row: any, v: any) {
-  const id = String(row?.id ?? "");
-  const x = Number(v);
-  draft.surcharges[id] = Number.isFinite(x) ? x : 0;
-}
-function prixDefinitif(row: any): number {
-  return prixPondere(row) + getSurcharge(row);
+function pvWithMajorationM3(r: any): number {
+  return pvBaseM3(r) + impactMajorationM3.value;
 }
 
-function hydrate() {
-  const v = variant.value;
-  if (!v) return;
-
-  const d = v?.devis ?? null;
-
-  draft.meta = parseJson(d?.meta, { date: "", titreProjet: "", client: "", lieu: "" });
-  draft.intro = String(d?.intro ?? "");
-  draft.rappel = parseJson(d?.rappel, { dureeMois: n(contract.value?.dureeMois), quantiteM3: volumeTotal.value });
-  draft.chargeFournisseur = parseJson(d?.chargeFournisseur, []);
-  draft.chargeClient = parseJson(d?.chargeClient, []);
-  draft.prixComplementaires = parseJson(d?.prixComplementaires, []);
-  draft.validiteTexte = String(d?.validiteTexte ?? "");
-  draft.signature = parseJson(d?.signature, { nom: "", poste: "", telephone: "" });
-  draft.surcharges = parseJson(d?.surcharges, {});
-
-  // defaults utiles
-  if (!draft.meta.date) draft.meta.date = new Date().toISOString().slice(0, 10);
-  if (!draft.meta.client) draft.meta.client = String(pnl.value?.client ?? "");
-  if (!draft.rappel.dureeMois) draft.rappel.dureeMois = n(contract.value?.dureeMois);
-  if (!draft.rappel.quantiteM3) draft.rappel.quantiteM3 = volumeTotal.value;
+/* =========================
+   PONDERE / DEFINITIF
+========================= */
+function pvPondereM3(r: any): number {
+  const base = withMajorations.value ? pvWithMajorationM3(r) : pvBaseM3(r);
+  return roundTo5(base);
+}
+function pvDefinitifM3(r: any): number {
+  return pvPondereM3(r) + getSurcharge(r);
 }
 
-onMounted(() => hydrate());
-watch(() => variant.value?.id, () => hydrate());
+const prixMoyenDefinitif = computed(() => {
+  const vol = volumeTotal.value;
+  if (vol <= 0) return 0;
+  const total = rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
+  return total / vol;
+});
 
-function addItem(list: DevisLineItem[]) {
-  list.push({ label: "", unite: "", qty: 1, prix: 0, note: "" });
-}
-function removeItem(list: DevisLineItem[], idx: number) {
-  list.splice(idx, 1);
-}
+const caDevisTotal = computed(() => {
+  return rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
+});
 
-function applyPreviewToHeader() {
-  if (Boolean((store as any).headerUseDevisSurcharge)) {
-    const s: any = store as any;
-    if (typeof s.setHeaderDevisSurchargesPreview === "function") {
-      s.setHeaderDevisSurchargesPreview({ ...draft.surcharges });
-    } else {
-      s.headerDevisSurchargesPreview = { ...draft.surcharges };
-    }
-  }
-}
-
-async function onApply() {
-  error.value = null;
-  applyPreviewToHeader();
-}
-
-async function onSave() {
-  if (!variant.value?.id) return;
-  saving.value = true;
+/* =========================
+   API
+========================= */
+async function reload() {
+  loading.value = true;
+  busy.reload = true;
   error.value = null;
 
   try {
-    const payload = {
-      meta: draft.meta,
-      intro: draft.intro,
-      rappel: draft.rappel,
-      chargeFournisseur: draft.chargeFournisseur,
-      chargeClient: draft.chargeClient,
-      prixComplementaires: draft.prixComplementaires,
-      validiteTexte: draft.validiteTexte,
-      signature: draft.signature,
-      surcharges: draft.surcharges,
-    };
-
-    const s: any = store as any;
-    if (typeof s.saveDevis !== "function") throw new Error("store.saveDevis() manquante");
-    await s.saveDevis(String(variant.value.id), payload);
+    if ((store as any).pnls?.length === 0) {
+      await (store as any).loadPnls();
+    }
+    loadPersisted();
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
-    saving.value = false;
+    loading.value = false;
+    busy.reload = false;
   }
+}
+
+function applyToDashboard() {
+  busy.apply = true;
+  try {
+    (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
+    withDevisSurcharge.value = true;
+  } finally {
+    busy.apply = false;
+  }
+}
+
+async function saveDevis() {
+  const v = variant.value;
+  if (!v?.id) return;
+
+  busy.save = true;
+  error.value = null;
+  try {
+    if (draft.applyToDashboardOnSave) {
+      (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
+      withDevisSurcharge.value = true;
+    }
+
+    await (store as any).saveDevis(String(v.id), { surcharges: { ...draft.surcharges } });
+
+    // reload state from store (optional safety)
+    await (store as any).loadPnls();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    busy.save = false;
+  }
+}
+
+function resetSurcharges() {
+  loadPersisted();
+  nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
 }
 </script>
 
 <template>
-  <div class="px-6 py-5">
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <div class="text-lg font-semibold text-slate-900">Devis</div>
-        <div class="text-sm text-slate-500">
-          9 sections (date/titre, intro, charges, tableau, compléments, durée, validité, signature)
+  <div class="page">
+    <!-- TOP -->
+    <div class="top">
+      <div class="tleft">
+        <div class="title">Devis</div>
+        <div class="subline">
+          <span class="muted">Variante :</span>
+          <b class="ell">{{ variant?.title ?? "—" }}</b>
+
+          <span class="sep">•</span>
+
+          <span class="muted">Volume :</span>
+          <b>{{ int(volumeTotal) }}</b><span class="muted">m³</span>
+
+          <span class="sep">•</span>
+
+          <span class="muted">Prix moyen devis :</span>
+          <b>{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
         </div>
       </div>
 
-      <div class="flex items-center gap-3">
-        <label class="flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" class="h-4 w-4 rounded border-slate-300" v-model="applyMajorations" />
-          Appliquer majorations
+      <div class="tright">
+        <button class="btn" @click="reload" :disabled="busy.reload || loading" title="Recharger">
+          <ArrowPathIcon class="actIc" />
+        </button>
+
+        <button class="btn" @click="resetSurcharges" :disabled="busy.save">Réinitialiser</button>
+
+        <button class="btn" @click="applyToDashboard" :disabled="busy.apply">
+          Appliquer au dashboard
+        </button>
+
+        <button class="btn primary" @click="saveDevis" :disabled="busy.save || !variant?.id">
+          <CheckBadgeIcon class="actIc" />
+          {{ busy.save ? "Enregistrement..." : "Enregistrer devis" }}
+        </button>
+      </div>
+    </div>
+
+    <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
+    <div v-if="loading" class="alert">Chargement…</div>
+
+    <!-- CONTROLS -->
+    <div class="card">
+      <div class="controls">
+        <label class="chk">
+          <input type="checkbox" v-model="withMajorations" />
+          <span>Appliquer majorations</span>
         </label>
 
-        <button
-          class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-          @click="onApply"
-          :disabled="!variant"
-        >
-          Appliquer
-        </button>
+        <label class="chk">
+          <input type="checkbox" v-model="withDevisSurcharge" />
+          <span>Dashboard : surcharge devis</span>
+        </label>
 
-        <button
-          class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-          @click="onSave"
-          :disabled="!variant || saving"
-        >
-          {{ saving ? "Enregistrement..." : "Enregistrer" }}
-        </button>
-      </div>
-    </div>
+        <label class="chk">
+          <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
+          <span>Appliquer au dashboard lors du save</span>
+        </label>
 
-    <div v-if="error" class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-      {{ error }}
-    </div>
-
-    <!-- Meta + Intro + Validité + Signature (compact) -->
-    <div class="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="mb-3 text-sm font-semibold text-slate-900">1) Date / Projet / Client</div>
-
-        <div class="grid grid-cols-1 gap-2">
-          <label class="text-xs font-medium text-slate-600">Date</label>
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" v-model="draft.meta.date" />
-
-          <label class="text-xs font-medium text-slate-600">Titre / Projet</label>
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" v-model="draft.meta.titreProjet" />
-
-          <label class="text-xs font-medium text-slate-600">Client</label>
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" v-model="draft.meta.client" />
-
-          <label class="text-xs font-medium text-slate-600">Lieu</label>
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" v-model="draft.meta.lieu" />
-        </div>
-      </div>
-
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2">
-        <div class="mb-3 text-sm font-semibold text-slate-900">2) Introduction (editable)</div>
-        <textarea class="h-[180px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" v-model="draft.intro" />
-        <div class="mt-3 grid grid-cols-2 gap-3">
-          <div>
-            <div class="text-xs font-medium text-slate-600">7) Durée (mois)</div>
-            <input class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" v-model.number="draft.rappel.dureeMois" />
-          </div>
-          <div>
-            <div class="text-xs font-medium text-slate-600">7) Quantité (m³)</div>
-            <input class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" v-model.number="draft.rappel.quantiteM3" />
-          </div>
+        <div v-if="withMajorations" class="pillInfo">
+          <span class="muted">Impact majorations :</span>
+          <b class="mono">{{ money2(impactMajorationM3) }}</b>
+          <span class="muted">DH/m³</span>
         </div>
       </div>
     </div>
 
-    <!-- Charges lists -->
-    <div class="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="mb-2 flex items-center justify-between">
-          <div class="text-sm font-semibold text-slate-900">3) À la charge du fournisseur</div>
-          <button class="text-xs font-semibold text-slate-700 hover:text-slate-900" @click="addItem(draft.chargeFournisseur)">+ Ajouter</button>
-        </div>
-        <div class="space-y-2">
-          <div v-for="(it, i) in draft.chargeFournisseur" :key="i" class="rounded-lg border border-slate-200 p-2">
-            <div class="flex items-center gap-2">
-              <input class="flex-1 rounded-md border border-slate-200 px-2 py-1 text-sm" placeholder="Article" v-model="it.label" />
-              <button class="text-xs text-rose-600 hover:text-rose-700" @click="removeItem(draft.chargeFournisseur, i)">Suppr</button>
-            </div>
-          </div>
-          <div v-if="draft.chargeFournisseur.length === 0" class="text-xs text-slate-500">Aucun article.</div>
-        </div>
-      </div>
+    <!-- TABLE -->
+    <div class="card cardTable">
+      <div class="tableWrap">
+        <table class="table">
+          <colgroup>
+            <col class="cDes" />
+            <col class="cNum" />
+            <col class="cNum" />
+            <col class="cNum" />
+            <col v-if="withMajorations" class="cNum" />
+            <col class="cNum" />
+            <col class="cSurch" />
+            <col class="cNum" />
+            <col class="cVol" />
+            <col class="cTot" />
+          </colgroup>
 
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="mb-2 flex items-center justify-between">
-          <div class="text-sm font-semibold text-slate-900">4) À la charge du client</div>
-          <button class="text-xs font-semibold text-slate-700 hover:text-slate-900" @click="addItem(draft.chargeClient)">+ Ajouter</button>
-        </div>
-        <div class="space-y-2">
-          <div v-for="(it, i) in draft.chargeClient" :key="i" class="rounded-lg border border-slate-200 p-2">
-            <div class="flex items-center gap-2">
-              <input class="flex-1 rounded-md border border-slate-200 px-2 py-1 text-sm" placeholder="Article" v-model="it.label" />
-              <button class="text-xs text-rose-600 hover:text-rose-700" @click="removeItem(draft.chargeClient, i)">Suppr</button>
-            </div>
-          </div>
-          <div v-if="draft.chargeClient.length === 0" class="text-xs text-slate-500">Aucun article.</div>
-        </div>
-      </div>
-
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="mb-2 flex items-center justify-between">
-          <div class="text-sm font-semibold text-slate-900">6) Prix complémentaires</div>
-          <button class="text-xs font-semibold text-slate-700 hover:text-slate-900" @click="addItem(draft.prixComplementaires)">+ Ajouter</button>
-        </div>
-        <div class="space-y-2">
-          <div v-for="(it, i) in draft.prixComplementaires" :key="i" class="rounded-lg border border-slate-200 p-2">
-            <div class="flex items-center gap-2">
-              <input class="flex-1 rounded-md border border-slate-200 px-2 py-1 text-sm" placeholder="Article" v-model="it.label" />
-              <button class="text-xs text-rose-600 hover:text-rose-700" @click="removeItem(draft.prixComplementaires, i)">Suppr</button>
-            </div>
-          </div>
-          <div v-if="draft.prixComplementaires.length === 0" class="text-xs text-slate-500">Aucun article.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tableau devis -->
-    <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div class="overflow-x-auto">
-        <table class="min-w-[1080px] w-full table-fixed">
-          <thead class="bg-slate-50">
-            <tr class="text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
-              <th class="px-4 py-3 w-[260px]">Désignation</th>
-              <th class="px-4 py-3 w-[120px]">MOMD</th>
-              <th class="px-4 py-3 w-[140px]">Prix calculé</th>
-              <th v-if="applyMajorations" class="px-4 py-3 w-[160px]">Avec majorations</th>
-              <th class="px-4 py-3 w-[140px]">Prix pondéré</th>
-              <th class="px-4 py-3 w-[140px]">Surcharge</th>
-              <th class="px-4 py-3 w-[160px]">Prix définitif</th>
+          <thead class="theadSticky">
+            <tr>
+              <th>Désignation</th>
+              <th class="right">CMP</th>
+              <th class="right">MOMD</th>
+              <th class="right">Prix calculé</th>
+              <th v-if="withMajorations" class="right">Prix avec majorations</th>
+              <th class="right">Prix pondéré</th>
+              <th class="right">Surcharge</th>
+              <th class="right">Prix définitif</th>
+              <th class="right">Volume</th>
+              <th class="right">Total</th>
             </tr>
           </thead>
 
-          <tbody class="divide-y divide-slate-100">
-            <tr v-for="r in rows" :key="r.id" class="text-sm text-slate-800">
-              <td class="px-4 py-3">
-                <div class="font-medium text-slate-900">{{ r?.formule?.label ?? "—" }}</div>
-                <div class="text-xs text-slate-500">{{ (r?.volumeM3 ?? 0).toFixed(2) }} m³</div>
+          <tbody>
+            <tr v-for="r in rows" :key="rowKey(r)">
+              <td class="cellMain">
+                <div class="mainLine">
+                  <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
+
+                  <span class="cmtWrap">
+                    <button class="cmtBtn" type="button" aria-label="Info">
+                      <InformationCircleIcon class="cmtIc" />
+                    </button>
+                    <span class="cmtTip" role="tooltip">
+                      Transport (base) : <b>{{ money2(transportBaseM3) }}</b> DH/m³
+                      <br />
+                      Volume : <b>{{ int(r?.volumeM3) }}</b> m³
+                    </span>
+                  </span>
+                </div>
+
+                <div class="subText ell">
+                  Clé: <span class="mono">{{ rowKey(r) }}</span>
+                </div>
               </td>
 
-              <td class="px-4 py-3">{{ money(n(r?.momd), 2) }}</td>
-
-              <td class="px-4 py-3 font-semibold">{{ money(prixCalcule(r), 2) }}</td>
-
-              <td v-if="applyMajorations" class="px-4 py-3 font-semibold">
-                {{ money(prixAvecMajoration(r), 2) }}
+              <td class="right">
+                <span class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</span>
               </td>
 
-              <td class="px-4 py-3 font-semibold">
-                {{ money(prixPondere(r), 2) }}
+              <td class="right">
+                <span class="mono">{{ money2(r?.momd) }}</span>
               </td>
 
-              <td class="px-4 py-3">
+              <td class="right">
+                <span class="priceBadge">
+                  <span class="mono">{{ money2(pvBaseM3(r)) }}</span>
+                  <span class="dh">DH</span>
+                  <span class="unitTag">/ m³</span>
+                </span>
+              </td>
+
+              <td v-if="withMajorations" class="right">
+                <span class="priceBadge maj">
+                  <span class="mono">{{ money2(pvWithMajorationM3(r)) }}</span>
+                  <span class="dh">DH</span>
+                  <span class="unitTag">/ m³</span>
+                </span>
+              </td>
+
+              <td class="right">
+                <span class="pillStrong mono">{{ money0(pvPondereM3(r)) }}</span>
+              </td>
+
+              <td class="right">
                 <input
+                  class="input numInput"
                   type="number"
-                  step="0.01"
-                  class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  step="1"
                   :value="getSurcharge(r)"
                   @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
                 />
               </td>
 
-              <td class="px-4 py-3 font-bold text-slate-900">
-                {{ money(prixDefinitif(r), 2) }}
+              <td class="right">
+                <span class="pillStrong mono">{{ money0(pvDefinitifM3(r)) }}</span>
+              </td>
+
+              <td class="right">
+                <span class="mono">{{ int(r?.volumeM3) }}</span>
+              </td>
+
+              <td class="right">
+                <span class="mono"><b>{{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b></span>
               </td>
             </tr>
+
+            <tr v-if="rows.length === 0">
+              <td colspan="10" class="emptyRow">Aucune formule dans cette variante.</td>
+            </tr>
           </tbody>
+
+          <tfoot v-if="rows.length > 0">
+            <tr class="tfootRow">
+              <td colspan="3" class="muted">
+                Total devis
+              </td>
+
+              <td class="right muted" colspan="3">
+                Prix moyen devis : <b class="mono">{{ money2(prixMoyenDefinitif) }}</b> DH/m³
+              </td>
+
+              <td class="right muted" colspan="2">
+                Volume : <b class="mono">{{ int(volumeTotal) }}</b> m³
+              </td>
+
+              <td class="right" colspan="2">
+                <span class="pillStrong mono">{{ money0(caDevisTotal) }}</span>
+                <span class="muted">DH</span>
+              </td>
+            </tr>
+          </tfoot>
         </table>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-white px-4 py-3 text-sm">
-        <div class="text-slate-600">
-          Volume total: <span class="font-semibold text-slate-900">{{ volumeTotal.toFixed(2) }} m³</span>
-        </div>
-
-        <div v-if="applyMajorations" class="text-slate-600">
-          Impact majorations:
-          <span class="font-semibold text-slate-900">{{ impactMajPerM3.toFixed(2) }} DH/m³</span>
-        </div>
       </div>
     </div>
 
-    <!-- Validité + Signature -->
-    <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2">
-        <div class="mb-2 text-sm font-semibold text-slate-900">8) Validité de l’offre</div>
-        <textarea class="h-[110px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" v-model="draft.validiteTexte" />
-      </div>
-
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="mb-2 text-sm font-semibold text-slate-900">9) Signature</div>
-        <div class="grid grid-cols-1 gap-2">
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Nom" v-model="draft.signature.nom" />
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Poste" v-model="draft.signature.poste" />
-          <input class="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Téléphone" v-model="draft.signature.telephone" />
-        </div>
+    <div class="card hint">
+      <div class="muted">
+        • <b>Prix pondéré</b> = prix (base ou majoré) arrondi au multiple de 5.
+        &nbsp;• <b>Surcharge</b> peut être négative et s’ajoute après pondération.
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* ✅ Copie du langage visuel de tes pages (MpCataloguePage) */
+
+.page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
+
+.top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.tleft { display:flex; flex-direction:column; gap:4px; min-width: 240px; }
+.title { font-size:18px; font-weight:900; color:#111827; }
+.subline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.sep { color:#9ca3af; }
+
+.tright { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+
+.alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
+.alert.error { border-color:#ef4444; background:#fff5f5; }
+
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
+.cardTable { overflow: visible; }
+.hint { padding: 10px 12px; }
+
+.btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
+.btn:hover { background:#f9fafb; }
+.btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
+.btn.primary:hover { background: rgba(24,64,112,1); }
+
+.input { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:12px; font-size:13px; background:#fff; }
+.right { text-align:right; }
+.muted { color:#6b7280; font-size:12px; }
+.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mono { font-variant-numeric: tabular-nums; }
+
+.controls{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.chk{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  font-weight:900;
+  color:#111827;
+  user-select:none;
+}
+.chk input{
+  width:16px;
+  height:16px;
+  border-radius:6px;
+}
+
+.pillInfo{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.03);
+  font-size:12px;
+  font-weight:900;
+  color:#111827;
+}
+
+/* TABLE */
+.tableWrap { overflow: visible; }
+.table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+  table-layout: fixed;
+}
+.table th, .table td {
+  border-bottom:1px solid #e5e7eb;
+  padding: 7px 8px;
+  text-align:left;
+  vertical-align: middle;
+}
+.table th {
+  font-size:11px;
+  color:#6b7280;
+  background:#fafafa;
+  white-space: nowrap;
+}
+.emptyRow { color:#6b7280; padding:10px; }
+
+.theadSticky{
+  position: sticky;
+  top: -14px;          /* ✅ comme ton besoin “collé sous headerdashboard” */
+  z-index: 20;
+  box-shadow: 0 6px 14px rgba(2, 6, 23, 0.06);
+}
+
+/* Column widths (no horizontal scroll in most cases) */
+.cDes { width: 25%; }
+.cNum { width: 9%; }
+.cSurch { width: 10%; }
+.cVol { width: 7%; }
+.cTot { width: 12%; }
+
+.cellMain { overflow: visible; }
+.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
+.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
+
+/* Tooltip */
+.cmtWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; }
+.cmtBtn{
+  width: 26px; height: 26px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background:#fff;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor: default;
+}
+.cmtIc{ width: 16px; height: 16px; color:#6b7280; }
+.cmtTip{
+  position:absolute;
+  left: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 240px;
+  max-width: 360px;
+  background: rgba(17,24,39,0.95);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+  transform: translateY(-50%) translateX(-4px);
+  z-index: 9999;
+}
+.cmtWrap:hover .cmtTip{
+  opacity: 1;
+  transform: translateY(-50%) translateX(0px);
+}
+
+/* Badges */
+.priceBadge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap: 6px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(2,132,199,0.22);
+  background: rgba(2,132,199,0.08);
+  color:#0b3b63;
+  font-weight:1000;
+  font-size:13px;
+  white-space:nowrap;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.priceBadge.maj{
+  border-color: rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.10);
+  color: #065f46;
+}
+.priceBadge .dh{ font-size:11px; font-weight:900; opacity:0.9; }
+.unitTag{
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15,23,42,0.65);
+  background: rgba(255,255,255,0.65);
+  border: 1px solid rgba(16,24,40,0.10);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.pillStrong{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width: 66px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  font-weight: 1000;
+  color:#111827;
+}
+
+.numInput{
+  max-width: 120px;
+  text-align:right;
+  padding-right: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tfootRow td{
+  background: rgba(15,23,42,0.02);
+  border-bottom: none;
+}
+
+.actIc{ width:18px; height:18px; }
+
+@media (max-width: 980px) {
+  .cDes { width: 30%; }
+  .cTot { width: 14%; }
+}
+@media (max-width: 720px) {
+  .cVol { width: 0%; }
+  th:nth-last-child(2), td:nth-last-child(2) { display:none; } /* hide volume on mobile */
+}
+</style>
