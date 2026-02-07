@@ -112,6 +112,9 @@ activeHeaderKPIs(): any {
   const useMaj = Boolean((this as any).headerUseMajorations);
   const majPreview = (this as any).headerMajorationsPreview as Record<string, number> | null;
 
+  const useDevis = Boolean((this as any).headerUseDevisSurcharge);
+  const devisPreview = (this as any).headerDevisSurchargesPreview as Record<string, number> | null;
+
   // ✅ Si "Avec majoration" est OFF → calcul BASE garanti
   const vForCalc = useMaj
     ? variant
@@ -123,13 +126,16 @@ activeHeaderKPIs(): any {
         },
       };
 
-  // ✅ Signature correcte (2 ou 3 args max)
+  // ✅ Ajout surcharge devis (persistée + preview) uniquement si toggle ON
   return computeHeaderKpis(
     vForCalc,
     dureeMois,
-    useMaj ? majPreview : null
+    useMaj ? majPreview : null,
+    useDevis ? devisPreview : null,
+    useDevis
   );
 },
+
 
   },
 

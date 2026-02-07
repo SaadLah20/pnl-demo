@@ -54,7 +54,6 @@ const volumeTotal = computed(() => rows.value.reduce((s, r) => s + n(r?.volumeM3
 
 /* =========================
    TOGGLES
-   - Appliquer majorations => show/hide colonne "Prix avec majorations"
 ========================= */
 const withMajorations = computed({
   get: () => Boolean((store as any).headerUseMajorations),
@@ -68,8 +67,6 @@ const withDevisSurcharge = computed({
 
 /* =========================
    DRAFT SURCHARGES
-   - only editable column
-   - key = variantFormule.id
 ========================= */
 const draft = reactive({
   surcharges: {} as Record<string, number>,
@@ -121,8 +118,6 @@ watch(
 
 /* =========================
    COMPUTES (BASE)
-   - CMP base = sum(qtyKg * prixKg) using variant MP override or catalogue
-   - PV base = CMP + Transport + MOMD
 ========================= */
 function mpPrixUsed(mpId: string): number {
   const mpItems = variant.value?.mp?.items ?? [];
@@ -152,8 +147,6 @@ function pvBaseM3(r: any): number {
 
 /* =========================
    IMPACT MAJORATIONS (/m3)
-   - impact = (CA_majoré - CA_base) / volume
-   - CA comes from computeHeaderKpis (includes MP + transport + autres majorations)
 ========================= */
 const impactMajorationM3 = computed(() => {
   const v = variant.value;
@@ -162,7 +155,6 @@ const impactMajorationM3 = computed(() => {
 
   const d = dureeMois.value;
 
-  // base: same variant but force majorations null
   const vBase = {
     ...v,
     autresCouts: {
@@ -249,7 +241,7 @@ async function saveDevis() {
 
     await (store as any).saveDevis(String(v.id), { surcharges: { ...draft.surcharges } });
 
-    // reload state from store (optional safety)
+    // sécurité UI (recharge la hiérarchie)
     await (store as any).loadPnls();
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -310,20 +302,22 @@ function resetSurcharges() {
     <!-- CONTROLS -->
     <div class="card">
       <div class="controls">
-        <label class="chk">
-          <input type="checkbox" v-model="withMajorations" />
-          <span>Appliquer majorations</span>
-        </label>
+        <div class="leftControls">
+          <label class="chk">
+            <input type="checkbox" v-model="withMajorations" />
+            <span>Appliquer majorations</span>
+          </label>
 
-        <label class="chk">
-          <input type="checkbox" v-model="withDevisSurcharge" />
-          <span>Dashboard : surcharge devis</span>
-        </label>
+          <label class="chk">
+            <input type="checkbox" v-model="withDevisSurcharge" />
+            <span>Dashboard : surcharge devis</span>
+          </label>
 
-        <label class="chk">
-          <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
-          <span>Appliquer au dashboard lors du save</span>
-        </label>
+          <label class="chk">
+            <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
+            <span>Appliquer au dashboard lors du save</span>
+          </label>
+        </div>
 
         <div v-if="withMajorations" class="pillInfo">
           <span class="muted">Impact majorations :</span>
@@ -333,138 +327,140 @@ function resetSurcharges() {
       </div>
     </div>
 
-    <!-- TABLE -->
+    <!-- GRID "TABLE" (no horizontal scroll) -->
     <div class="card cardTable">
-      <div class="tableWrap">
-        <table class="table">
-          <colgroup>
-            <col class="cDes" />
-            <col class="cNum" />
-            <col class="cNum" />
-            <col class="cNum" />
-            <col v-if="withMajorations" class="cNum" />
-            <col class="cNum" />
-            <col class="cSurch" />
-            <col class="cNum" />
-            <col class="cVol" />
-            <col class="cTot" />
-          </colgroup>
+      <!-- header -->
+      <div
+        class="gHead theadSticky"
+        :class="withMajorations ? 'colsMaj' : 'colsBase'"
+        role="row"
+      >
+        <div class="hCell">Désignation</div>
+        <div class="hCell right">CMP</div>
+        <div class="hCell right">MOMD</div>
+        <div class="hCell right">Prix calculé</div>
+        <div v-if="withMajorations" class="hCell right">Prix avec majorations</div>
+        <div class="hCell right">Prix pondéré</div>
+        <div class="hCell right">Surcharge</div>
+        <div class="hCell right">Prix définitif</div>
+        <div class="hCell right">Volume</div>
+        <div class="hCell right">Total</div>
+      </div>
 
-          <thead class="theadSticky">
-            <tr>
-              <th>Désignation</th>
-              <th class="right">CMP</th>
-              <th class="right">MOMD</th>
-              <th class="right">Prix calculé</th>
-              <th v-if="withMajorations" class="right">Prix avec majorations</th>
-              <th class="right">Prix pondéré</th>
-              <th class="right">Surcharge</th>
-              <th class="right">Prix définitif</th>
-              <th class="right">Volume</th>
-              <th class="right">Total</th>
-            </tr>
-          </thead>
+      <!-- body -->
+      <div class="gBody">
+        <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
 
-          <tbody>
-            <tr v-for="r in rows" :key="rowKey(r)">
-              <td class="cellMain">
-                <div class="mainLine">
-                  <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
+        <div
+          v-for="r in rows"
+          :key="rowKey(r)"
+          class="gRow"
+          :class="withMajorations ? 'colsMaj' : 'colsBase'"
+          role="row"
+        >
+          <!-- designation -->
+          <div class="cell cellMain">
+            <div class="mainLine">
+              <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
 
-                  <span class="cmtWrap">
-                    <button class="cmtBtn" type="button" aria-label="Info">
-                      <InformationCircleIcon class="cmtIc" />
-                    </button>
-                    <span class="cmtTip" role="tooltip">
-                      Transport (base) : <b>{{ money2(transportBaseM3) }}</b> DH/m³
-                      <br />
-                      Volume : <b>{{ int(r?.volumeM3) }}</b> m³
-                    </span>
-                  </span>
-                </div>
-
-                <div class="subText ell">
-                  Clé: <span class="mono">{{ rowKey(r) }}</span>
-                </div>
-              </td>
-
-              <td class="right">
-                <span class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</span>
-              </td>
-
-              <td class="right">
-                <span class="mono">{{ money2(r?.momd) }}</span>
-              </td>
-
-              <td class="right">
-                <span class="priceBadge">
-                  <span class="mono">{{ money2(pvBaseM3(r)) }}</span>
-                  <span class="dh">DH</span>
-                  <span class="unitTag">/ m³</span>
+              <span class="cmtWrap">
+                <button class="cmtBtn" type="button" aria-label="Info">
+                  <InformationCircleIcon class="cmtIc" />
+                </button>
+                <span class="cmtTip" role="tooltip">
+                  Transport (base) : <b>{{ money2(transportBaseM3) }}</b> DH/m³
+                  <br />
+                  Volume : <b>{{ int(r?.volumeM3) }}</b> m³
                 </span>
-              </td>
+              </span>
+            </div>
 
-              <td v-if="withMajorations" class="right">
-                <span class="priceBadge maj">
-                  <span class="mono">{{ money2(pvWithMajorationM3(r)) }}</span>
-                  <span class="dh">DH</span>
-                  <span class="unitTag">/ m³</span>
-                </span>
-              </td>
+            <div class="subText ell">
+              Clé: <span class="mono">{{ rowKey(r) }}</span>
+            </div>
+          </div>
 
-              <td class="right">
-                <span class="pillStrong mono">{{ money0(pvPondereM3(r)) }}</span>
-              </td>
+          <!-- CMP -->
+          <div class="cell right">
+            <div class="value mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</div>
+          </div>
 
-              <td class="right">
-                <input
-                  class="input numInput"
-                  type="number"
-                  step="1"
-                  :value="getSurcharge(r)"
-                  @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
-                />
-              </td>
+          <!-- MOMD -->
+          <div class="cell right">
+            <div class="value mono">{{ money2(r?.momd) }}</div>
+          </div>
 
-              <td class="right">
-                <span class="pillStrong mono">{{ money0(pvDefinitifM3(r)) }}</span>
-              </td>
+          <!-- PV base -->
+          <div class="cell right">
+            <div class="badgeWrap">
+              <span class="priceBadge">
+                <span class="mono">{{ money2(pvBaseM3(r)) }}</span>
+                <span class="dh">DH</span>
+                <span class="unitTag">/m³</span>
+              </span>
+            </div>
+          </div>
 
-              <td class="right">
-                <span class="mono">{{ int(r?.volumeM3) }}</span>
-              </td>
+          <!-- PV majoré -->
+          <div v-if="withMajorations" class="cell right">
+            <div class="badgeWrap">
+              <span class="priceBadge maj">
+                <span class="mono">{{ money2(pvWithMajorationM3(r)) }}</span>
+                <span class="dh">DH</span>
+                <span class="unitTag">/m³</span>
+              </span>
+            </div>
+          </div>
 
-              <td class="right">
-                <span class="mono"><b>{{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b></span>
-              </td>
-            </tr>
+          <!-- pondéré -->
+          <div class="cell right">
+            <span class="pillStrong mono">{{ money0(pvPondereM3(r)) }}</span>
+          </div>
 
-            <tr v-if="rows.length === 0">
-              <td colspan="10" class="emptyRow">Aucune formule dans cette variante.</td>
-            </tr>
-          </tbody>
+          <!-- surcharge -->
+          <div class="cell right">
+            <input
+              class="input numInput"
+              type="number"
+              step="1"
+              :value="getSurcharge(r)"
+              @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
+            />
+          </div>
 
-          <tfoot v-if="rows.length > 0">
-            <tr class="tfootRow">
-              <td colspan="3" class="muted">
-                Total devis
-              </td>
+          <!-- définitif -->
+          <div class="cell right">
+            <span class="pillStrong mono">{{ money0(pvDefinitifM3(r)) }}</span>
+          </div>
 
-              <td class="right muted" colspan="3">
-                Prix moyen devis : <b class="mono">{{ money2(prixMoyenDefinitif) }}</b> DH/m³
-              </td>
+          <!-- volume -->
+          <div class="cell right">
+            <div class="value mono">{{ int(r?.volumeM3) }}</div>
+          </div>
 
-              <td class="right muted" colspan="2">
-                Volume : <b class="mono">{{ int(volumeTotal) }}</b> m³
-              </td>
+          <!-- total -->
+          <div class="cell right">
+            <div class="value mono strong">{{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}</div>
+          </div>
+        </div>
+      </div>
 
-              <td class="right" colspan="2">
-                <span class="pillStrong mono">{{ money0(caDevisTotal) }}</span>
-                <span class="muted">DH</span>
-              </td>
-            </tr>
-          </tfoot>
-        </table>
+      <!-- footer -->
+      <div class="gFoot">
+        <div class="footLine">
+          <span class="muted">Prix moyen devis :</span>
+          <b class="mono">{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
+
+          <span class="sep">•</span>
+
+          <span class="muted">Volume :</span>
+          <b class="mono">{{ int(volumeTotal) }}</b><span class="muted">m³</span>
+
+          <span class="sep">•</span>
+
+          <span class="muted">CA devis :</span>
+          <b class="mono">{{ money0(caDevisTotal) }}</b><span class="muted">DH</span>
+        </div>
       </div>
     </div>
 
@@ -478,8 +474,7 @@ function resetSurcharges() {
 </template>
 
 <style scoped>
-/* ✅ Copie du langage visuel de tes pages (MpCataloguePage) */
-
+/* ✅ Même langage visuel que tes pages (compact / cards / btn) */
 .page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
 
 .top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
@@ -494,7 +489,7 @@ function resetSurcharges() {
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
-.cardTable { overflow: visible; }
+.cardTable { padding: 0; overflow: hidden; } /* ✅ no horizontal scroll */
 .hint { padding: 10px 12px; }
 
 .btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
@@ -507,14 +502,16 @@ function resetSurcharges() {
 .muted { color:#6b7280; font-size:12px; }
 .ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .mono { font-variant-numeric: tabular-nums; }
+.strong { font-weight: 950; }
 
 .controls{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   justify-content:space-between;
   gap:10px;
   flex-wrap:wrap;
 }
+.leftControls{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
 .chk{
   display:inline-flex;
   align-items:center;
@@ -524,11 +521,7 @@ function resetSurcharges() {
   color:#111827;
   user-select:none;
 }
-.chk input{
-  width:16px;
-  height:16px;
-  border-radius:6px;
-}
+.chk input{ width:16px; height:16px; border-radius:6px; }
 
 .pillInfo{
   display:inline-flex;
@@ -543,45 +536,99 @@ function resetSurcharges() {
   color:#111827;
 }
 
-/* TABLE */
-.tableWrap { overflow: visible; }
-.table {
+/* =========================
+   GRID TABLE (no overlap / no horizontal scroll)
+   - columns are fractional and compress safely
+   - values/badges are constrained to cell width
+========================= */
+.gHead, .gRow{
+  display:grid;
   width:100%;
-  border-collapse:collapse;
-  font-size:12px;
-  table-layout: fixed;
+  column-gap: 10px;
+  align-items:center;
 }
-.table th, .table td {
-  border-bottom:1px solid #e5e7eb;
-  padding: 7px 8px;
-  text-align:left;
-  vertical-align: middle;
+.colsBase{
+  grid-template-columns:
+    minmax(180px, 2.2fr)
+    minmax(70px, .8fr)
+    minmax(70px, .8fr)
+    minmax(110px, 1.1fr)
+    minmax(110px, 1.0fr)
+    minmax(110px, 1.0fr)
+    minmax(110px, 1.0fr)
+    minmax(80px, .8fr)
+    minmax(120px, 1.1fr);
 }
-.table th {
-  font-size:11px;
-  color:#6b7280;
-  background:#fafafa;
-  white-space: nowrap;
+.colsMaj{
+  grid-template-columns:
+    minmax(180px, 2.0fr)
+    minmax(70px, .75fr)
+    minmax(70px, .75fr)
+    minmax(110px, 1.0fr)
+    minmax(120px, 1.05fr)
+    minmax(110px, 0.95fr)
+    minmax(110px, 0.95fr)
+    minmax(110px, 0.95fr)
+    minmax(80px, .75fr)
+    minmax(120px, 1.05fr);
 }
-.emptyRow { color:#6b7280; padding:10px; }
 
+.gHead{
+  padding: 10px 12px;
+  background:#fafafa;
+  border-bottom: 1px solid #e5e7eb;
+  font-size:11px;
+  font-weight: 900;
+  color:#6b7280;
+}
+.hCell{
+  min-width: 0; /* ✅ allow shrink without overflow */
+  white-space: normal; /* ✅ header can wrap */
+  line-height: 1.15;
+}
+
+.gBody{ padding: 0; }
+.gRow{
+  padding: 10px 12px;
+  border-bottom:1px solid #e5e7eb;
+}
+.gRow:hover{ background:#fafafa; }
+.cell{
+  min-width: 0; /* ✅ critical to prevent overlap */
+}
+.value{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.cellMain{ overflow: visible; }
+.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
+.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
+
+.emptyRow{
+  padding: 14px 12px;
+  color:#6b7280;
+  font-size:12px;
+}
+
+.gFoot{
+  padding: 10px 12px;
+  background: rgba(15,23,42,0.02);
+}
+.footLine{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+}
+
+/* Sticky header (like your other pages) */
 .theadSticky{
   position: sticky;
-  top: -14px;          /* ✅ comme ton besoin “collé sous headerdashboard” */
+  top: -14px;
   z-index: 20;
   box-shadow: 0 6px 14px rgba(2, 6, 23, 0.06);
 }
-
-/* Column widths (no horizontal scroll in most cases) */
-.cDes { width: 25%; }
-.cNum { width: 9%; }
-.cSurch { width: 10%; }
-.cVol { width: 7%; }
-.cTot { width: 12%; }
-
-.cellMain { overflow: visible; }
-.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
-.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
 
 /* Tooltip */
 .cmtWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; }
@@ -619,11 +666,15 @@ function resetSurcharges() {
   transform: translateY(-50%) translateX(0px);
 }
 
-/* Badges */
+/* Badges (constrained -> no overlap) */
+.badgeWrap{
+  display:flex;
+  justify-content:flex-end;
+  min-width:0;
+}
 .priceBadge{
   display:inline-flex;
   align-items:center;
-  justify-content:flex-end;
   gap: 6px;
   padding:6px 10px;
   border-radius:999px;
@@ -634,6 +685,8 @@ function resetSurcharges() {
   font-size:13px;
   white-space:nowrap;
   max-width: 100%;
+  overflow:hidden;           /* ✅ no spill */
+  text-overflow: ellipsis;   /* ✅ no spill */
   box-sizing: border-box;
 }
 .priceBadge.maj{
@@ -650,13 +703,13 @@ function resetSurcharges() {
   border: 1px solid rgba(16,24,40,0.10);
   padding: 2px 8px;
   border-radius: 999px;
+  flex: 0 0 auto;
 }
 
 .pillStrong{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-width: 66px;
   height: 28px;
   padding: 0 10px;
   border-radius: 999px;
@@ -664,28 +717,75 @@ function resetSurcharges() {
   background: rgba(15,23,42,0.04);
   font-weight: 1000;
   color:#111827;
+  max-width: 100%;
+  overflow:hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .numInput{
-  max-width: 120px;
+  width: 100%;
+  min-width: 0;
+  max-width: 140px;
   text-align:right;
   padding-right: 10px;
   font-variant-numeric: tabular-nums;
-}
-
-.tfootRow td{
-  background: rgba(15,23,42,0.02);
-  border-bottom: none;
+  margin-left: auto;
 }
 
 .actIc{ width:18px; height:18px; }
 
+/* =========================
+   RESPONSIVE: no horizontal scroll
+   - On narrow widths, rows become "cards" in 2 columns
+========================= */
 @media (max-width: 980px) {
-  .cDes { width: 30%; }
-  .cTot { width: 14%; }
-}
-@media (max-width: 720px) {
-  .cVol { width: 0%; }
-  th:nth-last-child(2), td:nth-last-child(2) { display:none; } /* hide volume on mobile */
+  .colsBase, .colsMaj{
+    grid-template-columns: 1fr 1fr; /* ✅ 2 columns card */
+    row-gap: 10px;
+  }
+  .gHead{
+    display:none; /* ✅ header removed to avoid clutter; each cell will show label */
+  }
+  .gRow{
+    border-bottom: none;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  /* add labels before values */
+  .gRow .cell:nth-child(1){ grid-column: 1 / -1; }
+  .gRow .cell{
+    display:flex;
+    justify-content:space-between;
+    gap: 10px;
+    align-items:center;
+    padding: 2px 0;
+  }
+  .gRow .cell::before{
+    content: attr(data-label);
+    color:#6b7280;
+    font-weight: 900;
+    font-size: 11px;
+    flex: 0 0 auto;
+  }
+
+  /* keep designation without label */
+  .gRow .cellMain{
+    display:block;
+    padding: 0;
+  }
+  .gRow .cellMain::before{ content: ""; display:none; }
+
+  .badgeWrap{ justify-content:flex-end; }
+  .numInput{ max-width: 160px; }
 }
 </style>
+
+<style scoped>
+/* labels for responsive mode */
+.gRow > .cell:nth-child(2) { }
+</style>
+
+<script lang="ts">
+export default {};
+</script>
