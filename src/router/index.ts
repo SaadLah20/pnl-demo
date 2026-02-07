@@ -1,3 +1,4 @@
+// src/router/index.ts (ou src/router.ts selon ton projet)
 import { createRouter, createWebHistory } from "vue-router";
 
 import PageView from "@/pages/PageView.vue";
@@ -6,7 +7,11 @@ import DetailsPage from "@/pages/DetailsPage.vue";
 import PnlArchivePage from "@/pages/PnlArchivePage.vue";
 import MpCataloguePage from "@/pages/MpCataloguePage.vue";
 import FormulesCataloguePage from "@/pages/FormulesCataloguePage.vue";
-import CabPage from "@/pages/Cab.Page.vue";
+
+// ⚠️ Si ton fichier s'appelle vraiment "Cab.Page.vue", remets-le.
+// import CabPage from "@/pages/Cab.Page.vue";
+import CabPage from "@/pages/CabPage.vue";
+
 import MpPage from "@/pages/MpPage.vue";
 import TransportPage from "@/pages/TransportPage.vue";
 import FormulesPage from "@/pages/FormulesPage.vue";
@@ -19,78 +24,45 @@ import CoutsOccasionnelsPage from "@/pages/CoutsOccasionnelsPage.vue";
 import AutresCoutsPage from "@/pages/AutresCoutsPage.vue";
 import MajorationsPage from "@/pages/MajorationPage.vue";
 
-// ✅ NEW: Comparateur de variantes
 import ComparateurVariantesPage from "@/pages/ComparateurVariantesPage.vue";
-
-// ✅ NEW: Devis
 import DevisPage from "@/pages/DevisPage.vue";
 
 const routes = [
   // ✅ Page dédiée Mes P&L
-  {
-    path: "/mes-pnls",
-    name: "MesPnls",
-    component: MesPnlPage,
-  },
+  { path: "/mes-pnls", name: "MesPnls", component: MesPnlPage },
 
-  { path: "/CAB", name: "CAB", component: CabPage },
+  // ✅ Sections (je standardise en minuscules pour éviter les surprises)
+  { path: "/cab", name: "CAB", component: CabPage },
   { path: "/mp", name: "Mp", component: MpPage },
-  { path: "/Transport", name: "Transport", component: TransportPage },
+  { path: "/transport", name: "Transport", component: TransportPage },
   { path: "/formules", name: "Formules", component: FormulesPage },
-  { path: "/MomdAndQuantity", name: "MomdAndQuantity", component: MomdAndQuantity },
+  { path: "/momd-and-quantity", name: "MomdAndQuantity", component: MomdAndQuantity },
   { path: "/maintenance", name: "Maintenance", component: MaintenancePage },
-  { path: "/cout-m3", name: "cout au m3", component: CoutM3 },
+  { path: "/cout-m3", name: "CoutM3", component: CoutM3 },
   { path: "/cout-mois", name: "CoutMensuel", component: CoutMensuelPage },
   { path: "/cout-employes", name: "CoutEmployes", component: CoutEmployesPage },
   { path: "/couts-occasionnels", name: "CoutsOccasionnels", component: CoutsOccasionnelsPage },
   { path: "/autres-couts", name: "AutresCouts", component: AutresCoutsPage },
   { path: "/majorations", name: "Majorations", component: MajorationsPage },
 
-  // ✅ NEW: Devis
+  // ✅ Devis
   { path: "/devis", name: "Devis", component: DevisPage },
 
-  // ✅ NEW: Comparateur de variantes
-  {
-    path: "/comparateur-variantes",
-    name: "ComparateurVariantes",
-    component: ComparateurVariantesPage,
-  },
+  // ✅ Comparateur
+  { path: "/comparateur-variantes", name: "ComparateurVariantes", component: ComparateurVariantesPage },
 
-  // ✅ Répertoire MP
-  {
-    path: "/mp-catalogue",
-    name: "MpCatalogue",
-    component: MpCataloguePage,
-  },
-
-  // ✅ Catalogue Formules
-  {
-    path: "/formules-catalogue",
-    name: "FormulesCatalogue",
-    component: FormulesCataloguePage,
-  },
-
-  {
-    path: "/pnl-archives",
-    name: "PnlArchives",
-    component: PnlArchivePage,
-  },
+  // ✅ Répertoires
+  { path: "/mp-catalogue", name: "MpCatalogue", component: MpCataloguePage },
+  { path: "/formules-catalogue", name: "FormulesCatalogue", component: FormulesCataloguePage },
+  { path: "/pnl-archives", name: "PnlArchives", component: PnlArchivePage },
 
   { path: "/details", name: "Details", component: DetailsPage },
 
   // ✅ Redirect racine -> Mes P&L
-  {
-    path: "/",
-    redirect: { name: "MesPnls" },
-  },
+  { path: "/", redirect: { name: "MesPnls" } },
 
-  // ✅ Fallback (toujours à la fin)
-  {
-    path: "/:name",
-    name: "PageView",
-    component: PageView,
-    props: true,
-  },
+  // ✅ Fallback correct Vue Router 4 (toujours à la fin)
+  { path: "/:pathMatch(.*)*", name: "PageView", component: PageView, props: true },
 ];
 
 const router = createRouter({

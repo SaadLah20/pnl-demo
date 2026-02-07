@@ -1,6 +1,6 @@
 <!-- src/pages/MesPnlPage.vue -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 import VariantCreateModal, {
@@ -40,6 +40,76 @@ async function apiJson(url: string, opts?: RequestInit) {
 }
 
 const store = usePnlStore();
+
+const LS_ACTIVE_PNL = "pnl.activePnlId";
+const LS_ACTIVE_VARIANT = "pnl.activeVariantId";
+
+function persistActive(pnlId: string | null, variantId: string | null) {
+  if (pnlId) localStorage.setItem(LS_ACTIVE_PNL, String(pnlId));
+  if (variantId) localStorage.setItem(LS_ACTIVE_VARIANT, String(variantId));
+}
+
+function setActiveIds(pnlId: string | null, contractId: string | null, variantId: string | null) {
+  if (pnlId && (store as any).setActivePnl) (store as any).setActivePnl(String(pnlId));
+  if (contractId && (store as any).setActiveContract) (store as any).setActiveContract(String(contractId));
+  if (variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(String(variantId));
+  persistActive(pnlId, variantId);
+}
+
+function resolveInitialSelection() {
+  const savedPnlId = localStorage.getItem(LS_ACTIVE_PNL);
+  const savedVarId = localStorage.getItem(LS_ACTIVE_VARIANT);
+
+  // 1) priorité: variante sauvegardée
+  if (savedVarId) {
+    for (const p of pnls.value) {
+      for (const c of p.contracts ?? []) {
+        const v = (c.variants ?? []).find((x: any) => String(x.id) === String(savedVarId));
+        if (v) return { pnlId: String(p.id), contractId: String(c.id), variantId: String(v.id) };
+      }
+    }
+  }
+
+  // 2) pnl sauvegardé + dernière variante
+  if (savedPnlId) {
+    const p = pnls.value.find((x: any) => String(x.id) === String(savedPnlId));
+    if (p) {
+      for (const c of p.contracts ?? []) {
+        const vs = c.variants ?? [];
+        if (vs.length) {
+          const last = vs[vs.length - 1];
+          return { pnlId: String(p.id), contractId: String(c.id), variantId: String(last.id) };
+        }
+      }
+      return { pnlId: String(p.id), contractId: null, variantId: null };
+    }
+  }
+
+  // 3) fallback premier pnl + dernière variante
+  const p0 = pnls.value[0];
+  if (!p0) return null;
+
+  for (const c of p0.contracts ?? []) {
+    const vs = c.variants ?? [];
+    if (vs.length) {
+      const last = vs[vs.length - 1];
+      return { pnlId: String(p0.id), contractId: String(c.id), variantId: String(last.id) };
+    }
+  }
+  return { pnlId: String(p0.id), contractId: null, variantId: null };
+}
+
+async function ensureInitialActive() {
+  await store.loadPnls?.();
+  const sel = resolveInitialSelection();
+  if (!sel) return;
+  if (sel.pnlId) openPnl[sel.pnlId] = true;
+  setActiveIds(sel.pnlId, sel.contractId, sel.variantId);
+}
+
+onMounted(() => {
+  ensureInitialActive();
+});
 
 /* =========================================================
    ENUMS (Contrat)
@@ -243,7 +313,14 @@ const filteredPnls = computed<any[]>(() => {
       const city = normalize(p?.city);
       const status = normalize(p?.status);
       const id = normalize(p?.id);
-      return title.includes(query) || client.includes(query) || model.includes(query) || city.includes(query) || status.includes(query) || id.includes(query);
+      return (
+        title.includes(query) ||
+        client.includes(query) ||
+        model.includes(query) ||
+        city.includes(query) ||
+        status.includes(query) ||
+        id.includes(query)
+      );
     });
   }
 
@@ -281,9 +358,36 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
    Actions
 ========================================================= */
 function openVariant(pnlId: string, contractId: string, variantId: string) {
-  if ((store as any).setActivePnl) (store as any).setActivePnl(pnlId);
-  if ((store as any).setActiveContract) (store as any).setActiveContract(contractId);
-  if ((store as any).setActiveVariant) (store as any).setActiveVariant(variantId);
+  openPnl[String(pnlId)] = true;
+  setActiveIds(String(pnlId), String(contractId), String(variantId));
+}
+
+async function deleteVariant(variantId: string) {
+  if (!confirm("Supprimer définitivement cette variante ?")) return;
+
+  try {
+    await apiJson(`/variants/${variantId}`, { method: "DELETE" });
+    localStorage.removeItem(LS_ACTIVE_VARIANT);
+    await ensureInitialActive();
+  } catch (e: any) {
+    alert(e?.message ?? "Suppression impossible");
+  }
+}
+
+
+async function deleteContract(contractId: string) {
+  if (!confirm("Supprimer définitivement ce contrat et toutes ses variantes ?")) return;
+  await apiJson(`/contracts/${contractId}`, { method: "DELETE" });
+  localStorage.removeItem(LS_ACTIVE_VARIANT);
+  await ensureInitialActive();
+}
+
+async function deletePnl(pnlId: string) {
+  if (!confirm("Supprimer définitivement ce P&L (contrats + variantes) ?")) return;
+  await apiJson(`/pnls/${pnlId}`, { method: "DELETE" });
+  localStorage.removeItem(LS_ACTIVE_PNL);
+  localStorage.removeItem(LS_ACTIVE_VARIANT);
+  await ensureInitialActive();
 }
 
 /* =========================================================
@@ -315,7 +419,7 @@ const editErr = ref<string | null>(null);
 
 /** create flags */
 const isCreate = ref(false);
-const createPnlId = ref<string | null>(null);      // for creating contract
+const createPnlId = ref<string | null>(null); // for creating contract
 
 const draft = reactive<any>({
   id: "",
@@ -329,7 +433,7 @@ const draft = reactive<any>({
   createdAt: "",
 
   // contract
-  ref: "", // non modifiable
+  ref: "",
   dureeMois: 0,
   cab: "LHM",
   installation: "LHM",
@@ -353,10 +457,6 @@ const draft = reactive<any>({
 });
 
 function resetDraft() {
-  editErr.value = null;
-  isCreate.value = false;
-  createPnlId.value = null;
-
   draft.id = "";
   draft.title = "";
   draft.client = "";
@@ -367,6 +467,7 @@ function resetDraft() {
 
   draft.ref = "";
   draft.dureeMois = 0;
+
   draft.cab = "LHM";
   draft.installation = "LHM";
   draft.genieCivil = "LHM";
@@ -379,6 +480,7 @@ function resetDraft() {
   draft.consoEau = "LHM";
   draft.branchementElec = "LHM";
   draft.consoElec = "LHM";
+
   draft.postes = 1;
   draft.sundayPrice = 0;
   draft.delayPenalty = 0;
@@ -389,6 +491,9 @@ function resetDraft() {
 
 function openEdit(mode: EditMode, data: any) {
   resetDraft();
+  isCreate.value = false;
+  createPnlId.value = null;
+
   editMode.value = mode;
   editOpen.value = true;
 
@@ -399,14 +504,14 @@ function openEdit(mode: EditMode, data: any) {
     draft.model = String(data.model ?? "");
     draft.city = String(data.city ?? "");
     draft.status = String(data.status ?? "");
-    draft.createdAt = String(data.createdAt ?? "");
+    draft.createdAt = data.createdAt ?? "";
   }
 
   if (mode === "contract") {
     draft.id = String(data.id);
     draft.ref = String(data.ref ?? "");
-    draft.dureeMois = Number(data.dureeMois ?? 0);
 
+    draft.dureeMois = Number(data.dureeMois ?? 0);
     draft.cab = String(data.cab ?? "LHM");
     draft.installation = String(data.installation ?? "LHM");
     draft.genieCivil = String(data.genieCivil ?? "LHM");
@@ -435,6 +540,21 @@ function openEdit(mode: EditMode, data: any) {
   }
 }
 
+function openCreatePnl() {
+  resetDraft();
+  editMode.value = "pnl";
+  editOpen.value = true;
+  isCreate.value = true;
+  createPnlId.value = null;
+
+  draft.id = "";
+  draft.title = "Nouveau P&L";
+  draft.client = "";
+  draft.city = "";
+  draft.status = "ENCOURS";
+  draft.model = draft.model || "MODEL";
+}
+
 function openCreateContract(pnlId: string) {
   resetDraft();
   editMode.value = "contract";
@@ -458,6 +578,30 @@ async function saveEdit() {
 
   try {
     if (editMode.value === "pnl") {
+      if (isCreate.value) {
+        const created = await apiJson(`/pnls`, {
+          method: "POST",
+          body: JSON.stringify({
+            title: draft.title,
+            client: draft.client,
+            city: draft.city,
+            status: draft.status,
+            model: draft.model, // peut être vide => backend default si nécessaire
+          }),
+        });
+
+        const newPnlId = String(created?.pnl?.id ?? created?.id ?? "");
+        await store.loadPnls?.();
+
+        if (newPnlId) {
+          openPnl[newPnlId] = true;
+          setActiveIds(newPnlId, null, null);
+        }
+
+        closeEdit();
+        return;
+      }
+
       await apiJson(`/pnls/${draft.id}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -604,9 +748,7 @@ async function afterVariantCreated(contractId: string, newVariantId: string) {
 
   await store.loadPnls?.();
 
-  if (keepAfter?.pnlId && (store as any).setActivePnl) (store as any).setActivePnl(keepAfter.pnlId);
-  if (keepAfter?.contractId && (store as any).setActiveContract) (store as any).setActiveContract(keepAfter.contractId);
-  if (keepAfter?.variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(keepAfter.variantId);
+  setActiveIds(keepAfter?.pnlId ?? null, keepAfter?.contractId ?? null, keepAfter?.variantId ?? null);
 
   if (keepAfter?.pnlId) openPnl[String(keepAfter.pnlId)] = true;
 }
@@ -690,6 +832,7 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
 
       <div class="headerActions">
+        <button class="btn btn--primary btn--mini" @click="openCreatePnl">+ Nouveau P&amp;L</button>
         <button class="btn btn--ghost" @click="collapseAllPnls">Tout réduire</button>
         <button class="btn btn--ghost" @click="store.loadPnls?.()">Recharger</button>
       </div>
@@ -778,6 +921,7 @@ async function handleSaveComposee(payload: ComposePayload) {
           <div class="actions">
             <button class="btn btn--soft" @click="openView('pnl', p)">Visualiser</button>
             <button class="btn btn--soft" @click="openEdit('pnl', p)">Modifier</button>
+            <button class="btn btn--ghost btn--mini" @click="deletePnl(p.id)">Supprimer</button>
           </div>
         </div>
 
@@ -819,19 +963,19 @@ async function handleSaveComposee(payload: ComposePayload) {
               </div>
 
               <div class="actions">
+                <button class="btn btn--primary btn--mini" @click="openCreateVariant(c.id)">+ Nouvelle Variante</button>
                 <button class="btn btn--soft" @click="openView('contract', c)">Visualiser</button>
                 <button class="btn btn--soft" @click="openEdit('contract', c)">Modifier</button>
+                <button class="btn btn--ghost btn--mini" @click="deleteContract(c.id)">Supprimer</button>
               </div>
             </div>
 
-            <div class="variants">
-              <div class="variantsHead">
-                <div class="muted">Variantes</div>
-                <button class="btn btn--primary btn--mini" @click="openCreateVariant(c.id)">+ Nouvelle Variante</button>
-              </div>
+            <div class="variantsHead">
+              <div class="muted">Variantes</div>
+              <div class="muted">{{ (c.variants ?? []).length }} variante(s)</div>
+            </div>
 
-              <div v-if="(c.variants ?? []).length === 0" class="muted indent2">Aucune variante.</div>
-
+            <div class="variants indent2">
               <div
                 v-for="v in (c.variants ?? [])"
                 :key="v.id"
@@ -848,7 +992,7 @@ async function handleSaveComposee(payload: ComposePayload) {
                   </div>
 
                   <div class="line2">
-                    <span v-if="v.description" class="meta">{{ v.description }}</span>
+                    <span class="meta"><span class="k">Description :</span> {{ v.description ?? "-" }}</span>
                     <span class="idTiny">ID : {{ idShort(v.id) }}</span>
                   </div>
                 </div>
@@ -857,94 +1001,67 @@ async function handleSaveComposee(payload: ComposePayload) {
                   <button class="btn btn--primary btn--mini" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
                   <button class="btn btn--soft" @click="openView('variant', v)">Visualiser</button>
                   <button class="btn btn--soft" @click="openEdit('variant', v)">Modifier</button>
+                  <button class="btn btn--ghost btn--mini" @click="deleteVariant(v.id)">Supprimer</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
 
-    <!-- MODALS -->
+    <!-- VIEW MODAL -->
     <Teleport to="body">
-      <!-- VIEW MODAL -->
       <div v-if="viewOpen" class="modalOverlay" @click.self="closeView()">
         <div class="modal">
           <div class="modalHead">
             <div class="modalTitle">
-              <b v-if="viewMode === 'pnl'">Visualiser — P&amp;L</b>
-              <b v-else-if="viewMode === 'contract'">Visualiser — Contrat</b>
-              <b v-else>Visualiser — Variante</b>
-              <div class="modalSub idTiny">ID : {{ idShort(viewData?.id) }}</div>
+              <b v-if="viewMode === 'pnl'">Détails P&amp;L</b>
+              <b v-else-if="viewMode === 'contract'">Détails Contrat</b>
+              <b v-else>Détails Variante</b>
+              <div class="modalSub">Lecture seule</div>
             </div>
             <button class="xBtn" @click="closeView()">✕</button>
           </div>
 
           <div class="modalBody">
             <div v-if="viewMode === 'pnl'" class="kv">
-              <div class="rowKV"><div class="k">Titre</div><div class="v"><b>{{ viewData?.title ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Client</div><div class="v"><b>{{ viewData?.client ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Modèle</div><div class="v"><b>{{ viewData?.model ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Ville</div><div class="v"><b>{{ viewData?.city ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Statut</div><div class="v"><span :class="tagClass(viewData?.status)">{{ viewData?.status ?? "—" }}</span></div></div>
-              <div class="rowKV"><div class="k">Date de création</div><div class="v"><b>{{ fmtDate(viewData?.createdAt) }}</b></div></div>
+              <div class="rowKV"><div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Client</div><div class="v">{{ viewData?.client ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Ville</div><div class="v">{{ viewData?.city ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Modèle</div><div class="v">{{ viewData?.model ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Créé le</div><div class="v">{{ fmtDate(viewData?.createdAt) }}</div></div>
+              <div class="rowKV"><div class="k">ID</div><div class="v">{{ viewData?.id ?? "-" }}</div></div>
             </div>
 
             <div v-else-if="viewMode === 'contract'" class="kv">
-              <div class="sectionBox">
-                <div class="sectionTitle">Synthèse</div>
-                <div class="sectionGrid">
-                  <div class="rowKV"><div class="k">Référence</div><div class="v"><b>{{ viewData?.ref ?? "-" }}</b></div></div>
-                  <div class="rowKV"><div class="k">Durée (mois)</div><div class="v"><b>{{ viewData?.dureeMois ?? 0 }}</b></div></div>
-                  <div class="rowKV"><div class="k">Postes</div><div class="v"><b>{{ labelFrom(POSTES_2, viewData?.postes) }}</b></div></div>
-                </div>
-              </div>
-
-              <div class="sectionBox">
-                <div class="sectionTitle">Responsabilités</div>
-                <div class="sectionGrid">
-                  <div class="rowKV"><div class="k">Cab</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.cab) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Installation</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.installation) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Génie civil</div><div class="v"><b>{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Transport</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.transport) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Terrain</div><div class="v"><b>{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Matière première</div><div class="v"><b>{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Maintenance</div><div class="v"><b>{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Chargeuse</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</b></div></div>
-                </div>
-              </div>
-
-              <div class="sectionBox">
-                <div class="sectionTitle">Eau</div>
-                <div class="sectionGrid">
-                  <div class="rowKV"><div class="k">Branchement eau</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Conso eau</div><div class="v"><b>{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</b></div></div>
-                </div>
-              </div>
-
-              <div class="sectionBox">
-                <div class="sectionTitle">Électricité</div>
-                <div class="sectionGrid">
-                  <div class="rowKV"><div class="k">Branchement élec</div><div class="v"><b>{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</b></div></div>
-                  <div class="rowKV"><div class="k">Conso élec</div><div class="v"><b>{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</b></div></div>
-                </div>
-              </div>
-
-              <div class="sectionBox">
-                <div class="sectionTitle">Paramètres financiers</div>
-                <div class="sectionGrid">
-                  <div class="rowKV"><div class="k">Dim./fériés</div><div class="v"><b>{{ viewData?.sundayPrice ?? 0 }}</b></div></div>
-                  <div class="rowKV"><div class="k">Pénalité délai</div><div class="v"><b>{{ viewData?.delayPenalty ?? 0 }}</b></div></div>
-                  <div class="rowKV"><div class="k">Location chiller</div><div class="v"><b>{{ viewData?.chillerRent ?? 0 }}</b></div></div>
-                </div>
-              </div>
+              <div class="rowKV"><div class="k">Référence</div><div class="v">{{ viewData?.ref ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Durée</div><div class="v">{{ viewData?.dureeMois ?? 0 }} mois</div></div>
+              <div class="rowKV"><div class="k">Postes</div><div class="v">{{ labelFrom(POSTES_2, viewData?.postes) }}</div></div>
+              <div class="rowKV"><div class="k">Cab</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.cab) }}</div></div>
+              <div class="rowKV"><div class="k">Installation</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.installation) }}</div></div>
+              <div class="rowKV"><div class="k">Génie civil</div><div class="v">{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</div></div>
+              <div class="rowKV"><div class="k">Transport</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.transport) }}</div></div>
+              <div class="rowKV"><div class="k">Terrain</div><div class="v">{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</div></div>
+              <div class="rowKV"><div class="k">Matière première</div><div class="v">{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</div></div>
+              <div class="rowKV"><div class="k">Maintenance</div><div class="v">{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</div></div>
+              <div class="rowKV"><div class="k">Chargeuse</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</div></div>
+              <div class="rowKV"><div class="k">Branchement Eau</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</div></div>
+              <div class="rowKV"><div class="k">Consommation Eau</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</div></div>
+              <div class="rowKV"><div class="k">Branchement Électricité</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</div></div>
+              <div class="rowKV"><div class="k">Consommation Électricité</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</div></div>
+              <div class="rowKV"><div class="k">Prix dimanches/fériés</div><div class="v">{{ viewData?.sundayPrice ?? 0 }}</div></div>
+              <div class="rowKV"><div class="k">Pénalité délai</div><div class="v">{{ viewData?.delayPenalty ?? 0 }}</div></div>
+              <div class="rowKV"><div class="k">Location Chiller</div><div class="v">{{ viewData?.chillerRent ?? 0 }}</div></div>
+              <div class="rowKV"><div class="k">ID</div><div class="v">{{ viewData?.id ?? "-" }}</div></div>
             </div>
 
             <div v-else class="kv">
-              <div class="rowKV"><div class="k">Titre</div><div class="v"><b>{{ viewData?.title ?? "-" }}</b></div></div>
-              <div class="rowKV"><div class="k">Statut</div><div class="v"><span :class="tagClass(viewData?.status)">{{ viewData?.status ?? "—" }}</span></div></div>
-              <div v-if="viewData?.description" class="rowKV"><div class="k">Description</div><div class="v"><b>{{ viewData?.description }}</b></div></div>
+              <div class="rowKV"><div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Description</div><div class="v">{{ viewData?.description ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">ID</div><div class="v">{{ viewData?.id ?? "-" }}</div></div>
             </div>
           </div>
 
@@ -953,17 +1070,18 @@ async function handleSaveComposee(payload: ComposePayload) {
           </div>
         </div>
       </div>
+    </Teleport>
 
-      <!-- EDIT MODAL -->
+    <!-- EDIT MODAL -->
+    <Teleport to="body">
       <div v-if="editOpen" class="modalOverlay" @click.self="closeEdit()">
         <div class="modal">
           <div class="modalHead">
             <div class="modalTitle">
-              <b v-if="editMode === 'pnl'">{{ isCreate ? "Créer" : "Modifier" }} — P&amp;L</b>
-              <b v-else-if="editMode === 'contract'">{{ isCreate ? "Créer" : "Modifier" }} — Contrat</b>
-              <b v-else>{{ "Modifier" }} — Variante</b>
-              <div class="modalSub idTiny" v-if="!isCreate">ID : {{ idShort(draft.id) }}</div>
-              <div class="modalSub idTiny" v-else>Création</div>
+              <b v-if="editMode === 'pnl'">{{ isCreate ? "Créer P&L" : "Modifier P&L" }}</b>
+              <b v-else-if="editMode === 'contract'">{{ isCreate ? "Créer Contrat" : "Modifier Contrat" }}</b>
+              <b v-else>Modifier Variante</b>
+              <div class="modalSub">Édition</div>
             </div>
             <button class="xBtn" @click="closeEdit()">✕</button>
           </div>
@@ -975,7 +1093,7 @@ async function handleSaveComposee(payload: ComposePayload) {
             <div v-if="editMode === 'pnl'" class="formGrid">
               <div class="f">
                 <div class="k">Titre</div>
-                <input class="in" v-model="draft.title" placeholder="Titre du P&L" />
+                <input class="in" v-model="draft.title" placeholder="Titre P&L" />
               </div>
               <div class="f">
                 <div class="k">Client</div>

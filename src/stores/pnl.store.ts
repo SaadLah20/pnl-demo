@@ -143,19 +143,29 @@ activeHeaderKPIs(): any {
     // -------------------------
     // internal helper
     // -------------------------
-    replaceActiveVariantInState(updatedVariant: AnyObj) {
-      const pnl = this.pnls.find((p) => p.id === this.activePnlId);
-      if (!pnl) return;
+replaceActiveVariantInState(next: any) {
+  if (!next?.id) return;
 
-      for (const c of pnl.contracts ?? []) {
-        const idx = (c.variants ?? []).findIndex((x: any) => x.id === this.activeVariantId);
-        if (idx >= 0) {
-          c.variants[idx] = updatedVariant;
-          this.activeVariantId = updatedVariant.id;
-          return;
-        }
-      }
-    },
+  const pnl = this.pnls.find((p: any) => p.contracts?.some((c: any) => c.variants?.some((v: any) => v.id === next.id)));
+  if (!pnl) return;
+
+  for (const c of pnl.contracts ?? []) {
+    const i = (c.variants ?? []).findIndex((v: any) => v.id === next.id);
+    if (i >= 0) {
+      const prev = c.variants[i];
+
+      // ✅ merge : garde les sections existantes si next ne les fournit pas
+      c.variants[i] = { ...prev, ...next };
+
+      // ✅ et merge aussi les sous-objets section si besoin
+      if (prev?.cab && next?.cab) c.variants[i].cab = { ...prev.cab, ...next.cab };
+      if (prev?.transport && next?.transport) c.variants[i].transport = { ...prev.transport, ...next.transport };
+
+      return;
+    }
+  }
+},
+
 
     // -------------------------
     // Load hierarchy
@@ -186,10 +196,129 @@ activeHeaderKPIs(): any {
       const data = await jsonFetch("/mp-catalogue");
       this.mpCatalogue = data ?? [];
     },
+    // -------------------------
+// ✅ MP Catalogue (UPDATE)
+// -------------------------
+async updateMpCatalogue(mpId: string, patch: Record<string, any>) {
+  const id = encodeURIComponent(String(mpId ?? ""));
+  const updated = await jsonFetch(`/mp-catalogue/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(patch ?? {}),
+  });
+
+  // 1) met à jour le catalogue en mémoire
+  const i = (this.mpCatalogue ?? []).findIndex((m: any) => m.id === updated?.id);
+  if (i >= 0) this.mpCatalogue[i] = { ...this.mpCatalogue[i], ...updated };
+  else if (updated?.id) this.mpCatalogue.unshift(updated);
+
+  // 2) optionnel mais recommandé : patch aussi les MP déjà “embarquées” dans les variantes
+  // (sinon tu ne verras les changements qu’après reloadPnls)
+  if (updated?.id) {
+    for (const p of this.pnls ?? []) {
+      for (const c of p.contracts ?? []) {
+        for (const v of c.variants ?? []) {
+          const items = v?.mp?.items ?? [];
+          for (const it of items) {
+            if (it?.mpId === updated.id && it?.mp) {
+              it.mp = { ...it.mp, ...updated };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return updated;
+},
+
     async loadFormulesCatalogue() {
       const data = await jsonFetch("/formules-catalogue");
       this.formulesCatalogue = data ?? [];
     },
+
+    // -------------------------
+// ✅ Formules Catalogue (UPDATE meta)
+// -------------------------
+async updateFormuleCatalogue(formuleId: string, patch: Record<string, any>) {
+  const id = encodeURIComponent(String(formuleId ?? ""));
+  const updated = await jsonFetch(`/formules-catalogue/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(patch ?? {}),
+  });
+
+  // met à jour le cache local du catalogue
+  const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === updated?.id);
+  if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...updated };
+  else if (updated?.id) this.formulesCatalogue.unshift(updated);
+
+  return updated;
+},
+
+// -------------------------
+// ✅ Formules Catalogue (UPDATE items)
+// -------------------------
+async updateFormuleCatalogueItems(formuleId: string, items: Array<{ mpId: string; qty: number }>) {
+  const id = encodeURIComponent(String(formuleId ?? ""));
+
+  const resp = await jsonFetch(`/formules-catalogue/${id}/items`, {
+    method: "PUT",
+    body: JSON.stringify({ items: items ?? [] }),
+  });
+
+  const updated = (resp as any)?.updated ?? null;
+
+  if (updated?.id) {
+    const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === updated.id);
+    if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...updated };
+    else this.formulesCatalogue.unshift(updated);
+  }
+
+  return resp;
+},
+
+// -------------------------
+// ✅ Formules Catalogue (CREATE)
+// -------------------------
+async createFormuleCatalogue(payload: Record<string, any>) {
+  const created = await jsonFetch(`/formules-catalogue`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+
+  // met à jour le cache local
+  if (created?.id) {
+    const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === created.id);
+    if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...created };
+    else this.formulesCatalogue.unshift(created);
+  }
+
+  return created;
+},
+
+// -------------------------
+// ✅ Formules Catalogue (DELETE)
+// -------------------------
+async deleteFormuleCatalogue(formuleId: string) {
+  const id = encodeURIComponent(String(formuleId ?? ""));
+
+  try {
+    const resp = await jsonFetch(`/formules-catalogue/${id}`, { method: "DELETE" });
+
+    // sync cache local
+    this.formulesCatalogue = (this.formulesCatalogue ?? []).filter((f: any) => f.id !== formuleId);
+
+    return resp; // { ok: true }
+  } catch (e: any) {
+    // ton backend renvoie souvent { error: "FORMULE_IN_USE", details: { usedInVariants } }
+    const msg =
+      e?.error === "FORMULE_IN_USE"
+        ? "Impossible : cette formule est utilisée dans au moins une variante."
+        : e?.message ?? String(e);
+
+    throw new Error(msg);
+  }
+},
+
 
     // -------------------------
     // Header toggles / preview
@@ -291,6 +420,11 @@ async updateVariant(variantId: string, patch: Record<string, any>) {
   return updated;
 },
 
+async loadVariantDeep(variantId: string) {
+  const resp = await jsonFetch(`/variants/${variantId}`);
+  if (resp?.variant?.id) this.replaceActiveVariantInState(resp.variant);
+  return resp;
+},
 
     // -------------------------
     // ✅ Variant MP (override MP) - optionnel mais utile

@@ -73,7 +73,7 @@ const routeByItem: Record<string, string> = {
   Formules: "Formules",
   "Qté et MOMD": "MomdAndQuantity",
   Maintenance: "Maintenance",
-  "Cout au m3": "cout au m3",
+"Cout au m3": "CoutM3",
   "Cout au mois": "CoutMensuel",
   "Cout employés": "CoutEmployes",
   "Couts occasionnels": "CoutsOccasionnels",
@@ -132,7 +132,7 @@ watch(
     else if (route.name === "Formules") activeItem.value = "Formules";
     else if (route.name === "MomdAndQuantity") activeItem.value = "Qté et MOMD";
     else if (route.name === "Maintenance") activeItem.value = "Maintenance";
-    else if (route.name === "cout au m3") activeItem.value = "Cout au m3";
+else if (route.name === "CoutM3") activeItem.value = "Cout au m3";
     else if (route.name === "CoutMensuel") activeItem.value = "Cout au mois";
     else if (route.name === "CoutEmployes") activeItem.value = "Cout employés";
     else if (route.name === "CoutsOccasionnels") activeItem.value = "Couts occasionnels";

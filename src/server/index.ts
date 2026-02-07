@@ -31,6 +31,39 @@ app.get("/pnls", async (_req: Request, res: Response) => {
   }
 });
 
+
+// ✅ include exact selon ton schema.prisma
+const variantInclude = Prisma.validator<Prisma.VariantInclude>()({
+  variantFormules: {
+    include: {
+      formule: {
+        include: {
+          items: { include: { mp: true } },
+        },
+      },
+    },
+  },
+});
+
+// ✅ GET variant deep (utilisé par store.loadVariantDeep)
+app.get("/variants/:id", async (req: Request, res: Response) => {
+  const variantId = String(req.params.id);
+
+  try {
+    const variant = await prisma.variant.findUnique({
+      where: { id: variantId },
+      include: variantInclude,
+    });
+
+    return res.json({ variant });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
+
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -93,6 +126,12 @@ async function getFullVariant(variantId: string) {
           },
         },
       },
+            variantFormules: {
+        include: {
+          formule: { include: { items: { include: { mp: true } } } },
+        },
+      },
+
     },
   });
 }
@@ -1021,29 +1060,90 @@ app.put("/variants/:id/mps/:variantMpId", async (req: Request, res: Response) =>
 });
 
 // =========================================================
-// PNL UPDATE (pour popup edit)
+// PNL CREATE
 // =========================================================
-app.put("/pnls/:id", async (req: Request, res: Response) => {
+app.post("/pnls", async (req: Request, res: Response) => {
   try {
-    const id = String(req.params.id);
+    const body = req.body ?? {};
 
-    const updated = await prisma.pnl.update({
-      where: { id },
+    const created = await prisma.pnl.create({
       data: {
-        title: req.body?.title === undefined ? undefined : String(req.body.title),
-        client: req.body?.client === undefined ? undefined : (req.body.client ?? null),
-        city: req.body?.city === undefined ? undefined : String(req.body.city),
-        region: req.body?.region === undefined ? undefined : String(req.body.region),
-        status: req.body?.status === undefined ? undefined : String(req.body.status),
-      },
+        title: String(body.title ?? "Nouveau P&L"),
+        client: body.client === undefined ? null : (body.client ?? null),
+
+        city: String(body.city ?? ""),
+        // ✅ region obligatoire => jamais null
+        region: req.body?.region === undefined ? undefined : String(req.body.region ?? ""),
+
+        status: String(body.status ?? "ENCOURS"),
+        model: String(body.model ?? "MODEL"),
+      } as any,
     });
 
-    res.json({ ok: true, pnl: updated });
+    return res.json({ ok: true, pnl: created });
   } catch (e: any) {
     console.error(e);
-    res.status(400).json({ error: e?.message ?? "Bad Request" });
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
+
+
+// =========================================================
+// CONTRACT CREATE
+// =========================================================
+
+app.post("/contracts", async (req: Request, res: Response) => {
+  try {
+    const body = req.body ?? {};
+    const pnlId = String(body.pnlId ?? "");
+    if (!pnlId) return res.status(400).json({ error: "pnlId required" });
+
+    const allowed = [
+      "dureeMois",
+      "terrain",
+      "installation",
+
+      "cab",
+      "genieCivil",
+      "transport",
+      "matierePremiere",
+      "maintenance",
+      "chargeuse",
+      "branchementEau",
+      "consoEau",
+      "branchementElec",
+      "consoElec",
+
+      "postes",
+      "sundayPrice",
+      "delayPenalty",
+      "chillerRent",
+    ];
+
+    const data: any = pick(body, allowed);
+
+    if (data.dureeMois !== undefined) data.dureeMois = intOr0(data.dureeMois);
+    if (data.postes !== undefined) data.postes = intOr0(data.postes);
+
+    if (data.sundayPrice !== undefined) data.sundayPrice = Number(data.sundayPrice ?? 0);
+    if (data.delayPenalty !== undefined) data.delayPenalty = Number(data.delayPenalty ?? 0);
+    if (data.chillerRent !== undefined) data.chillerRent = Number(data.chillerRent ?? 0);
+
+    // 🔥 IMPORTANT: aucun champ "ref"
+    const created = await prisma.contract.create({
+      data: {
+        pnlId,
+        ...data,
+      } as any,
+    });
+
+    return res.json({ ok: true, contract: created });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
 
 // =========================================================
 // CONTRACT UPDATE (pour popup edit)
@@ -1654,33 +1754,197 @@ app.put("/variants/:id/formules/:variantFormuleId", async (req: Request, res: Re
   }
 });
 
-app.delete("/variants/:id/formules/:variantFormuleId", async (req: Request, res: Response) => {
-  try {
-    const variantId = String(req.params.id);
-    const variantFormuleId = String(req.params.variantFormuleId);
 
+
+
+// =========================================================
+// VARIANT DELETE (cascade)
+// =========================================================
+
+app.delete("/variants/:variantId/formules/:variantFormuleId", async (req, res) => {
+  const variantId = String(req.params.variantId);
+  const variantFormuleId = String(req.params.variantFormuleId);
+
+  try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.variantFormule.delete({ where: { id: variantFormuleId } });
+      // ✅ idempotent + sécurisé
+      await tx.variantFormule.deleteMany({
+        where: { id: variantFormuleId, variantId },
+      });
+
+      // ✅ important : resync MP
       await syncVariantMpsFromFormules(tx, variantId);
     });
 
+    // ✅ renvoyer une variante COMPLETE (sinon tu casses les autres sections)
     const variant = await getFullVariant(variantId);
-    res.json({ ok: true, variant });
-  } catch (e: any) {
-    console.error(e);
-    res.status(400).json({ error: e?.message ?? "Bad Request" });
+    if (!variant) return res.status(404).json({ error: "Variant not found" });
+
+    return res.json({ ok: true, variant });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.delete("/variants/:id", async (req: Request, res: Response) => {
+
+
+
+// =========================================================
+// CONTRACT DELETE (cascade)
+// =========================================================
+app.delete("/contracts/:id", async (req: Request, res: Response) => {
+  const contractId = String(req.params.id);
+
   try {
-    await prisma.variant.delete({ where: { id: String(req.params.id) } });
-    res.json({ ok: true });
-  } catch (err: any) {
-    console.error(err);
-    res.status(400).json({ error: err?.message ?? "Bad Request" });
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const variants = await tx.variant.findMany({
+        where: { contractId },
+        select: { id: true },
+      });
+
+      const variantIds = variants.map((v) => v.id);
+
+      if (variantIds.length) {
+        // dépendances variantes
+        await tx.variantFormule.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.variantMp.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.autreCoutItem.deleteMany({ where: { variantId: { in: variantIds } } });
+
+        // sections
+        await tx.sectionTransport.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionCab.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionMaintenance.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionCoutM3.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionCoutMensuel.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionCoutOccasionnel.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionEmployes.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionAutresCouts.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionFormules.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionDevis.deleteMany({ where: { variantId: { in: variantIds } } });
+        await tx.sectionMajorations.deleteMany({ where: { variantId: { in: variantIds } } });
+
+        // (optionnel) section MP si elle existe dans ton schema
+        if ((tx as any).sectionMatierePremiere?.deleteMany) {
+          await (tx as any).sectionMatierePremiere.deleteMany({ where: { variantId: { in: variantIds } } });
+        }
+
+        await tx.variant.deleteMany({ where: { id: { in: variantIds } } });
+      }
+
+      await tx.contract.delete({ where: { id: contractId } });
+    });
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
+
+// ✅ DELETE VARIANT (avec dépendances)
+app.delete("/variants/:id", async (req: Request, res: Response) => {
+  const variantId = String(req.params.id);
+
+  try {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // optionnel: vérifier existence
+      const v = await tx.variant.findUnique({ where: { id: variantId }, select: { id: true } });
+      if (!v) {
+        // on sort en lançant une erreur "404"
+        const err: any = new Error("Variant not found");
+        err.status = 404;
+        throw err;
+      }
+
+      // dépendances (items)
+      await tx.variantFormule.deleteMany({ where: { variantId } });
+      await tx.variantMp.deleteMany({ where: { variantId } });
+      await tx.autreCoutItem.deleteMany({ where: { variantId } });
+
+      // sections
+      await tx.sectionTransport.deleteMany({ where: { variantId } });
+      await tx.sectionCab.deleteMany({ where: { variantId } });
+      await tx.sectionMaintenance.deleteMany({ where: { variantId } });
+      await tx.sectionCoutM3.deleteMany({ where: { variantId } });
+      await tx.sectionCoutMensuel.deleteMany({ where: { variantId } });
+      await tx.sectionCoutOccasionnel.deleteMany({ where: { variantId } });
+      await tx.sectionEmployes.deleteMany({ where: { variantId } });
+      await tx.sectionAutresCouts.deleteMany({ where: { variantId } });
+      await tx.sectionFormules.deleteMany({ where: { variantId } });
+      await tx.sectionDevis.deleteMany({ where: { variantId } });
+      await tx.sectionMajorations.deleteMany({ where: { variantId } });
+      await tx.sectionMatierePremiere.deleteMany({ where: { variantId } });
+
+      // variante
+      await tx.variant.delete({ where: { id: variantId } });
+    });
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    const status = Number(e?.status) || 400;
+    console.error(e);
+    return res.status(status).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
+// =========================================================
+// PNL DELETE (cascade)
+// =========================================================
+app.delete("/pnls/:id", async (req: Request, res: Response) => {
+  const pnlId = String(req.params.id);
+
+  try {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const contracts = await tx.contract.findMany({
+        where: { pnlId },
+        select: { id: true },
+      });
+
+      for (const c of contracts) {
+        const variants = await tx.variant.findMany({
+          where: { contractId: c.id },
+          select: { id: true },
+        });
+        const variantIds = variants.map((v) => v.id);
+
+        if (variantIds.length) {
+          await tx.variantFormule.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.variantMp.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.autreCoutItem.deleteMany({ where: { variantId: { in: variantIds } } });
+
+          await tx.sectionTransport.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionCab.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionMaintenance.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionCoutM3.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionCoutMensuel.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionCoutOccasionnel.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionEmployes.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionAutresCouts.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionFormules.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionDevis.deleteMany({ where: { variantId: { in: variantIds } } });
+          await tx.sectionMajorations.deleteMany({ where: { variantId: { in: variantIds } } });
+
+          if ((tx as any).sectionMatierePremiere?.deleteMany) {
+            await (tx as any).sectionMatierePremiere.deleteMany({ where: { variantId: { in: variantIds } } });
+          }
+
+          await tx.variant.deleteMany({ where: { id: { in: variantIds } } });
+        }
+
+        await tx.contract.delete({ where: { id: c.id } });
+      }
+
+      await tx.pnl.delete({ where: { id: pnlId } });
+    });
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(400).json({ error: e?.message ?? "Bad Request" });
+  }
+});
+
 
 app.listen(3001, () => {
   console.log("API running on http://localhost:3001");

@@ -19,7 +19,7 @@ model Pnl {
   status    String    @default("ENCOURS")
   startDate DateTime?
   city      String
-  region    String
+region String @default("")
   createdAt DateTime  @default(now())
 
   contracts Contract[]

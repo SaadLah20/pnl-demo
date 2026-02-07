@@ -1,6 +1,6 @@
 <!-- src/pages/Variante/Sections/Formules/FormulesPage.vue -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 const store = usePnlStore();
@@ -49,6 +49,25 @@ const contractLabel = computed(() => {
 });
 const variantTitle = computed(() => (variant.value as any)?.title ?? "—");
 
+watch(
+  () => store.activeVariantId,
+  async (vid) => {
+    const id = String(vid ?? "").trim();
+    if (!id) return;
+
+    // Si la variante actuelle n'a pas encore les relations deep
+    const v = store.activeVariant as any;
+    if (v && Array.isArray(v.variantFormules)) return;
+
+    // ✅ appelle l'action existante dans ton store
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(id);
+    }
+  },
+  { immediate: true }
+);
+
+
 /* =========================
    ROWS (variant formules)
 ========================= */
@@ -63,12 +82,21 @@ type FormuleRow = {
 };
 
 const rows = computed<FormuleRow[]>(() => {
-  const items = (variant.value as any)?.formules?.items ?? (variant.value as any)?.variantFormules ?? [];
+  const v: any = variant.value ?? null;
+
+  // ✅ FULL shape: sectionFormules.items (variantFormule[])
+  const items =
+    v?.formules?.items ??
+    // ✅ fallback: direct relation (si tu l’as quelque part)
+    v?.variantFormules ??
+    [];
+
   if (!Array.isArray(items)) return [];
+
   return items.map((it: any) => {
     const f = it?.formule ?? {};
     return {
-      id: String(it?.id ?? ""),
+      id: String(it?.id ?? ""), // variantFormuleId
       formuleId: String(it?.formuleId ?? f?.id ?? ""),
       label: String(f?.label ?? ""),
       resistance: String(f?.resistance ?? ""),
@@ -78,6 +106,8 @@ const rows = computed<FormuleRow[]>(() => {
     };
   });
 });
+
+
 
 function getItemsRaw(r: FormuleRow): any[] {
   return r?.raw?.formule?.items ?? [];
@@ -119,7 +149,10 @@ async function addFormule(formuleId: string) {
   addBusy.value = true;
   addErr.value = null;
   try {
-    await store.addFormuleToActiveVariant(String(formuleId));
+const variantId = String((variant.value as any)?.id ?? store.activeVariantId ?? "").trim();
+if (!variantId) return;
+
+await (store as any).addFormuleToVariant(variantId, String(formuleId));
     // garde la popup ouverte (tu peux la fermer si tu veux)
   } catch (e: any) {
     addErr.value = e?.message ?? String(e);
@@ -127,6 +160,33 @@ async function addFormule(formuleId: string) {
     addBusy.value = false;
   }
 }
+
+/* =========================
+   ✅ SUPPRIMER FORMULE (variant)
+   - basé sur PnlArchivePage (store.removeVariantFormule)
+========================= */
+const delBusy = reactive<Record<string, boolean>>({});
+const delErr = ref<string | null>(null);
+
+async function deleteFormule(variantFormuleId: string) {
+  const variantId = String((variant.value as any)?.id ?? store.activeVariantId ?? "").trim();
+  const vfId = String(variantFormuleId ?? "").trim();
+  if (!variantId || !vfId) return;
+
+  const ok = window.confirm("Supprimer cette formule de la variante ? Cette action est définitive.");
+  if (!ok) return;
+
+  delErr.value = null;
+  delBusy[vfId] = true;
+  try {
+    await (store as any).deleteVariantFormule(variantId, vfId);
+  } catch (e: any) {
+    delErr.value = e?.message ?? String(e);
+  } finally {
+    delBusy[vfId] = false;
+  }
+}
+
 
 /* =========================
    Sorting MP: Ciment -> Granulas -> Adjuvant -> Others
@@ -245,36 +305,37 @@ function compositionStatsFor(r: FormuleRow) {
     if (!rho) {
       missing.push({
         mpId: String(it.mpId),
-        label: `${mp?.categorie ?? "—"} — ${mp?.label ?? "—"}`,
+        label: String(mp?.label ?? "MP inconnue"),
       });
       continue;
     }
 
-    const m = Number(it.qty ?? 0); // kg
-    vTotal += m / rho;
+    const qty = toNum(it.qty);
+    const cat = normKey(mp?.categorie);
+    if (cat === "ciment") mCiment += qty;
 
-    if (normKey(mp?.categorie) === "ciment") mCiment += m;
+    // v = m / rho  (kg / (t/m3) ??? ici on approx: rho en t/m3 -> kg/(t/m3)= (kg/1000)/rho m3
+    vTotal += (qty / 1000) / rho;
   }
 
-  const mEau = mCiment * 0.5;
-  const vEau = mEau / 1.0;
+  // eau approx: 0.5 * ciment + 15L
+  const vEau = (mCiment * 0.5 + 15) / 1000; // m3
+  const target = 1; // m3
+  const vTotWithWater = vTotal + vEau;
 
-  vTotal += vEau;
-  vTotal += 15;
+  const delta = target - vTotWithWater;
+  const deficitPct = (delta / target) * 100;
 
-  const target = 1000;
-  const delta = vTotal - target;
-  const deficitPct = target > 0 ? ((target - vTotal) / target) * 100 : 0;
+  const isLow = delta > 0.02; // manque > 20L
+  const isOk = !isLow && delta >= -0.02; // +/- 20L
 
-  const isLow = vTotal < target * 0.97;
-  const isOk = !isLow;
-  const statusLabel = isLow ? `⚠️ -${liters(deficitPct)}%` : `✅ OK`;
+  const statusLabel = isOk ? "OK" : isLow ? "Bas" : "Haut";
 
   return {
-    vTotal,
-    target,
-    delta,
-    vEau,
+    vTotal: vTotWithWater * 1000, // L
+    target: target * 1000, // L
+    delta: delta * 1000, // L
+    vEau: vEau * 1000, // L
     missing,
     deficitPct,
     isLow,
@@ -282,6 +343,7 @@ function compositionStatsFor(r: FormuleRow) {
     statusLabel,
   };
 }
+
 
 /* =========================
    UI: expand
@@ -311,8 +373,29 @@ function isOpen(r: FormuleRow) {
           <div class="h1">Formules — Composition & CMP</div>
           <span class="badge">Variante active</span>
         </div>
-        <div class="muted tiny">
-          Tri: <b>Ciment</b> → <b>Granulas</b> → <b>Adjuvant</b> • Quantités mises en avant.
+
+        <div class="meta">
+          <div class="metaLine">
+            <span class="k">P&L</span>
+            <span class="v">{{ pnlTitle }}</span>
+            <span class="sep">•</span>
+            <span class="k">Contrat</span>
+            <span class="v">{{ contractLabel }}</span>
+          </div>
+          <div class="metaLine">
+            <span class="k">Variante</span>
+            <span class="v strong">{{ variantTitle }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tright">
+        <div class="hint">
+          • CMP estimé depuis prix/t.
+          <br />
+          • Volume vérif = Σ(kg/ρ) + Eau(C×0,5) + 15L.
+          <br />
+          • Quantités mises en avant.
         </div>
       </div>
 
@@ -328,6 +411,7 @@ function isOpen(r: FormuleRow) {
       </div>
     </div>
 
+    <div v-if="delErr" class="alert error"><b>Erreur :</b> {{ delErr }}</div>
     <div v-if="store.loading" class="alert">Chargement…</div>
     <div v-else-if="store.error" class="alert error"><b>Erreur :</b> {{ store.error }}</div>
 
@@ -368,6 +452,15 @@ function isOpen(r: FormuleRow) {
               </div>
 
               <div class="right">
+                <button
+                  class="iconDanger"
+                  title="Supprimer la formule"
+                  @click.stop="deleteFormule(r.id)"
+                  :disabled="delBusy[r.id]"
+                >
+                  🗑
+                </button>
+
                 <div class="cmpBox">
                   <span class="cmpLbl">CMP</span>
                   <span class="cmpVal mono">{{ n(cmpPerM3(r)) }}</span>
@@ -376,7 +469,7 @@ function isOpen(r: FormuleRow) {
                 <template v-if="getItemsRaw(r).length">
                   <div class="pills">
                     <span class="pill mono">V <b>{{ liters(compositionStatsFor(r).vTotal) }}</b>L</span>
-                    <span class="pill" :class="{ ok: compositionStatsFor(r).isOk, low: compositionStatsFor(r).isLow }">
+                    <span class="pill" :class="compositionStatsFor(r).isOk ? 'ok' : compositionStatsFor(r).isLow ? 'bad' : 'warn'">
                       {{ compositionStatsFor(r).statusLabel }}
                     </span>
                   </div>
@@ -384,127 +477,131 @@ function isOpen(r: FormuleRow) {
               </div>
             </button>
 
-            <div v-if="isOpen(r)" class="body">
-              <template v-if="getItemsRaw(r).length">
-                <div v-if="compositionStatsFor(r).isLow" class="banner error">
-                  ⚠️ Volume <b class="mono">{{ liters(compositionStatsFor(r).vTotal) }}</b> L &lt; cible
-                  <b class="mono">{{ compositionStatsFor(r).target }}</b> L (déficit <b class="mono">{{ liters(compositionStatsFor(r).deficitPct) }}</b>%).
+            <div v-if="isOpen(r)" class="rowBody">
+              <div class="grid">
+                <div class="box">
+                  <div class="boxTitle">Composition (kg/m³)</div>
+
+                  <div v-if="compositionStatsFor(r).missing.length" class="miniErr">
+                    <b>MP non résolues</b> :
+                    <span v-for="m in compositionStatsFor(r).missing" :key="m.mpId" class="miniChip">
+                      {{ m.label }}
+                    </span>
+                  </div>
+
+                  <div class="table">
+                    <div class="thead">
+                      <div>MP</div>
+                      <div class="rightTxt">Cat.</div>
+                      <div class="rightTxt">Qty</div>
+                      <div class="rightTxt">Prix/t</div>
+                      <div class="rightTxt">Total</div>
+                    </div>
+
+                    <div
+                      v-for="it in sortedItems(r)"
+                      :key="String(it?.id ?? it?.mpId ?? it?.mp?.id ?? '')"
+                      class="trow"
+                    >
+                      <div class="mp">
+                        <span class="mpName">{{ it?.mp?.label ?? "—" }}</span>
+                        <span class="mpSub muted">{{ it?.mp?.resistance ?? "" }}</span>
+                      </div>
+                      <div class="rightTxt muted">{{ it?.mp?.categorie ?? "—" }}</div>
+                      <div class="rightTxt mono strong">{{ n(it?.qty ?? 0, 0) }}</div>
+                      <div class="rightTxt mono">{{ n(it?.mp?.prix ?? 0) }}</div>
+                      <div class="rightTxt mono strong">
+                        {{ n(((toNum(it?.qty ?? 0) / 1000) * toNum(it?.mp?.prix ?? 0))) }}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div v-else class="banner ok">
-                  ✅ Volume OK (±3%) — <b class="mono">{{ liters(compositionStatsFor(r).vTotal) }}</b> L.
+
+                <div class="box">
+                  <div class="boxTitle">Contrôle volume</div>
+                  <div class="kpis">
+                    <div class="kpi">
+                      <div class="k">Volume total</div>
+                      <div class="v mono strong">{{ liters(compositionStatsFor(r).vTotal) }} L</div>
+                    </div>
+                    <div class="kpi">
+                      <div class="k">Cible</div>
+                      <div class="v mono">{{ liters(compositionStatsFor(r).target) }} L</div>
+                    </div>
+                    <div class="kpi">
+                      <div class="k">Δ</div>
+                      <div
+                        class="v mono"
+                        :class="compositionStatsFor(r).isOk ? 'okTxt' : compositionStatsFor(r).isLow ? 'badTxt' : 'warnTxt'"
+                      >
+                        {{ liters(compositionStatsFor(r).delta) }} L
+                      </div>
+                    </div>
+                    <div class="kpi">
+                      <div class="k">Eau estimée</div>
+                      <div class="v mono">{{ liters(compositionStatsFor(r).vEau) }} L</div>
+                    </div>
+                  </div>
+
+                  <div class="muted tiny">
+                    Note : contrôle de cohérence indicatif (ρ approx).
+                  </div>
                 </div>
-
-                <div v-if="compositionStatsFor(r).missing.length" class="banner warn">
-                  MP sans ρ :
-                  <span v-for="m in compositionStatsFor(r).missing" :key="m.mpId" class="miniTag">{{ m.label }}</span>
-                </div>
-              </template>
-
-              <div class="tableWrap">
-                <table class="table">
-                  <thead>
-                    <tr>
-                      <th>MP</th>
-                      <th class="c">Cat.</th>
-                      <th class="r qtyCol">kg/m³</th>
-                      <th class="r">DH/t</th>
-                      <th class="r">DH/m³</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    <tr v-for="it in sortedItems(r)" :key="it.id">
-                      <td class="mpCell">
-                        <b class="mpName">{{ it?.mp?.label ?? "—" }}</b>
-                        <span class="mpMuted">{{ it?.mp?.fournisseur ?? "" }}</span>
-                      </td>
-
-                      <td class="c">
-                        <span class="catPill" :data-rank="catRank(it?.mp?.categorie)">
-                          {{ it?.mp?.categorie ?? "—" }}
-                        </span>
-                      </td>
-
-                      <td class="r qtyCell">
-                        <span class="qtyBig mono">{{ n(it?.qty ?? 0, 0) }}</span>
-                        <span class="qtyUnit">kg/m³</span>
-                      </td>
-
-                      <td class="r mono">{{ n(it?.mp?.prix ?? 0) }}</td>
-
-                      <td class="r mono">
-                        <b>{{ n((toNum(it?.qty ?? 0) / 1000) * toNum(it?.mp?.prix ?? 0)) }}</b>
-                      </td>
-                    </tr>
-
-                    <tr v-if="sortedItems(r).length === 0">
-                      <td colspan="5" class="muted pad">Aucune MP dans cette formule.</td>
-                    </tr>
-                  </tbody>
-
-                  <tfoot>
-                    <tr>
-                      <td colspan="4" class="tfootLbl">Total CMP (DH/m³)</td>
-                      <td class="r mono"><b>{{ n(cmpPerM3(r)) }}</b></td>
-                    </tr>
-                  </tfoot>
-                </table>
               </div>
+            </div>
+          </div>
+        </div>
 
-              <div class="note">
-                Eau (info) : <b class="mono">{{ liters(compositionStatsFor(r).vEau) }}</b> L/m³ — Formule calculée depuis la composition (kg/m³) et les prix MP (DH/t).
+        <!-- ✅ MODAL AJOUT -->
+        <div v-if="addOpen" class="modalOverlay" @click.self="addOpen = false">
+          <div class="modal">
+            <div class="modalHead">
+              <div class="modalTitle">Ajouter une formule</div>
+              <button class="x" @click="addOpen = false">✕</button>
+            </div>
+
+            <div class="modalSearch">
+              <input v-model="addQ" class="in" placeholder="Rechercher…" />
+            </div>
+
+            <div v-if="addErr" class="modalErr"><b>Erreur :</b> {{ addErr }}</div>
+
+            <div class="modalList">
+              <div
+                v-for="f in filteredCatalogue"
+                :key="String(f?.id ?? '')"
+                class="modalItem"
+                :class="isAlreadyInVariant(String(f?.id ?? '')) ? 'disabled' : ''"
+              >
+                <div class="miLeft">
+                  <div class="miTitle">
+                    <span class="miName">{{ f?.label ?? "—" }}</span>
+                    <span class="chip">{{ f?.resistance ?? "—" }}</span>
+                  </div>
+                  <div class="miSub muted">{{ f?.city ?? "—" }} • {{ f?.region ?? "—" }}</div>
+                </div>
+
+                <div class="miRight">
+                  <span v-if="isAlreadyInVariant(String(f?.id ?? ''))" class="tag">Déjà ajouté</span>
+                  <button
+                    v-else
+                    class="btnPrimary xs"
+                    :disabled="addBusy"
+                    @click="addFormule(String(f?.id ?? ''))"
+                  >
+                    Ajouter
+                  </button>
+                </div>
               </div>
+            </div>
+
+            <div class="modalFoot">
+              <button class="btn" @click="addOpen = false">Fermer</button>
             </div>
           </div>
         </div>
       </template>
     </template>
-
-    <!-- ✅ Modal Ajouter Formule -->
-    <div v-if="addOpen" class="modalWrap" @click.self="addOpen = false">
-      <div class="modal">
-        <div class="modalTop">
-          <div class="modalTitle">Ajouter une formule</div>
-          <button class="x" @click="addOpen = false">✕</button>
-        </div>
-
-        <div class="modalSearch">
-          <input v-model="addQ" class="in" placeholder="Rechercher…" />
-        </div>
-
-        <div v-if="addErr" class="modalErr"><b>Erreur :</b> {{ addErr }}</div>
-
-        <div class="modalList">
-          <button
-            v-for="f in filteredCatalogue"
-            :key="f.id"
-            class="modalItem"
-            :disabled="addBusy || isAlreadyInVariant(String(f.id))"
-            @click="addFormule(String(f.id))"
-          >
-            <div class="miMain">
-              <div class="miTitle">
-                {{ f.label ?? "—" }}
-                <span v-if="isAlreadyInVariant(String(f.id))" class="miTag">Déjà</span>
-              </div>
-              <div class="miSub">
-                {{ f.resistance ?? "—" }} • {{ f.city ?? "—" }} • {{ f.region ?? "—" }}
-              </div>
-            </div>
-
-            <div class="miRight">
-              <span class="miBtn">{{ isAlreadyInVariant(String(f.id)) ? "—" : "Ajouter" }}</span>
-            </div>
-          </button>
-
-          <div v-if="filteredCatalogue.length === 0" class="modalEmpty">Aucune formule.</div>
-        </div>
-
-        <div class="modalFoot">
-          <button class="btn xs" @click="addOpen = false">Fermer</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -534,117 +631,139 @@ function isOpen(r: FormuleRow) {
 .titleRow {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 8px;
 }
 .h1 {
-  font-size: 16px;
   font-weight: 950;
-  line-height: 1.05;
-  margin: 0;
-  color: #111827;
-}
-.h2 {
-  font-size: 12px;
-  font-weight: 950;
-  margin: 0;
-  color: #111827;
+  font-size: 14px;
 }
 .badge {
   font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
   padding: 2px 7px;
   border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fafafa;
+  color: #374151;
+  font-weight: 900;
 }
-.muted {
-  color: #6b7280;
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.metaLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
 }
-.tiny {
-  font-size: 10px;
+.k {
+  color: #6b7280;
+  font-weight: 800;
+}
+.v {
+  color: #111827;
+}
+.strong {
+  font-weight: 950;
+}
+.sep {
+  opacity: 0.5;
+}
+
+.tright {
+  display: flex;
+  align-items: flex-end;
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+.hint {
+  font-size: 10.5px;
+  color: #6b7280;
+  line-height: 1.2;
 }
 
 .topActions {
   display: flex;
   gap: 6px;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 
-/* alerts */
-.alert {
+/* buttons compact */
+.btn,
+.btnPrimary {
   border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  padding: 8px 10px;
   background: #fff;
-  color: #111827;
-  font-size: 12px;
-}
-.alert.error {
-  border-color: #ef4444;
-  background: #fff5f5;
-}
-
-/* cards */
-.card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  padding: 10px;
-}
-.card.slim {
-  padding: 8px 10px;
-}
-
-/* buttons */
-.btn {
-  border: 1px solid #d1d5db;
-  background: #fff;
+  padding: 7px 10px;
   border-radius: 12px;
-  padding: 7px 9px;
-  font-size: 11px;
-  font-weight: 950;
   cursor: pointer;
-  line-height: 1;
+  font-weight: 900;
+  font-size: 12px;
 }
 .btn:hover {
   background: #f9fafb;
 }
-.btn.xs {
+.btnPrimary {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+.btnPrimary:hover {
+  filter: brightness(1.05);
+}
+.btn.xs,
+.btnPrimary.xs {
   padding: 6px 8px;
   font-size: 11px;
 }
-.btnPrimary {
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  background: rgba(239, 246, 255, 0.9);
-  color: #1d4ed8;
-  border-radius: 12px;
-  padding: 7px 9px;
-  font-size: 11px;
-  font-weight: 950;
-  cursor: pointer;
-  line-height: 1;
+
+.alert {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 12px;
 }
-.btnPrimary:hover {
-  background: rgba(239, 246, 255, 1);
+.alert.error {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #7f1d1d;
 }
-.btnPrimary:disabled,
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.muted {
+  color: #6b7280;
+}
+.tiny {
+  font-size: 10.5px;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-/* list cards */
+/* cards */
+.card {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.card.slim {
+  padding: 8px 10px;
+}
 .cards {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.card.card {
-  padding: 0; /* for header/body separation */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.h2 {
+  font-weight: 950;
+  font-size: 12.5px;
 }
 
 /* row header ultra compact */
@@ -716,353 +835,341 @@ function isOpen(r: FormuleRow) {
   justify-content: flex-end;
   flex: 0 0 auto;
 }
+.iconDanger {
+  border: 1px solid #fee2e2;
+  background: #fff;
+  color: #b91c1c;
+  width: 30px;
+  height: 28px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+.iconDanger:hover {
+  background: #fff5f5;
+}
+.iconDanger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .cmpBox {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  padding: 5px 9px;
-  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
   border-radius: 999px;
+  border: 1px solid #e5e7eb;
   background: #fafafa;
-  line-height: 1;
 }
 .cmpLbl {
   font-size: 10px;
   color: #6b7280;
-  font-weight: 950;
+  font-weight: 900;
 }
 .cmpVal {
   font-size: 12px;
   font-weight: 950;
   color: #111827;
 }
+
+/* pills */
 .pills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: nowrap;
-}
-.pill {
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  font-size: 10.5px;
-  color: #374151;
-  font-weight: 950;
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  line-height: 1;
 }
-.pill.ok {
-  border-color: rgba(0, 122, 51, 0.55);
-  background: rgba(236, 253, 245, 0.65);
-  color: #065f46;
-}
-.pill.low {
-  border-color: rgba(239, 68, 68, 0.55);
-  background: rgba(254, 242, 242, 0.8);
-  color: #991b1b;
-}
-
-/* body compact */
-.body {
-  border-top: 1px solid #e5e7eb;
-  padding: 10px;
-}
-
-/* banners compact */
-.banner {
-  font-size: 11px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 7px 9px;
-  margin-bottom: 8px;
-}
-.banner.error {
-  border-color: #ef4444;
-  background: #fff5f5;
-}
-.banner.warn {
-  border-color: #f59e0b;
-  background: #fffbeb;
-}
-.banner.ok {
-  border-color: rgba(0, 122, 51, 0.55);
-  background: rgba(236, 253, 245, 0.65);
-  color: #065f46;
-}
-.miniTag {
-  display: inline-flex;
+.pill {
+  font-size: 10px;
   padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid #e5e7eb;
   background: #fff;
-  font-size: 10.5px;
-  margin-left: 6px;
+  font-weight: 900;
 }
-
-/* table dense */
-.tableWrap {
-  overflow: auto;
+.pill.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
 }
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
-.table th,
-.table td {
-  border-bottom: 1px solid #e5e7eb;
-  padding: 6px 7px;
-  vertical-align: middle;
-}
-.table th {
-  background: #fafafa;
-  color: #6b7280;
-  font-size: 10px;
-  padding-top: 5px;
-  padding-bottom: 5px;
-  white-space: nowrap;
-}
-.r {
-  text-align: right;
-}
-.c {
-  text-align: center;
-}
-.pad {
-  padding: 8px 0;
-}
-tfoot td {
-  background: #fafafa;
-  border-bottom: 0;
-}
-.tfootLbl {
-  color: #6b7280;
-  font-size: 10px;
-  font-weight: 950;
-}
-
-/* mp cell */
-.mpCell {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.mpName {
-  font-size: 11.5px;
-}
-.mpMuted {
-  font-size: 10.5px;
-  color: #6b7280;
-}
-
-/* qty highlight (kept prominent but compact) */
-.qtyCol {
-  width: 140px;
-}
-.qtyCell {
-  white-space: nowrap;
-}
-.qtyBig {
-  font-size: 15px;
-  font-weight: 950;
-  letter-spacing: -0.2px;
-  color: #111827;
-}
-.qtyUnit {
-  font-size: 10.5px;
-  font-weight: 950;
-  color: #6b7280;
-  margin-left: 6px;
-}
-
-/* category pill */
-.catPill {
-  display: inline-flex;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  font-size: 10.5px;
-  font-weight: 950;
-  color: #374151;
-}
-.catPill[data-rank="0"] {
-  background: #f3f4f6;
-}
-.catPill[data-rank="1"] {
+.pill.warn {
+  border-color: #fde68a;
   background: #fffbeb;
-  border-color: rgba(245, 158, 11, 0.35);
+  color: #92400e;
 }
-.catPill[data-rank="2"] {
-  background: #eff6ff;
-  border-color: rgba(59, 130, 246, 0.25);
-}
-
-/* note */
-.note {
-  margin-top: 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 8px 9px;
-  font-size: 11px;
+.pill.bad {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #7f1d1d;
 }
 
-/* misc */
-.mono {
-  font-variant-numeric: tabular-nums;
+/* row body */
+.rowBody {
+  padding: 10px;
+  border-top: 1px solid #eef2f7;
 }
-
-/* responsive */
-@media (max-width: 980px) {
-  .sub {
-    display: none;
-  }
-  .name {
-    max-width: 280px;
-  }
-  .pills {
-    display: none;
-  }
-  .qtyCol {
-    width: 120px;
-  }
-  .qtyBig {
-    font-size: 14px;
-  }
-}
-
-/* ===== Modal compact ===== */
-.modalWrap {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.35);
+.grid {
   display: grid;
-  place-items: center;
-  z-index: 9999;
-  padding: 12px;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 10px;
 }
-.modal {
-  width: min(720px, 96vw);
-  max-height: min(74vh, 760px);
-  overflow: hidden;
+@media (max-width: 980px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.box {
+  border: 1px solid #eef2f7;
+  background: #fcfcfd;
+  border-radius: 14px;
+  padding: 10px;
+}
+.boxTitle {
+  font-weight: 950;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+/* tiny warning in box */
+.miniErr {
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #7f1d1d;
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.miniChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+/* table */
+.table {
   display: flex;
   flex-direction: column;
+  gap: 6px;
 }
-.modalTop {
+.thead,
+.trow {
+  display: grid;
+  grid-template-columns: 1.4fr 0.8fr 0.6fr 0.7fr 0.7fr;
+  gap: 8px;
+  align-items: center;
+}
+.thead {
+  font-size: 10px;
+  color: #6b7280;
+  font-weight: 900;
+  padding: 0 2px 4px;
+}
+.trow {
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  padding: 7px 8px;
+  font-size: 11.5px;
+}
+.mp {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.mpName {
+  font-weight: 950;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mpSub {
+  font-size: 10px;
+}
+.rightTxt {
+  text-align: right;
+}
+
+/* kpis */
+.kpis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.kpi {
+  border: 1px solid #eef2f7;
+  border-radius: 14px;
+  background: #fff;
+  padding: 8px 10px;
+}
+.kpi .k {
+  font-size: 10px;
+  color: #6b7280;
+  font-weight: 900;
+}
+.kpi .v {
+  font-size: 12px;
+  margin-top: 2px;
+}
+.okTxt {
+  color: #166534;
+  font-weight: 950;
+}
+.warnTxt {
+  color: #92400e;
+  font-weight: 950;
+}
+.badTxt {
+  color: #7f1d1d;
+  font-weight: 950;
+}
+
+/* modal */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 50;
+}
+.modal {
+  width: min(900px, 96vw);
+  max-height: 82vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 18px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+}
+.modalHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #eef2f7;
 }
 .modalTitle {
-  font-size: 12.5px;
   font-weight: 950;
+  font-size: 13px;
 }
 .x {
   border: 1px solid #e5e7eb;
   background: #fff;
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
+  width: 34px;
+  height: 32px;
+  border-radius: 12px;
   cursor: pointer;
-  font-weight: 950;
+  font-weight: 900;
+}
+.x:hover {
+  background: #f9fafb;
 }
 .modalSearch {
-  padding: 9px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 14px;
+  border-bottom: 1px solid #eef2f7;
 }
 .in {
   width: 100%;
   border: 1px solid #e5e7eb;
-  background: #fafafa;
   border-radius: 12px;
-  padding: 9px 10px;
-  font-size: 12px;
-  font-weight: 900;
+  padding: 10px 12px;
   outline: none;
+  font-size: 12px;
+}
+.in:focus {
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.12);
 }
 .modalErr {
-  margin: 10px 12px 0;
-  padding: 9px 10px;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  background: rgba(254, 242, 242, 0.9);
-  border-radius: 12px;
+  margin: 10px 14px 0;
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #7f1d1d;
+  border-radius: 14px;
+  padding: 10px 12px;
   font-size: 12px;
 }
 .modalList {
-  padding: 10px 12px;
-  overflow: auto;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 .modalItem {
-  border: 1px solid #e5e7eb;
-  background: #fff;
+  border: 1px solid #eef2f7;
   border-radius: 14px;
-  padding: 9px 10px;
-  cursor: pointer;
-  text-align: left;
+  padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
+  background: #fff;
 }
 .modalItem:hover {
-  background: #f9fafb;
+  background: #fcfcfd;
 }
-.modalItem:disabled {
-  cursor: not-allowed;
+.modalItem.disabled {
   opacity: 0.6;
 }
+.miLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
 .miTitle {
-  font-size: 12px;
-  font-weight: 950;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
-.miTag {
-  font-size: 10px;
+.miName {
   font-weight: 950;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid rgba(107, 114, 128, 0.25);
-  background: rgba(243, 244, 246, 0.9);
-  color: #374151;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
 }
 .miSub {
-  margin-top: 2px;
-  font-size: 10.5px;
-  color: #6b7280;
-}
-.miBtn {
   font-size: 11px;
-  font-weight: 950;
-  color: #1d4ed8;
 }
-.modalEmpty {
-  padding: 12px;
-  text-align: center;
+.miRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.tag {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fafafa;
   color: #6b7280;
-  font-size: 12px;
-  border: 1px dashed #e5e7eb;
-  border-radius: 14px;
+  font-weight: 900;
 }
 .modalFoot {
-  border-top: 1px solid #e5e7eb;
-  padding: 9px 12px;
+  border-top: 1px solid #eef2f7;
+  padding: 12px 14px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 </style>

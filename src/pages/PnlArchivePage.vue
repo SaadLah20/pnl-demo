@@ -66,18 +66,50 @@ const variantsOfCurrentContract = computed<any[]>(() => contract.value?.variants
    NAV (Pnl / Contract / Variant)
 ========================= */
 function onChangePnl(pnlId: string) {
-  store.setActivePnl(pnlId);
+  const id = String(pnlId ?? "").trim();
+  if (!id) return;
+
+  // ✅ ton store n'a plus setActivePnl -> on patch l'état
+  store.$patch({ activePnlId: id });
+
+  // ✅ et on recale une variante active cohérente (1ère variante du 1er contrat)
+  const p = store.pnls.find((x: any) => String(x?.id) === id);
+  const firstVar =
+    p?.contracts?.[0]?.variants?.[0]?.id ??
+    p?.contracts?.[0]?.variants?.[0]?.variantId ?? // (fallback si ton shape diffère)
+    null;
+
+  if (firstVar) {
+store.$patch({ activeVariantId: String(firstVar) });
+store.$patch({ activePnlId: String(firstVar) });
+  } else {
+    // aucune variante dispo -> on nettoie l'actif
+    store.$patch({ activeVariantId: null });
+  }
 }
 
 function onChangeContract(contractId: string) {
-  const c = contracts.value.find((x) => x.id === contractId);
+  const cid = String(contractId ?? "").trim();
+  const c = (contracts.value ?? []).find((x: any) => String(x?.id ?? "") === cid);
+
   const firstVar = c?.variants?.[0]?.id ?? null;
-  if (firstVar) store.setActiveVariant(firstVar);
+
+  if (firstVar) {
+store.$patch({ activeVariantId: String(firstVar) });
+store.$patch({ activePnlId: String(firstVar) });
+  } else {
+    // ✅ évite de garder une variante active d’un autre contrat
+    store.$patch({ activeVariantId: null });
+  }
 }
 
 function onChangeVariant(variantId: string) {
-  store.setActiveVariant(variantId);
+  const vid = String(variantId ?? "").trim();
+  if (!vid) return;
+store.$patch({ activeVariantId: String(vid) });
+store.$patch({ activePnlId: String(vid) });
 }
+
 
 /* =========================
    MP VARIANTE (read-only)
@@ -606,12 +638,17 @@ const formulesCatalogue = computed<any[]>(() => ((store as any).formulesCatalogu
 async function addFormuleToVariant() {
   err.value = null;
   if (!variant.value) return;
-  const formuleId = selectedFormuleId.value;
+
+  const formuleId = String(selectedFormuleId.value ?? "").trim();
   if (!formuleId) return;
+
+  const variantId = String((variant.value as any)?.id ?? store.activeVariantId ?? "").trim();
+  if (!variantId) return;
 
   saving.addFormule = true;
   try {
-    await store.addFormuleToActiveVariant(formuleId);
+    // ✅ nouveau nom
+    await (store as any).addFormuleToVariant(variantId, formuleId);
     selectedFormuleId.value = "";
   } catch (e: any) {
     setErr(e);
@@ -619,15 +656,22 @@ async function addFormuleToVariant() {
     saving.addFormule = false;
   }
 }
+
 async function deleteFormuleFromVariant(variantFormuleId: string) {
   err.value = null;
   if (!variant.value) return;
+
+  const id = String(variantFormuleId ?? "").trim();
+  if (!id) return;
+
   try {
-    await store.removeVariantFormule(variantFormuleId);
+    // ✅ nouveau nom
+    await (store as any).deleteVariantFormule(id);
   } catch (e: any) {
     setErr(e);
   }
 }
+
 </script>
 
 <template>
