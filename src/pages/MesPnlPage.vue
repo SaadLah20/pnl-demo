@@ -50,10 +50,64 @@ function persistActive(pnlId: string | null, variantId: string | null) {
 }
 
 function setActiveIds(pnlId: string | null, contractId: string | null, variantId: string | null) {
+  // IMPORTANT: on set les 3 IDs (si dispo) pour que tout se recalcul correctement
   if (pnlId && (store as any).setActivePnl) (store as any).setActivePnl(String(pnlId));
   if (contractId && (store as any).setActiveContract) (store as any).setActiveContract(String(contractId));
   if (variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(String(variantId));
   persistActive(pnlId, variantId);
+}
+
+/* =========================================================
+   ✅ INITIAL SELECTION
+   - priorité: variante sauvegardée
+   - sinon: dernier contrat/variante du pnl sauvegardé
+   - sinon: dernière variante globale (par createdAt si dispo)
+========================================================= */
+function toTs(d: any): number {
+  const t = new Date(d ?? 0).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function pickLastVariantInPnl(p: any) {
+  if (!p) return null;
+  for (const c of p.contracts ?? []) {
+    const vs = c.variants ?? [];
+    if (vs.length) {
+      const last = vs[vs.length - 1];
+      return { pnlId: String(p.id), contractId: String(c.id), variantId: String(last.id) };
+    }
+  }
+  return { pnlId: String(p.id), contractId: null, variantId: null };
+}
+
+function pickLatestVariantGlobal() {
+  let best: { pnlId: string; contractId: string; variantId: string; ts: number } | null = null;
+
+  for (const p of pnls.value) {
+    for (const c of p.contracts ?? []) {
+      for (const v of c.variants ?? []) {
+        const ts = toTs(v?.createdAt ?? v?.updatedAt ?? 0);
+        const cand = { pnlId: String(p.id), contractId: String(c.id), variantId: String(v.id), ts };
+
+        if (!best) {
+          best = cand;
+          continue;
+        }
+
+        // si timestamps => max
+        if (cand.ts && cand.ts > best.ts) {
+          best = cand;
+          continue;
+        }
+
+        // fallback si pas de dates: on prend le "dernier rencontré" (ordre API)
+        if (!cand.ts && !best.ts) best = cand;
+      }
+    }
+  }
+
+  if (!best) return null;
+  return { pnlId: best.pnlId, contractId: best.contractId, variantId: best.variantId };
 }
 
 function resolveInitialSelection() {
@@ -70,39 +124,29 @@ function resolveInitialSelection() {
     }
   }
 
-  // 2) pnl sauvegardé + dernière variante
+  // 2) pnl sauvegardé + dernière variante dedans
   if (savedPnlId) {
     const p = pnls.value.find((x: any) => String(x.id) === String(savedPnlId));
-    if (p) {
-      for (const c of p.contracts ?? []) {
-        const vs = c.variants ?? [];
-        if (vs.length) {
-          const last = vs[vs.length - 1];
-          return { pnlId: String(p.id), contractId: String(c.id), variantId: String(last.id) };
-        }
-      }
-      return { pnlId: String(p.id), contractId: null, variantId: null };
-    }
+    const picked = pickLastVariantInPnl(p);
+    if (picked) return picked;
   }
 
-  // 3) fallback premier pnl + dernière variante
+  // 3) fallback: dernière variante globale (de préférence par date)
+  const latest = pickLatestVariantGlobal();
+  if (latest) return latest;
+
+  // 4) fallback ultime: premier pnl
   const p0 = pnls.value[0];
   if (!p0) return null;
-
-  for (const c of p0.contracts ?? []) {
-    const vs = c.variants ?? [];
-    if (vs.length) {
-      const last = vs[vs.length - 1];
-      return { pnlId: String(p0.id), contractId: String(c.id), variantId: String(last.id) };
-    }
-  }
-  return { pnlId: String(p0.id), contractId: null, variantId: null };
+  return pickLastVariantInPnl(p0);
 }
 
 async function ensureInitialActive() {
   await store.loadPnls?.();
+
   const sel = resolveInitialSelection();
   if (!sel) return;
+
   if (sel.pnlId) openPnl[sel.pnlId] = true;
   setActiveIds(sel.pnlId, sel.contractId, sel.variantId);
 }
@@ -229,6 +273,7 @@ const activeContractId = computed(() => {
 ========================================================= */
 const q = ref(""); // search P&L only
 const openPnl = reactive<Record<string, boolean>>({});
+
 function isOpenPnl(id: string) {
   if (openPnl[id] === undefined) openPnl[id] = false;
   return openPnl[id];
@@ -358,6 +403,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
    Actions
 ========================================================= */
 function openVariant(pnlId: string, contractId: string, variantId: string) {
+  // ✅ rend la variante active + ouvre le PNL dans la liste
   openPnl[String(pnlId)] = true;
   setActiveIds(String(pnlId), String(contractId), String(variantId));
 }
@@ -373,7 +419,6 @@ async function deleteVariant(variantId: string) {
     alert(e?.message ?? "Suppression impossible");
   }
 }
-
 
 async function deleteContract(contractId: string) {
   if (!confirm("Supprimer définitivement ce contrat et toutes ses variantes ?")) return;
@@ -586,7 +631,7 @@ async function saveEdit() {
             client: draft.client,
             city: draft.city,
             status: draft.status,
-            model: draft.model, // peut être vide => backend default si nécessaire
+            model: draft.model,
           }),
         });
 
@@ -754,7 +799,6 @@ async function afterVariantCreated(contractId: string, newVariantId: string) {
 }
 
 async function handleCreateSave(payload: VariantCreateZeroPayload) {
-  // ZERO => create directly
   const created = await apiJson(`/variants`, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -767,7 +811,6 @@ async function handleCreateSave(payload: VariantCreateZeroPayload) {
 }
 
 function handleCreateNext(payload: VariantCreateNextPayload) {
-  // INITIEE / COMPOSEE => go wizard
   createBase.contractId = payload.contractId;
   createBase.title = payload.title;
   createBase.description = payload.description;
@@ -780,7 +823,6 @@ function handleCreateNext(payload: VariantCreateNextPayload) {
 }
 
 async function handleSaveInitiee(payload: InitieePayload) {
-  // send create request with initiee payload
   const body = {
     contractId: createBase.contractId,
     title: createBase.title,
@@ -998,6 +1040,7 @@ async function handleSaveComposee(payload: ComposePayload) {
                 </div>
 
                 <div class="actions">
+                  <!-- ✅ Ouvrir => rend active (fix) -->
                   <button class="btn btn--primary btn--mini" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
                   <button class="btn btn--soft" @click="openView('variant', v)">Visualiser</button>
                   <button class="btn btn--soft" @click="openEdit('variant', v)">Modifier</button>
@@ -1129,7 +1172,11 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <div class="formGrid sectionForm">
                   <div class="f">
                     <div class="k">Référence (auto)</div>
-                    <input class="in in--disabled" :value="draft.ref || (isCreate ? 'Générée automatiquement' : '-')" disabled />
+                    <input
+                      class="in in--disabled"
+                      :value="draft.ref || (isCreate ? 'Générée automatiquement' : '-')"
+                      disabled
+                    />
                   </div>
                   <div class="f">
                     <div class="k">Durée (mois)</div>
@@ -1147,49 +1194,57 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="sectionBox">
                 <div class="sectionTitle">Responsabilités</div>
                 <div class="formGrid sectionForm">
-                  <div class="f"><div class="k">Cab</div>
+                  <div class="f">
+                    <div class="k">Cab</div>
                     <select class="in" v-model="draft.cab">
                       <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Installation</div>
+                  <div class="f">
+                    <div class="k">Installation</div>
                     <select class="in" v-model="draft.installation">
                       <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Génie civil</div>
+                  <div class="f">
+                    <div class="k">Génie civil</div>
                     <select class="in" v-model="draft.genieCivil">
                       <option v-for="o in GENIE_CIVIL_4" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Transport jusqu’au chantier</div>
+                  <div class="f">
+                    <div class="k">Transport jusqu’au chantier</div>
                     <select class="in" v-model="draft.transport">
                       <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Terrain</div>
+                  <div class="f">
+                    <div class="k">Terrain</div>
                     <select class="in" v-model="draft.terrain">
                       <option v-for="o in TERRAIN_4" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Matière première</div>
+                  <div class="f">
+                    <div class="k">Matière première</div>
                     <select class="in" v-model="draft.matierePremiere">
                       <option v-for="o in MATIERE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Maintenance</div>
+                  <div class="f">
+                    <div class="k">Maintenance</div>
                     <select class="in" v-model="draft.maintenance">
                       <option v-for="o in MAINTENANCE_4" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
 
-                  <div class="f"><div class="k">Chargeuse</div>
+                  <div class="f">
+                    <div class="k">Chargeuse</div>
                     <select class="in" v-model="draft.chargeuse">
                       <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
@@ -1200,12 +1255,14 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="sectionBox">
                 <div class="sectionTitle">Eau</div>
                 <div class="formGrid sectionForm">
-                  <div class="f"><div class="k">Branchement Eau</div>
+                  <div class="f">
+                    <div class="k">Branchement Eau</div>
                     <select class="in" v-model="draft.branchementEau">
                       <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
-                  <div class="f"><div class="k">Consommation Eau</div>
+                  <div class="f">
+                    <div class="k">Consommation Eau</div>
                     <select class="in" v-model="draft.consoEau">
                       <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
@@ -1216,12 +1273,14 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="sectionBox">
                 <div class="sectionTitle">Électricité</div>
                 <div class="formGrid sectionForm">
-                  <div class="f"><div class="k">Branchement Électricité</div>
+                  <div class="f">
+                    <div class="k">Branchement Électricité</div>
                     <select class="in" v-model="draft.branchementElec">
                       <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
                   </div>
-                  <div class="f"><div class="k">Consommation Électricité</div>
+                  <div class="f">
+                    <div class="k">Consommation Électricité</div>
                     <select class="in" v-model="draft.consoElec">
                       <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
                     </select>
@@ -1232,13 +1291,16 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="sectionBox">
                 <div class="sectionTitle">Paramètres financiers</div>
                 <div class="formGrid sectionForm">
-                  <div class="f"><div class="k">Prix dimanches / fériés</div>
+                  <div class="f">
+                    <div class="k">Prix dimanches / fériés</div>
                     <input class="in r" type="number" step="0.01" v-model.number="draft.sundayPrice" />
                   </div>
-                  <div class="f"><div class="k">Forfait pénalité délai</div>
+                  <div class="f">
+                    <div class="k">Forfait pénalité délai</div>
                     <input class="in r" type="number" step="0.01" v-model.number="draft.delayPenalty" />
                   </div>
-                  <div class="f"><div class="k">Location Chiller</div>
+                  <div class="f">
+                    <div class="k">Location Chiller</div>
                     <input class="in r" type="number" step="0.01" v-model.number="draft.chillerRent" />
                   </div>
                 </div>
@@ -1270,7 +1332,7 @@ async function handleSaveComposee(payload: ComposePayload) {
           <div class="modalFoot">
             <button class="btn btn--ghost" :disabled="editBusy" @click="closeEdit()">Annuler</button>
             <button class="btn btn--primary" :disabled="editBusy" @click="saveEdit()">
-              {{ editBusy ? "Enregistrement…" : (isCreate ? "Créer" : "Enregistrer") }}
+              {{ editBusy ? "Enregistrement…" : isCreate ? "Créer" : "Enregistrer" }}
             </button>
           </div>
         </div>
