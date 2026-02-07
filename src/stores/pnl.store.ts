@@ -140,6 +140,53 @@ activeHeaderKPIs(): any {
   },
 
   actions: {
+
+    /* =========================
+       ACTIVE SELECTION (UI)
+       - utilisé par MesPnlPage.vue
+       - permet à "Ouvrir" + sélection initiale de fonctionner
+    ========================= */
+    setActivePnl(id: string | null) {
+      this.activePnlId = id ? String(id) : null;
+
+      // Si on change de P&L, on garde la variante seulement si elle appartient encore à ce P&L
+      if (this.activeVariantId && this.activePnlId) {
+        const pnl = this.pnls.find((p: any) => String(p?.id ?? "") === String(this.activePnlId));
+        const stillThere =
+          !!pnl &&
+          (pnl.contracts ?? []).some((c: any) =>
+            (c.variants ?? []).some((v: any) => String(v?.id ?? "") === String(this.activeVariantId)),
+          );
+        if (!stillThere) this.activeVariantId = null;
+      }
+    },
+
+    setActiveVariant(id: string | null) {
+      this.activeVariantId = id ? String(id) : null;
+
+      // Si une variante est sélectionnée, on force le bon P&L actif (robuste)
+      if (this.activeVariantId) {
+        for (const p of this.pnls ?? []) {
+          for (const c of (p as any)?.contracts ?? []) {
+            const hit = (c?.variants ?? []).some(
+              (v: any) => String(v?.id ?? "") === String(this.activeVariantId),
+            );
+            if (hit) {
+              this.activePnlId = String((p as any)?.id ?? null);
+              return;
+            }
+          }
+        }
+      }
+    },
+
+    // MesPnlPage appelle setActiveContract, mais dans notre store
+    // la relation "contrat actif" est déduite via activeVariantId.
+    // On laisse cette action pour compatibilité.
+    setActiveContract(_id: string | null) {
+      /* no-op */
+    },
+
     // -------------------------
     // internal helper
     // -------------------------
