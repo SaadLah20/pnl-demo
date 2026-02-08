@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionGeneralizeModal from "@/components/SectionGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -57,7 +58,7 @@ watch(
 
     // Si la variante actuelle n'a pas encore les relations deep
     const v = store.activeVariant as any;
-    if (v && Array.isArray(v.variantFormules)) return;
+    if (v && Array.isArray(v.formules?.items)) return;
 
     // ✅ appelle l'action existante dans ton store
     if ((store as any).loadVariantDeep) {
@@ -66,7 +67,6 @@ watch(
   },
   { immediate: true }
 );
-
 
 /* =========================
    ROWS (variant formules)
@@ -78,16 +78,17 @@ type FormuleRow = {
   resistance: string;
   city: string;
   region: string;
+  volumeM3: number;
+  momd: number;
+  cmpOverride: number | null;
   raw: any;
 };
 
 const rows = computed<FormuleRow[]>(() => {
   const v: any = variant.value ?? null;
 
-  // ✅ FULL shape: sectionFormules.items (variantFormule[])
   const items =
     v?.formules?.items ??
-    // ✅ fallback: direct relation (si tu l’as quelque part)
     v?.variantFormules ??
     [];
 
@@ -96,18 +97,19 @@ const rows = computed<FormuleRow[]>(() => {
   return items.map((it: any) => {
     const f = it?.formule ?? {};
     return {
-      id: String(it?.id ?? ""), // variantFormuleId
+      id: String(it?.id ?? ""),
       formuleId: String(it?.formuleId ?? f?.id ?? ""),
       label: String(f?.label ?? ""),
       resistance: String(f?.resistance ?? ""),
       city: String(f?.city ?? ""),
       region: String(f?.region ?? ""),
+      volumeM3: toNum(it?.volumeM3 ?? 0),
+      momd: toNum(it?.momd ?? 0),
+      cmpOverride: it?.cmpOverride == null ? null : toNum(it?.cmpOverride),
       raw: it,
     };
   });
 });
-
-
 
 function getItemsRaw(r: FormuleRow): any[] {
   return r?.raw?.formule?.items ?? [];
@@ -134,7 +136,6 @@ const filteredCatalogue = computed(() => {
         return blob.includes(q);
       });
 
-  // on garde l’affichage complet, mais on marque "déjà ajouté"
   return out;
 });
 
@@ -149,11 +150,10 @@ async function addFormule(formuleId: string) {
   addBusy.value = true;
   addErr.value = null;
   try {
-const variantId = String((variant.value as any)?.id ?? store.activeVariantId ?? "").trim();
-if (!variantId) return;
+    const variantId = String((variant.value as any)?.id ?? store.activeVariantId ?? "").trim();
+    if (!variantId) return;
 
-await (store as any).addFormuleToVariant(variantId, String(formuleId));
-    // garde la popup ouverte (tu peux la fermer si tu veux)
+    await (store as any).addFormuleToVariant(variantId, String(formuleId));
   } catch (e: any) {
     addErr.value = e?.message ?? String(e);
   } finally {
@@ -163,7 +163,6 @@ await (store as any).addFormuleToVariant(variantId, String(formuleId));
 
 /* =========================
    ✅ SUPPRIMER FORMULE (variant)
-   - basé sur PnlArchivePage (store.removeVariantFormule)
 ========================= */
 const delBusy = reactive<Record<string, boolean>>({});
 const delErr = ref<string | null>(null);
@@ -186,7 +185,6 @@ async function deleteFormule(variantFormuleId: string) {
     delBusy[vfId] = false;
   }
 }
-
 
 /* =========================
    Sorting MP: Ciment -> Granulas -> Adjuvant -> Others
@@ -228,7 +226,7 @@ function sortedItems(r: FormuleRow) {
 }
 
 /* =========================
-   CMP (composition)
+   CMP (composition) ✅ même formule que FormulesPage (DH/t)
 ========================= */
 function cmpPerM3(r: FormuleRow): number {
   let total = 0;
@@ -314,17 +312,14 @@ function compositionStatsFor(r: FormuleRow) {
     const cat = normKey(mp?.categorie);
     if (cat === "ciment") mCiment += qty;
 
-    // v = m / rho  (kg / (t/m3) ??? ici on approx: rho en t/m3 -> kg/(t/m3)= (kg/1000)/rho m3
     vTotal += (qty / 1000) / rho;
   }
 
-  // eau approx: 0.5 * ciment + 15L
   const vEau = (mCiment * 0.5 + 15) / 1000; // m3
   const target = 1; // m3
   const vTotWithWater = vTotal + vEau;
 
   const delta = target - vTotWithWater;
-  const deficitPct = (delta / target) * 100;
 
   const isLow = delta > 0.02; // manque > 20L
   const isOk = !isLow && delta >= -0.02; // +/- 20L
@@ -332,18 +327,16 @@ function compositionStatsFor(r: FormuleRow) {
   const statusLabel = isOk ? "OK" : isLow ? "Bas" : "Haut";
 
   return {
-    vTotal: vTotWithWater * 1000, // L
-    target: target * 1000, // L
-    delta: delta * 1000, // L
-    vEau: vEau * 1000, // L
+    vTotal: vTotWithWater * 1000,
+    target: target * 1000,
+    delta: delta * 1000,
+    vEau: vEau * 1000,
     missing,
-    deficitPct,
     isLow,
     isOk,
     statusLabel,
   };
 }
-
 
 /* =========================
    UI: expand
@@ -361,6 +354,108 @@ function closeAll() {
 }
 function isOpen(r: FormuleRow) {
   return !!open[r.id];
+}
+
+/* =========================
+   ✅ GENERALISER SECTION (Formules)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+function getAllVariantsOfActivePnl(): Array<{ id: string; raw: any }> {
+  const p = store.activePnl;
+  if (!p) return [];
+  const out: Array<{ id: string; raw: any }> = [];
+  for (const c of p.contracts ?? []) {
+    for (const v of c.variants ?? []) {
+      const id = String(v?.id ?? "");
+      if (!id) continue;
+      out.push({ id, raw: v });
+    }
+  }
+  return out;
+}
+
+function getVariantById(variantId: string): any | null {
+  const list = getAllVariantsOfActivePnl();
+  return list.find((x) => x.id === String(variantId))?.raw ?? null;
+}
+
+async function generalizeFormulesTo(variantIds: string[]) {
+  const sourceVariantId = String(store.activeVariantId ?? "").trim();
+  if (!sourceVariantId) return;
+
+  // source snapshot: formuleId + volumeM3
+  const src = rows.value
+    .filter((r) => r.formuleId)
+    .map((r) => ({
+      formuleId: String(r.formuleId),
+      volumeM3: toNum(r.volumeM3),
+      momd: toNum((r as any).momd ?? 0),
+      cmpOverride: (r as any).cmpOverride === undefined ? undefined : (r as any).cmpOverride,
+    }));
+
+  genErr.value = null;
+  genBusy.value = true;
+
+  try {
+    for (const targetIdRaw of variantIds) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceVariantId) continue;
+
+      // 1) delete existing target items
+      const target = getVariantById(targetId) as any;
+      const targetItems = (target?.formules?.items ?? target?.variantFormules ?? []) as any[];
+      if (Array.isArray(targetItems) && targetItems.length) {
+        for (const it of targetItems) {
+          const vfId = String(it?.id ?? "").trim();
+          if (!vfId) continue;
+          await (store as any).deleteVariantFormule(targetId, vfId);
+        }
+      }
+
+      // 2) add all formuleIds + restore volumeM3
+      for (const s of src) {
+        await (store as any).addFormuleToVariant(targetId, s.formuleId);
+
+        // after add, find the created variantFormule by formuleId, then patch volumeM3
+        const refreshed = getVariantById(targetId) as any;
+        const its = (refreshed?.formules?.items ?? refreshed?.variantFormules ?? []) as any[];
+        const created = Array.isArray(its) ? its.find((x: any) => String(x?.formuleId ?? x?.formule?.id ?? "") === s.formuleId) : null;
+
+        const createdId = String(created?.id ?? "").trim();
+        if (createdId) {
+          const patch: any = {};
+          if (s.volumeM3 != null) patch.volumeM3 = Number(s.volumeM3);
+          if (s.momd != null) patch.momd = Number(s.momd);
+          if (s.cmpOverride !== undefined) patch.cmpOverride = s.cmpOverride;
+          if (Object.keys(patch).length) {
+            await (store as any).updateVariantFormule(targetId, createdId, patch);
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const ok = window.confirm(
+    payload.mode === "ALL"
+      ? "Généraliser les Formules sur TOUTES les variantes de ce P&L ?"
+      : `Généraliser les Formules sur ${ids.length} variante(s) sélectionnée(s) ?`
+  );
+  if (!ok) return;
+
+  await generalizeFormulesTo(ids);
+  if (!genErr.value) genOpen.value = false;
 }
 </script>
 
@@ -394,15 +489,17 @@ function isOpen(r: FormuleRow) {
           • CMP estimé depuis prix/t.
           <br />
           • Volume vérif = Σ(kg/ρ) + Eau(C×0,5) + 15L.
-          <br />
-          • Quantités mises en avant.
         </div>
       </div>
 
       <div class="topActions">
-        <!-- ✅ seul ajout demandé -->
         <button class="btnPrimary" @click="addOpen = true" :disabled="!variant || addBusy">
           + Ajouter
+        </button>
+
+        <!-- ✅ NOUVEAU : Généraliser -->
+        <button class="btn" @click="genOpen = true" :disabled="!variant || genBusy">
+          Généraliser
         </button>
 
         <button class="btn" @click="store.loadPnls()">Recharger</button>
@@ -412,12 +509,13 @@ function isOpen(r: FormuleRow) {
     </div>
 
     <div v-if="delErr" class="alert error"><b>Erreur :</b> {{ delErr }}</div>
+    <div v-if="genErr" class="alert error"><b>Généralisation :</b> {{ genErr }}</div>
+    <div v-if="genBusy" class="alert"><b>Généralisation :</b> traitement…</div>
+
     <div v-if="store.loading" class="alert">Chargement…</div>
     <div v-else-if="store.error" class="alert error"><b>Erreur :</b> {{ store.error }}</div>
 
     <template v-else>
-      <!-- ✅ Meta supprimé pour hauteur minimale -->
-
       <div class="card" v-if="!variant">
         <div class="muted">Aucune variante active. Sélectionne une variante depuis le Dashboard.</div>
       </div>
@@ -600,6 +698,15 @@ function isOpen(r: FormuleRow) {
             </div>
           </div>
         </div>
+
+        <!-- ✅ MODAL GENERALISATION -->
+        <SectionGeneralizeModal
+          v-model="genOpen"
+          section-label="Formules"
+          :source-variant-id="String(store.activeVariantId ?? '') || null"
+          @apply="onApplyGeneralize"
+          @close="() => {}"
+        />
       </template>
     </template>
   </div>
@@ -1036,7 +1143,7 @@ function isOpen(r: FormuleRow) {
   font-weight: 950;
 }
 
-/* modal */
+/* modal (ajout) */
 .modalOverlay {
   position: fixed;
   inset: 0;
