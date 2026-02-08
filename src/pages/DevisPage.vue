@@ -22,11 +22,17 @@ function n(x: any): number {
 }
 function money2(v: any) {
   const x = n(v);
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(x);
 }
 function money0(v: any) {
   const x = n(v);
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(x);
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(x);
 }
 function int(v: any) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n(v));
@@ -76,6 +82,7 @@ const draft = reactive({
 function rowKey(r: any): string {
   return String(r?.id ?? r?.variantFormuleId ?? r?.formuleId ?? r?.formule?.id ?? "");
 }
+
 function getSurcharge(r: any): number {
   const k = rowKey(r);
   return n(draft.surcharges[k] ?? 0);
@@ -86,7 +93,9 @@ function setSurcharge(r: any, v: any) {
 }
 
 /* =========================
-   LOAD persisted devis.surcharges (if exists)
+   LOAD persisted devis.surcharges
+   - accepte: devis.surcharges (string|object)
+   - ou devis.meta / devis.data (compat)
 ========================= */
 function loadPersisted() {
   draft.surcharges = {};
@@ -100,7 +109,9 @@ function loadPersisted() {
     const obj = typeof raw === "object" ? raw : JSON.parse(String(raw));
     const map = (obj?.surcharges ?? obj) as any;
     if (map && typeof map === "object") {
-      for (const [k, val] of Object.entries(map)) draft.surcharges[String(k)] = n(val);
+      for (const [k, val] of Object.entries(map)) {
+        draft.surcharges[String(k)] = n(val);
+      }
     }
   } catch {
     // ignore
@@ -147,6 +158,7 @@ function pvBaseM3(r: any): number {
 
 /* =========================
    IMPACT MAJORATIONS (/m3)
+   - delta CA (headerKpis) / volume
 ========================= */
 const impactMajorationM3 = computed(() => {
   const v = variant.value;
@@ -155,6 +167,7 @@ const impactMajorationM3 = computed(() => {
 
   const d = dureeMois.value;
 
+  // BASE = majorations null
   const vBase = {
     ...v,
     autresCouts: {
@@ -181,6 +194,7 @@ function pvPondereM3(r: any): number {
   const base = withMajorations.value ? pvWithMajorationM3(r) : pvBaseM3(r);
   return roundTo5(base);
 }
+
 function pvDefinitifM3(r: any): number {
   return pvPondereM3(r) + getSurcharge(r);
 }
@@ -233,13 +247,16 @@ async function saveDevis() {
 
   busy.save = true;
   error.value = null;
+
   try {
     if (draft.applyToDashboardOnSave) {
       (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
       withDevisSurcharge.value = true;
     }
 
-    await (store as any).saveDevis(String(v.id), { surcharges: { ...draft.surcharges } });
+    await (store as any).saveDevis(String(v.id), {
+      surcharges: { ...draft.surcharges },
+    });
 
     // sécurité UI (recharge la hiérarchie)
     await (store as any).loadPnls();
@@ -262,6 +279,7 @@ function resetSurcharges() {
     <div class="top">
       <div class="tleft">
         <div class="title">Devis</div>
+
         <div class="subline">
           <span class="muted">Variante :</span>
           <b class="ell">{{ variant?.title ?? "—" }}</b>
@@ -283,7 +301,9 @@ function resetSurcharges() {
           <ArrowPathIcon class="actIc" />
         </button>
 
-        <button class="btn" @click="resetSurcharges" :disabled="busy.save">Réinitialiser</button>
+        <button class="btn" @click="resetSurcharges" :disabled="busy.save">
+          Réinitialiser
+        </button>
 
         <button class="btn" @click="applyToDashboard" :disabled="busy.apply">
           Appliquer au dashboard
@@ -330,11 +350,7 @@ function resetSurcharges() {
     <!-- GRID "TABLE" (no horizontal scroll) -->
     <div class="card cardTable">
       <!-- header -->
-      <div
-        class="gHead theadSticky"
-        :class="withMajorations ? 'colsMaj' : 'colsBase'"
-        role="row"
-      >
+      <div class="gHead theadSticky" :class="withMajorations ? 'colsMaj' : 'colsBase'" role="row">
         <div class="hCell">Désignation</div>
         <div class="hCell right">CMP</div>
         <div class="hCell right">MOMD</div>
@@ -349,7 +365,9 @@ function resetSurcharges() {
 
       <!-- body -->
       <div class="gBody">
-        <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
+        <div v-if="rows.length === 0" class="emptyRow">
+          Aucune formule dans cette variante.
+        </div>
 
         <div
           v-for="r in rows"
@@ -359,7 +377,7 @@ function resetSurcharges() {
           role="row"
         >
           <!-- designation -->
-          <div class="cell cellMain">
+          <div class="cell cellMain" data-label="Désignation">
             <div class="mainLine">
               <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
 
@@ -381,17 +399,17 @@ function resetSurcharges() {
           </div>
 
           <!-- CMP -->
-          <div class="cell right">
+          <div class="cell right" data-label="CMP">
             <div class="value mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</div>
           </div>
 
           <!-- MOMD -->
-          <div class="cell right">
+          <div class="cell right" data-label="MOMD">
             <div class="value mono">{{ money2(r?.momd) }}</div>
           </div>
 
           <!-- PV base -->
-          <div class="cell right">
+          <div class="cell right" data-label="Prix calculé">
             <div class="badgeWrap">
               <span class="priceBadge">
                 <span class="mono">{{ money2(pvBaseM3(r)) }}</span>
@@ -402,7 +420,7 @@ function resetSurcharges() {
           </div>
 
           <!-- PV majoré -->
-          <div v-if="withMajorations" class="cell right">
+          <div v-if="withMajorations" class="cell right" data-label="Prix avec majorations">
             <div class="badgeWrap">
               <span class="priceBadge maj">
                 <span class="mono">{{ money2(pvWithMajorationM3(r)) }}</span>
@@ -413,12 +431,12 @@ function resetSurcharges() {
           </div>
 
           <!-- pondéré -->
-          <div class="cell right">
+          <div class="cell right" data-label="Prix pondéré">
             <span class="pillStrong mono">{{ money0(pvPondereM3(r)) }}</span>
           </div>
 
           <!-- surcharge -->
-          <div class="cell right">
+          <div class="cell right" data-label="Surcharge">
             <input
               class="input numInput"
               type="number"
@@ -429,18 +447,20 @@ function resetSurcharges() {
           </div>
 
           <!-- définitif -->
-          <div class="cell right">
+          <div class="cell right" data-label="Prix définitif">
             <span class="pillStrong mono">{{ money0(pvDefinitifM3(r)) }}</span>
           </div>
 
           <!-- volume -->
-          <div class="cell right">
+          <div class="cell right" data-label="Volume">
             <div class="value mono">{{ int(r?.volumeM3) }}</div>
           </div>
 
           <!-- total -->
-          <div class="cell right">
-            <div class="value mono strong">{{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}</div>
+          <div class="cell right" data-label="Total">
+            <div class="value mono strong">
+              {{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}
+            </div>
           </div>
         </div>
       </div>
@@ -474,11 +494,10 @@ function resetSurcharges() {
 </template>
 
 <style scoped>
-/* ✅ Même langage visuel que tes pages (compact / cards / btn) */
 .page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
 
 .top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.tleft { display:flex; flex-direction:column; gap:4px; min-width: 240px; }
+.tleft { display:flex; flex-direction:column; gap:4px; min-width:240px; }
 .title { font-size:18px; font-weight:900; color:#111827; }
 .subline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .sep { color:#9ca3af; }
@@ -489,8 +508,8 @@ function resetSurcharges() {
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
-.cardTable { padding: 0; overflow: hidden; } /* ✅ no horizontal scroll */
-.hint { padding: 10px 12px; }
+.cardTable { padding:0; overflow:hidden; }
+.hint { padding:10px 12px; }
 
 .btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
 .btn:hover { background:#f9fafb; }
@@ -502,49 +521,26 @@ function resetSurcharges() {
 .muted { color:#6b7280; font-size:12px; }
 .ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .mono { font-variant-numeric: tabular-nums; }
-.strong { font-weight: 950; }
+.strong { font-weight:950; }
 
-.controls{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:10px;
-  flex-wrap:wrap;
-}
+.controls{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
 .leftControls{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
-.chk{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  font-size:12px;
-  font-weight:900;
-  color:#111827;
-  user-select:none;
-}
+.chk{ display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:900; color:#111827; user-select:none; }
 .chk input{ width:16px; height:16px; border-radius:6px; }
 
 .pillInfo{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(16,24,40,0.12);
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 10px; border-radius:999px;
+  border:1px solid rgba(16,24,40,0.12);
   background: rgba(15,23,42,0.03);
-  font-size:12px;
-  font-weight:900;
-  color:#111827;
+  font-size:12px; font-weight:900; color:#111827;
 }
 
-/* =========================
-   GRID TABLE (no overlap / no horizontal scroll)
-   - columns are fractional and compress safely
-   - values/badges are constrained to cell width
-========================= */
+/* GRID TABLE */
 .gHead, .gRow{
   display:grid;
   width:100%;
-  column-gap: 10px;
+  column-gap:10px;
   align-items:center;
 }
 .colsBase{
@@ -574,55 +570,36 @@ function resetSurcharges() {
 }
 
 .gHead{
-  padding: 10px 12px;
+  padding:10px 12px;
   background:#fafafa;
-  border-bottom: 1px solid #e5e7eb;
-  font-size:11px;
-  font-weight: 900;
-  color:#6b7280;
+  border-bottom:1px solid #e5e7eb;
+  font-size:11px; font-weight:900; color:#6b7280;
 }
 .hCell{
-  min-width: 0; /* ✅ allow shrink without overflow */
-  white-space: normal; /* ✅ header can wrap */
-  line-height: 1.15;
+  min-width:0;
+  white-space:normal;
+  line-height:1.15;
 }
 
-.gBody{ padding: 0; }
 .gRow{
-  padding: 10px 12px;
+  padding:10px 12px;
   border-bottom:1px solid #e5e7eb;
 }
 .gRow:hover{ background:#fafafa; }
-.cell{
-  min-width: 0; /* ✅ critical to prevent overlap */
-}
-.value{
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.cellMain{ overflow: visible; }
+
+.cell{ min-width:0; }
+.value{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.cellMain{ overflow:visible; }
 .mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
-.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
+.subText { margin-top:2px; font-size:11px; color: rgba(15,23,42,0.62); }
 
-.emptyRow{
-  padding: 14px 12px;
-  color:#6b7280;
-  font-size:12px;
-}
+.emptyRow{ padding:14px 12px; color:#6b7280; font-size:12px; }
 
-.gFoot{
-  padding: 10px 12px;
-  background: rgba(15,23,42,0.02);
-}
-.footLine{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  align-items:center;
-}
+.gFoot{ padding:10px 12px; background: rgba(15,23,42,0.02); }
+.footLine{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 
-/* Sticky header (like your other pages) */
+/* Sticky header collé sous HeaderDashboard */
 .theadSticky{
   position: sticky;
   top: -14px;
@@ -631,62 +608,52 @@ function resetSurcharges() {
 }
 
 /* Tooltip */
-.cmtWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; }
+.cmtWrap { position:relative; display:inline-flex; align-items:center; z-index:5; }
 .cmtBtn{
-  width: 26px; height: 26px;
-  border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  width:26px; height:26px;
+  border-radius:10px;
+  border:1px solid #e5e7eb;
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
 }
-.cmtIc{ width: 16px; height: 16px; color:#6b7280; }
+.cmtIc{ width:16px; height:16px; color:#6b7280; }
 .cmtTip{
   position:absolute;
-  left: 34px;
-  top: 50%;
-  transform: translateY(-50%);
-  min-width: 240px;
-  max-width: 360px;
-  background: rgba(17,24,39,0.95);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.12);
-  padding: 8px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  line-height: 1.25;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .12s ease, transform .12s ease;
+  left:34px; top:50%;
   transform: translateY(-50%) translateX(-4px);
+  min-width:240px; max-width:360px;
+  background: rgba(17,24,39,0.95);
+  color:#fff;
+  border:1px solid rgba(255,255,255,0.12);
+  padding:8px 10px;
+  border-radius:12px;
+  font-size:12px;
+  line-height:1.25;
+  opacity:0;
+  pointer-events:none;
+  transition: opacity .12s ease, transform .12s ease;
   z-index: 9999;
 }
 .cmtWrap:hover .cmtTip{
-  opacity: 1;
+  opacity:1;
   transform: translateY(-50%) translateX(0px);
 }
 
-/* Badges (constrained -> no overlap) */
-.badgeWrap{
-  display:flex;
-  justify-content:flex-end;
-  min-width:0;
-}
+/* Badges */
+.badgeWrap{ display:flex; justify-content:flex-end; min-width:0; }
 .priceBadge{
-  display:inline-flex;
-  align-items:center;
-  gap: 6px;
+  display:inline-flex; align-items:center; gap:6px;
   padding:6px 10px;
   border-radius:999px;
   border:1px solid rgba(2,132,199,0.22);
   background: rgba(2,132,199,0.08);
   color:#0b3b63;
-  font-weight:1000;
-  font-size:13px;
+  font-weight:1000; font-size:13px;
   white-space:nowrap;
-  max-width: 100%;
-  overflow:hidden;           /* ✅ no spill */
-  text-overflow: ellipsis;   /* ✅ no spill */
+  max-width:100%;
+  overflow:hidden;
+  text-overflow: ellipsis;
   box-sizing: border-box;
 }
 .priceBadge.maj{
@@ -696,96 +663,73 @@ function resetSurcharges() {
 }
 .priceBadge .dh{ font-size:11px; font-weight:900; opacity:0.9; }
 .unitTag{
-  font-size: 11px;
-  font-weight: 950;
+  font-size:11px; font-weight:950;
   color: rgba(15,23,42,0.65);
   background: rgba(255,255,255,0.65);
   border: 1px solid rgba(16,24,40,0.10);
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding:2px 8px;
+  border-radius:999px;
   flex: 0 0 auto;
 }
 
 .pillStrong{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(16,24,40,0.12);
+  display:inline-flex; align-items:center; justify-content:center;
+  height:28px;
+  padding:0 10px;
+  border-radius:999px;
+  border:1px solid rgba(16,24,40,0.12);
   background: rgba(15,23,42,0.04);
-  font-weight: 1000;
+  font-weight:1000;
   color:#111827;
-  max-width: 100%;
+  max-width:100%;
   overflow:hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space:nowrap;
 }
 
 .numInput{
-  width: 100%;
-  min-width: 0;
-  max-width: 140px;
+  width:100%;
+  min-width:0;
+  max-width:140px;
   text-align:right;
-  padding-right: 10px;
+  padding-right:10px;
   font-variant-numeric: tabular-nums;
-  margin-left: auto;
+  margin-left:auto;
 }
 
 .actIc{ width:18px; height:18px; }
 
-/* =========================
-   RESPONSIVE: no horizontal scroll
-   - On narrow widths, rows become "cards" in 2 columns
-========================= */
+/* RESPONSIVE: cards 2 colonnes, sans scroll horizontal */
 @media (max-width: 980px) {
   .colsBase, .colsMaj{
-    grid-template-columns: 1fr 1fr; /* ✅ 2 columns card */
+    grid-template-columns: 1fr 1fr;
     row-gap: 10px;
   }
-  .gHead{
-    display:none; /* ✅ header removed to avoid clutter; each cell will show label */
-  }
+  .gHead{ display:none; }
   .gRow{
-    border-bottom: none;
-    border-top: 1px solid #e5e7eb;
+    border-bottom:none;
+    border-top:1px solid #e5e7eb;
   }
-
-  /* add labels before values */
   .gRow .cell:nth-child(1){ grid-column: 1 / -1; }
+
   .gRow .cell{
     display:flex;
     justify-content:space-between;
-    gap: 10px;
+    gap:10px;
     align-items:center;
-    padding: 2px 0;
+    padding:2px 0;
   }
   .gRow .cell::before{
     content: attr(data-label);
     color:#6b7280;
-    font-weight: 900;
-    font-size: 11px;
+    font-weight:900;
+    font-size:11px;
     flex: 0 0 auto;
   }
-
-  /* keep designation without label */
-  .gRow .cellMain{
-    display:block;
-    padding: 0;
-  }
-  .gRow .cellMain::before{ content: ""; display:none; }
+  .gRow .cellMain{ display:block; padding:0; }
+  .gRow .cellMain::before{ content:""; display:none; }
 
   .badgeWrap{ justify-content:flex-end; }
   .numInput{ max-width: 160px; }
 }
 </style>
-
-<style scoped>
-/* labels for responsive mode */
-.gRow > .cell:nth-child(2) { }
-</style>
-
-<script lang="ts">
-export default {};
-</script>

@@ -98,6 +98,48 @@ function normKey(v: any) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+/* =========================
+   ✅ CMP (live in row)
+   - même logique que FormulesPage: Σ((kg/m³ ÷ 1000) × DH/t)
+   - fallback sur row.items tant que le draft n’est pas initialisé
+========================= */
+function cmpFromItems(items: ItemDraft[]): number {
+  const cleaned = normalizeItems(items);
+  if (!cleaned.length) return 0;
+
+  let total = 0;
+  for (const it of cleaned) {
+    const mp = mpById(String(it.mpId ?? ""));
+    const prixT = toNum((mp as any)?.prix ?? 0);
+    const qtyKg = toNum(it.qty ?? 0);
+    total += (qtyKg / 1000) * prixT;
+  }
+  return total;
+}
+
+function getCmpRow(row: any): number {
+  const id = String(row?.id ?? "");
+
+  // draft si déjà initialisé (après ouverture / édition)
+  const draft = draftsById[id];
+  if (Array.isArray(draft) && draft.length) return cmpFromItems(draft);
+
+  // fallback sur les items “persistés” (catalogue)
+  const raw = (row?.items ?? []) as Array<{ mpId: string; qty: number }>;
+  const items: ItemDraft[] = raw.map((it) => ({
+    mpId: String((it as any)?.mpId ?? ""),
+    qty: Number((it as any)?.qty ?? 0),
+  }));
+  return cmpFromItems(items);
+}
+
+function fmtCmp(v: number) {
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(toNum(v));
+}
+
 /* Options (unique values) */
 const resistanceOptions = computed<string[]>(() => {
   const set = new Set<string>();
@@ -747,10 +789,16 @@ onMounted(async () => {
           </div>
 
           <div class="right">
-            <div class="miniKpi" v-if="getDraft(String(f.id)).length">
+            <div class="miniKpi" v-if="((draftsById as any)[String(f.id)]?.length ?? 0) || ((f as any)?.items?.length ?? 0)">
               <span class="kLbl">Ciment</span>
-              <span class="kVal ciment">{{ n(cimentQty(getDraft(String(f.id))), 0) }}</span>
+              <span class="kVal ciment">{{ n(((draftsById as any)[String(f.id)]?.length ?? 0) ? cimentQty(getDraft(String(f.id))) : cimentQtyFromRow(f), 0) }}</span>
               <span class="kUnit">kg/m³</span>
+            </div>
+
+            <div class="miniKpi" v-if="((draftsById as any)[String(f.id)]?.length ?? 0) || ((f as any)?.items?.length ?? 0)">
+              <span class="kLbl">CMP</span>
+              <span class="kVal">{{ fmtCmp(getCmpRow(f)) }}</span>
+              <span class="kUnit">DH/m³</span>
             </div>
 
             <div class="actions" @click.stop>
