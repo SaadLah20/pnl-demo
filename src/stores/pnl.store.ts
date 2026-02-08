@@ -190,28 +190,59 @@ activeHeaderKPIs(): any {
     // -------------------------
     // internal helper
     // -------------------------
-replaceActiveVariantInState(next: any) {
+// -------------------------
+// internal helper
+// -------------------------
+replaceActiveVariantInState(next: AnyObj) {
   if (!next?.id) return;
 
-  const pnl = this.pnls.find((p: any) => p.contracts?.some((c: any) => c.variants?.some((v: any) => v.id === next.id)));
+  const pnl = this.pnls.find((p) => p.id === this.activePnlId);
   if (!pnl) return;
 
   for (const c of pnl.contracts ?? []) {
     const i = (c.variants ?? []).findIndex((v: any) => v.id === next.id);
-    if (i >= 0) {
-      const prev = c.variants[i];
+    if (i < 0) continue;
 
-      // ✅ merge : garde les sections existantes si next ne les fournit pas
-      c.variants[i] = { ...prev, ...next };
+    const prev = c.variants[i] ?? {};
 
-      // ✅ et merge aussi les sous-objets section si besoin
-      if (prev?.cab && next?.cab) c.variants[i].cab = { ...prev.cab, ...next.cab };
-      if (prev?.transport && next?.transport) c.variants[i].transport = { ...prev.transport, ...next.transport };
+    // ✅ merge shallow (empêche "formules only" d'écraser le reste)
+    const merged: AnyObj = { ...prev, ...next };
 
-      return;
+    // ✅ merge shallow des sections (évite perte de sous-champs)
+    const sectionKeys = [
+      "cab",
+      "transport",
+      "mp",
+      "formules",
+      "momd",
+      "maintenance",
+      "coutM3",
+      "coutMensuel",
+      "coutEmployes",
+      "coutsOccasionnels",
+      "autresCouts",
+      "majorations",
+      "devis",
+      "details",
+    ];
+
+    for (const k of sectionKeys) {
+      const p = (prev as any)?.[k];
+      const n = (next as any)?.[k];
+      if (p && n && typeof p === "object" && typeof n === "object" && !Array.isArray(p) && !Array.isArray(n)) {
+        merged[k] = { ...p, ...n };
+      }
     }
+
+    c.variants[i] = merged;
+
+    // ✅ garde activeVariantId cohérent
+    this.activeVariantId = merged.id;
+
+    return;
   }
 },
+
 
 
     // -------------------------
@@ -282,6 +313,29 @@ async updateMpCatalogue(mpId: string, patch: Record<string, any>) {
       const data = await jsonFetch("/formules-catalogue");
       this.formulesCatalogue = data ?? [];
     },
+
+    async createMpCatalogue(payload: Record<string, any>) {
+  const created = await jsonFetch("/mp-catalogue", {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+
+  if (created?.id) {
+    const i = (this.mpCatalogue ?? []).findIndex((m: any) => m.id === created.id);
+    if (i >= 0) this.mpCatalogue[i] = { ...this.mpCatalogue[i], ...created };
+    else this.mpCatalogue.unshift(created);
+  }
+
+  return created;
+},
+
+async deleteMpCatalogue(mpId: string) {
+  const id = encodeURIComponent(String(mpId ?? ""));
+  const resp = await jsonFetch(`/mp-catalogue/${id}`, { method: "DELETE" });
+
+  this.mpCatalogue = (this.mpCatalogue ?? []).filter((m: any) => m.id !== mpId);
+  return resp; // { ok: true }
+},
 
     // -------------------------
 // ✅ Formules Catalogue (UPDATE meta)

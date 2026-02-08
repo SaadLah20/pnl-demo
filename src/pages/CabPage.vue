@@ -134,25 +134,23 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", onDocPointerDown, { capture: true } as any);
 });
 
-/* =========================
-   SAVE (local only)
-========================= */
-function saveLocalOnly() {
-  if (!variant.value) return;
+async function saveCab() {
+  const variantId = String(variant.value?.id ?? store.activeVariantId ?? "").trim();
+  if (!variantId) return;
 
-  const anyStore: any = store as any;
-  const v: any = anyStore.activeVariant;
-  if (!v) return;
-
-  if (!v.cab) v.cab = {};
-  v.cab.etat = draft.etat;
-  v.cab.mode = draft.mode;
-  v.cab.capaciteM3 = toNum(draft.capaciteM3);
-  v.cab.amortMois = toNum(draft.amortMois);
+  await (store as any).updateVariant(variantId, {
+    cab: {
+      etat: draft.etat,
+      mode: draft.mode,
+      capaciteM3: toNum(draft.capaciteM3),
+      amortMois: toNum(draft.amortMois),
+    },
+  });
 
   activeField.value = null;
   dirty.value = false;
 }
+
 
 /* =========================
    INDICATEUR UNIQUE
@@ -210,7 +208,7 @@ const amortPctCa = computed<number>(() => {
 
       <div class="actions" v-if="variant && !cabChargeClient">
         <button class="btn" :disabled="!dirty" @click="resetFromVariant()">Annuler</button>
-        <button class="btn primary" :disabled="!dirty" @click="saveLocalOnly()">Enregistrer (local)</button>
+        <button class="btn primary" :disabled="!dirty" @click="saveCab()">Enregistrer (local)</button>
       </div>
     </div>
 
