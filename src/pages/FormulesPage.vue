@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
-import SectionGeneralizeModal from "@/components/SectionGeneralizeModal.vue";
+import SectionGeneralizeModal, { type CopyPreset } from "@/components/SectionGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -56,11 +56,9 @@ watch(
     const id = String(vid ?? "").trim();
     if (!id) return;
 
-    // Si la variante actuelle n'a pas encore les relations deep
     const v = store.activeVariant as any;
     if (v && Array.isArray(v.formules?.items)) return;
 
-    // ✅ appelle l'action existante dans ton store
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(id);
     }
@@ -78,9 +76,9 @@ type FormuleRow = {
   resistance: string;
   city: string;
   region: string;
-  volumeM3: number;
-  momd: number;
-  cmpOverride: number | null;
+  volumeM3: number;      // "quantité" (m³)
+  momd: number;          // marge
+  cmpOverride: number | null; // DH
   raw: any;
 };
 
@@ -226,7 +224,7 @@ function sortedItems(r: FormuleRow) {
 }
 
 /* =========================
-   CMP (composition) ✅ même formule que FormulesPage (DH/t)
+   CMP (composition)
 ========================= */
 function cmpPerM3(r: FormuleRow): number {
   let total = 0;
@@ -315,14 +313,14 @@ function compositionStatsFor(r: FormuleRow) {
     vTotal += (qty / 1000) / rho;
   }
 
-  const vEau = (mCiment * 0.5 + 15) / 1000; // m3
-  const target = 1; // m3
+  const vEau = (mCiment * 0.5 + 15) / 1000;
+  const target = 1;
   const vTotWithWater = vTotal + vEau;
 
   const delta = target - vTotWithWater;
 
-  const isLow = delta > 0.02; // manque > 20L
-  const isOk = !isLow && delta >= -0.02; // +/- 20L
+  const isLow = delta > 0.02;
+  const isOk = !isLow && delta >= -0.02;
 
   const statusLabel = isOk ? "OK" : isLow ? "Bas" : "Haut";
 
@@ -382,18 +380,30 @@ function getVariantById(variantId: string): any | null {
   return list.find((x) => x.id === String(variantId))?.raw ?? null;
 }
 
-async function generalizeFormulesTo(variantIds: string[]) {
+function makePatchFor(copy: CopyPreset, s: any) {
+  if (copy === "ZERO") return { volumeM3: 0, momd: 0, cmpOverride: 0 };
+  if (copy === "QTY_ONLY") return { volumeM3: Number(s.volumeM3 ?? 0), momd: 0, cmpOverride: 0 };
+  if (copy === "MOMD_ONLY") return { volumeM3: 0, momd: Number(s.momd ?? 0), cmpOverride: 0 };
+  // QTY_MOMD
+  return {
+    volumeM3: Number(s.volumeM3 ?? 0),
+    momd: Number(s.momd ?? 0),
+    cmpOverride: s.cmpOverride == null ? 0 : s.cmpOverride,
+  };
+}
+
+async function generalizeFormulesTo(variantIds: string[], copy: CopyPreset) {
   const sourceVariantId = String(store.activeVariantId ?? "").trim();
   if (!sourceVariantId) return;
 
-  // source snapshot: formuleId + volumeM3
+  // source snapshot
   const src = rows.value
     .filter((r) => r.formuleId)
     .map((r) => ({
       formuleId: String(r.formuleId),
       volumeM3: toNum(r.volumeM3),
-      momd: toNum((r as any).momd ?? 0),
-      cmpOverride: (r as any).cmpOverride === undefined ? undefined : (r as any).cmpOverride,
+      momd: toNum(r.momd),
+      cmpOverride: r.cmpOverride,
     }));
 
   genErr.value = null;
@@ -415,24 +425,20 @@ async function generalizeFormulesTo(variantIds: string[]) {
         }
       }
 
-      // 2) add all formuleIds + restore volumeM3
+      // 2) add all formuleIds + patch fields depending on choice
       for (const s of src) {
         await (store as any).addFormuleToVariant(targetId, s.formuleId);
 
-        // after add, find the created variantFormule by formuleId, then patch volumeM3
         const refreshed = getVariantById(targetId) as any;
         const its = (refreshed?.formules?.items ?? refreshed?.variantFormules ?? []) as any[];
-        const created = Array.isArray(its) ? its.find((x: any) => String(x?.formuleId ?? x?.formule?.id ?? "") === s.formuleId) : null;
+        const created = Array.isArray(its)
+          ? its.find((x: any) => String(x?.formuleId ?? x?.formule?.id ?? "") === s.formuleId)
+          : null;
 
         const createdId = String(created?.id ?? "").trim();
         if (createdId) {
-          const patch: any = {};
-          if (s.volumeM3 != null) patch.volumeM3 = Number(s.volumeM3);
-          if (s.momd != null) patch.momd = Number(s.momd);
-          if (s.cmpOverride !== undefined) patch.cmpOverride = s.cmpOverride;
-          if (Object.keys(patch).length) {
-            await (store as any).updateVariantFormule(targetId, createdId, patch);
-          }
+          const patch = makePatchFor(copy, s);
+          await (store as any).updateVariantFormule(targetId, createdId, patch);
         }
       }
     }
@@ -443,25 +449,32 @@ async function generalizeFormulesTo(variantIds: string[]) {
   }
 }
 
-async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[]; copy: CopyPreset }) {
   const ids = payload?.variantIds ?? [];
+  const copy = payload?.copy ?? "QTY_MOMD";
   if (!ids.length) return;
+
+  const label =
+    copy === "ZERO"
+      ? "Formules seulement (0 m³ / 0 MOMD / 0 DH)"
+      : copy === "QTY_ONLY"
+      ? "Formules + Quantités (MOMD=0 / 0 DH)"
+      : "Formules + Quantités + MOMD";
 
   const ok = window.confirm(
     payload.mode === "ALL"
-      ? "Généraliser les Formules sur TOUTES les variantes de ce P&L ?"
-      : `Généraliser les Formules sur ${ids.length} variante(s) sélectionnée(s) ?`
+      ? `Généraliser les Formules sur TOUTES les variantes ?\nMode: ${label}`
+      : `Généraliser les Formules sur ${ids.length} variante(s) ?\nMode: ${label}`
   );
   if (!ok) return;
 
-  await generalizeFormulesTo(ids);
+  await generalizeFormulesTo(ids, copy);
   if (!genErr.value) genOpen.value = false;
 }
 </script>
 
 <template>
   <div class="page">
-    <!-- ✅ Top ultra compact -->
     <div class="top">
       <div class="tleft">
         <div class="titleRow">
@@ -497,7 +510,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           + Ajouter
         </button>
 
-        <!-- ✅ NOUVEAU : Généraliser -->
         <button class="btn" @click="genOpen = true" :disabled="!variant || genBusy">
           Généraliser
         </button>
@@ -650,7 +662,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <!-- ✅ MODAL AJOUT -->
+        <!-- MODAL AJOUT (inchangé) -->
         <div v-if="addOpen" class="modalOverlay" @click.self="addOpen = false">
           <div class="modal">
             <div class="modalHead">
@@ -713,570 +725,98 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
-/* ✅ page ultra compacte */
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-}
-
-/* top compact */
-.top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.tleft {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 260px;
-}
-.titleRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.h1 {
-  font-weight: 950;
-  font-size: 14px;
-}
-.badge {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fafafa;
-  color: #374151;
-  font-weight: 900;
-}
-.meta {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.metaLine {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-}
-.k {
-  color: #6b7280;
-  font-weight: 800;
-}
-.v {
-  color: #111827;
-}
-.strong {
-  font-weight: 950;
-}
-.sep {
-  opacity: 0.5;
-}
-
-.tright {
-  display: flex;
-  align-items: flex-end;
-  flex: 1 1 auto;
-  min-width: 220px;
-}
-.hint {
-  font-size: 10.5px;
-  color: #6b7280;
-  line-height: 1.2;
-}
-
-.topActions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex: 0 0 auto;
-}
-
-/* buttons compact */
-.btn,
-.btnPrimary {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  padding: 7px 10px;
-  border-radius: 12px;
-  cursor: pointer;
-  font-weight: 900;
-  font-size: 12px;
-}
-.btn:hover {
-  background: #f9fafb;
-}
-.btnPrimary {
-  border-color: #111827;
-  background: #111827;
-  color: #fff;
-}
-.btnPrimary:hover {
-  filter: brightness(1.05);
-}
-.btn.xs,
-.btnPrimary.xs {
-  padding: 6px 8px;
-  font-size: 11px;
-}
-
-.alert {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  padding: 10px 12px;
-  border-radius: 14px;
-  font-size: 12px;
-}
-.alert.error {
-  border-color: #fecaca;
-  background: #fff5f5;
-  color: #7f1d1d;
-}
-.muted {
-  color: #6b7280;
-}
-.tiny {
-  font-size: 10.5px;
-}
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-/* cards */
-.card {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  border-radius: 16px;
-  overflow: hidden;
-}
-.card.slim {
-  padding: 8px 10px;
-}
-.cards {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.h2 {
-  font-weight: 950;
-  font-size: 12.5px;
-}
-
-/* row header ultra compact */
-.rowHead {
-  width: 100%;
-  border: 0;
-  background: #fff;
-  cursor: pointer;
-  padding: 8px 10px;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  align-items: center;
-  text-align: left;
-}
-.rowHead:hover {
-  background: #f9fafb;
-}
-.left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-.chev {
-  color: #6b7280;
-  width: 16px;
-  display: inline-block;
-  flex: 0 0 auto;
-}
-.name {
-  font-weight: 950;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 420px;
-}
-.chip {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fafafa;
-  color: #374151;
-  font-weight: 950;
-  flex: 0 0 auto;
-}
-.dot {
-  opacity: 0.5;
-  flex: 0 0 auto;
-}
-.sub {
-  font-size: 10.5px;
-  color: #6b7280;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 150px;
-}
-
-/* right side packed */
-.right {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 0 0 auto;
-}
-.iconDanger {
-  border: 1px solid #fee2e2;
-  background: #fff;
-  color: #b91c1c;
-  width: 30px;
-  height: 28px;
-  border-radius: 10px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  flex: 0 0 auto;
-}
-.iconDanger:hover {
-  background: #fff5f5;
-}
-.iconDanger:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.cmpBox {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fafafa;
-}
-.cmpLbl {
-  font-size: 10px;
-  color: #6b7280;
-  font-weight: 900;
-}
-.cmpVal {
-  font-size: 12px;
-  font-weight: 950;
-  color: #111827;
-}
-
-/* pills */
-.pills {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-.pill {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  font-weight: 900;
-}
-.pill.ok {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
-  color: #166534;
-}
-.pill.warn {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #92400e;
-}
-.pill.bad {
-  border-color: #fecaca;
-  background: #fff5f5;
-  color: #7f1d1d;
-}
-
-/* row body */
-.rowBody {
-  padding: 10px;
-  border-top: 1px solid #eef2f7;
-}
-.grid {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 10px;
-}
-@media (max-width: 980px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.box {
-  border: 1px solid #eef2f7;
-  background: #fcfcfd;
-  border-radius: 14px;
-  padding: 10px;
-}
-.boxTitle {
-  font-weight: 950;
-  font-size: 12px;
-  margin-bottom: 8px;
-}
-
-/* tiny warning in box */
-.miniErr {
-  border: 1px solid #fecaca;
-  background: #fff5f5;
-  color: #7f1d1d;
-  border-radius: 12px;
-  padding: 8px 10px;
-  font-size: 11px;
-  margin-bottom: 8px;
-}
-.miniChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid #fecaca;
-  background: #fff;
-  margin-left: 6px;
-  font-size: 10px;
-  font-weight: 900;
-}
-
-/* table */
-.table {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.thead,
-.trow {
-  display: grid;
-  grid-template-columns: 1.4fr 0.8fr 0.6fr 0.7fr 0.7fr;
-  gap: 8px;
-  align-items: center;
-}
-.thead {
-  font-size: 10px;
-  color: #6b7280;
-  font-weight: 900;
-  padding: 0 2px 4px;
-}
-.trow {
-  background: #fff;
-  border: 1px solid #eef2f7;
-  border-radius: 12px;
-  padding: 7px 8px;
-  font-size: 11.5px;
-}
-.mp {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.mpName {
-  font-weight: 950;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mpSub {
-  font-size: 10px;
-}
-.rightTxt {
-  text-align: right;
-}
-
-/* kpis */
-.kpis {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.kpi {
-  border: 1px solid #eef2f7;
-  border-radius: 14px;
-  background: #fff;
-  padding: 8px 10px;
-}
-.kpi .k {
-  font-size: 10px;
-  color: #6b7280;
-  font-weight: 900;
-}
-.kpi .v {
-  font-size: 12px;
-  margin-top: 2px;
-}
-.okTxt {
-  color: #166534;
-  font-weight: 950;
-}
-.warnTxt {
-  color: #92400e;
-  font-weight: 950;
-}
-.badTxt {
-  color: #7f1d1d;
-  font-weight: 950;
-}
-
-/* modal (ajout) */
-.modalOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.28);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-  z-index: 50;
-}
-.modal {
-  width: min(900px, 96vw);
-  max-height: 82vh;
-  overflow: auto;
-  background: #fff;
-  border-radius: 18px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
-}
-.modalHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid #eef2f7;
-}
-.modalTitle {
-  font-weight: 950;
-  font-size: 13px;
-}
-.x {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  width: 34px;
-  height: 32px;
-  border-radius: 12px;
-  cursor: pointer;
-  font-weight: 900;
-}
-.x:hover {
-  background: #f9fafb;
-}
-.modalSearch {
-  padding: 10px 14px;
-  border-bottom: 1px solid #eef2f7;
-}
-.in {
-  width: 100%;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 10px 12px;
-  outline: none;
-  font-size: 12px;
-}
-.in:focus {
-  border-color: #111827;
-  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.12);
-}
-.modalErr {
-  margin: 10px 14px 0;
-  border: 1px solid #fecaca;
-  background: #fff5f5;
-  color: #7f1d1d;
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-size: 12px;
-}
-.modalList {
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.modalItem {
-  border: 1px solid #eef2f7;
-  border-radius: 14px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: #fff;
-}
-.modalItem:hover {
-  background: #fcfcfd;
-}
-.modalItem.disabled {
-  opacity: 0.6;
-}
-.miLeft {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.miTitle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.miName {
-  font-weight: 950;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 520px;
-}
-.miSub {
-  font-size: 11px;
-}
-.miRight {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-.tag {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background: #fafafa;
-  color: #6b7280;
-  font-weight: 900;
-}
-.modalFoot {
-  border-top: 1px solid #eef2f7;
-  padding: 12px 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
+/* styles identiques à ta version précédente (inchangés) */
+.page { display:flex; flex-direction:column; gap:8px; padding:10px; }
+.top { display:flex; justify-content:space-between; align-items:flex-end; gap:8px; flex-wrap:wrap; }
+.tleft { display:flex; flex-direction:column; gap:2px; min-width:260px; }
+.titleRow { display:flex; align-items:center; gap:8px; }
+.h1 { font-weight:950; font-size:14px; }
+.badge { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#374151; font-weight:900; }
+.meta { display:flex; flex-direction:column; gap:1px; }
+.metaLine { display:flex; align-items:center; gap:6px; font-size:11px; }
+.k { color:#6b7280; font-weight:800; }
+.v { color:#111827; }
+.strong { font-weight:950; }
+.sep { opacity:.5; }
+.tright { display:flex; align-items:flex-end; flex:1 1 auto; min-width:220px; }
+.hint { font-size:10.5px; color:#6b7280; line-height:1.2; }
+.topActions { display:flex; gap:6px; align-items:center; flex:0 0 auto; }
+.btn, .btnPrimary { border:1px solid #e5e7eb; background:#fff; padding:7px 10px; border-radius:12px; cursor:pointer; font-weight:900; font-size:12px; }
+.btn:hover { background:#f9fafb; }
+.btnPrimary { border-color:#111827; background:#111827; color:#fff; }
+.btnPrimary:hover { filter:brightness(1.05); }
+.btn.xs, .btnPrimary.xs { padding:6px 8px; font-size:11px; }
+.alert { border:1px solid #e5e7eb; background:#fff; padding:10px 12px; border-radius:14px; font-size:12px; }
+.alert.error { border-color:#fecaca; background:#fff5f5; color:#7f1d1d; }
+.muted { color:#6b7280; }
+.tiny { font-size:10.5px; }
+.mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
+.card { border:1px solid #e5e7eb; background:#fff; border-radius:16px; overflow:hidden; }
+.card.slim { padding:8px 10px; }
+.cards { display:flex; flex-direction:column; gap:8px; }
+.bar { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.h2 { font-weight:950; font-size:12.5px; }
+.rowHead { width:100%; border:0; background:#fff; cursor:pointer; padding:8px 10px; display:flex; gap:10px; justify-content:space-between; align-items:center; text-align:left; }
+.rowHead:hover { background:#f9fafb; }
+.left { display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow:hidden; }
+.chev { color:#6b7280; width:16px; display:inline-block; flex:0 0 auto; }
+.name { font-weight:950; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:420px; }
+.chip { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#374151; font-weight:950; flex:0 0 auto; }
+.dot { opacity:.5; flex:0 0 auto; }
+.sub { font-size:10.5px; color:#6b7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px; }
+.right { display:flex; gap:8px; align-items:center; justify-content:flex-end; flex:0 0 auto; }
+.iconDanger { border:1px solid #fee2e2; background:#fff; color:#b91c1c; width:30px; height:28px; border-radius:10px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; font-size:14px; flex:0 0 auto; }
+.iconDanger:hover { background:#fff5f5; }
+.iconDanger:disabled { opacity:.5; cursor:not-allowed; }
+.cmpBox { display:inline-flex; align-items:baseline; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; }
+.cmpLbl { font-size:10px; color:#6b7280; font-weight:900; }
+.cmpVal { font-size:12px; font-weight:950; color:#111827; }
+.pills { display:inline-flex; gap:6px; align-items:center; }
+.pill { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; font-weight:900; }
+.pill.ok { border-color:#bbf7d0; background:#f0fdf4; color:#166534; }
+.pill.warn { border-color:#fde68a; background:#fffbeb; color:#92400e; }
+.pill.bad { border-color:#fecaca; background:#fff5f5; color:#7f1d1d; }
+.rowBody { padding:10px; border-top:1px solid #eef2f7; }
+.grid { display:grid; grid-template-columns:1.5fr 1fr; gap:10px; }
+@media (max-width: 980px) { .grid { grid-template-columns:1fr; } }
+.box { border:1px solid #eef2f7; background:#fcfcfd; border-radius:14px; padding:10px; }
+.boxTitle { font-weight:950; font-size:12px; margin-bottom:8px; }
+.miniErr { border:1px solid #fecaca; background:#fff5f5; color:#7f1d1d; border-radius:12px; padding:8px 10px; font-size:11px; margin-bottom:8px; }
+.miniChip { display:inline-flex; align-items:center; gap:6px; padding:2px 6px; border-radius:999px; border:1px solid #fecaca; background:#fff; margin-left:6px; font-size:10px; font-weight:900; }
+.table { display:flex; flex-direction:column; gap:6px; }
+.thead, .trow { display:grid; grid-template-columns:1.4fr 0.8fr 0.6fr 0.7fr 0.7fr; gap:8px; align-items:center; }
+.thead { font-size:10px; color:#6b7280; font-weight:900; padding:0 2px 4px; }
+.trow { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:7px 8px; font-size:11.5px; }
+.mp { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.mpName { font-weight:950; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mpSub { font-size:10px; }
+.rightTxt { text-align:right; }
+.kpis { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.kpi { border:1px solid #eef2f7; border-radius:14px; background:#fff; padding:8px 10px; }
+.kpi .k { font-size:10px; color:#6b7280; font-weight:900; }
+.kpi .v { font-size:12px; margin-top:2px; }
+.okTxt { color:#166534; font-weight:950; }
+.warnTxt { color:#92400e; font-weight:950; }
+.badTxt { color:#7f1d1d; font-weight:950; }
+.modalOverlay { position:fixed; inset:0; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; padding:18px; z-index:50; }
+.modal { width:min(900px, 96vw); max-height:82vh; overflow:auto; background:#fff; border-radius:18px; border:1px solid #e5e7eb; box-shadow:0 25px 50px rgba(0,0,0,.15); }
+.modalHead { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #eef2f7; }
+.modalTitle { font-weight:950; font-size:13px; }
+.x { border:1px solid #e5e7eb; background:#fff; width:34px; height:32px; border-radius:12px; cursor:pointer; font-weight:900; }
+.x:hover { background:#f9fafb; }
+.modalSearch { padding:10px 14px; border-bottom:1px solid #eef2f7; }
+.in { width:100%; border:1px solid #e5e7eb; border-radius:12px; padding:10px 12px; outline:none; font-size:12px; }
+.in:focus { border-color:#111827; box-shadow:0 0 0 3px rgba(17,24,39,.12); }
+.modalErr { margin:10px 14px 0; border:1px solid #fecaca; background:#fff5f5; color:#7f1d1d; border-radius:14px; padding:10px 12px; font-size:12px; }
+.modalList { padding:10px 14px; display:flex; flex-direction:column; gap:8px; }
+.modalItem { border:1px solid #eef2f7; border-radius:14px; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; background:#fff; }
+.modalItem:hover { background:#fcfcfd; }
+.modalItem.disabled { opacity:.6; }
+.miLeft { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.miTitle { display:flex; align-items:center; gap:8px; min-width:0; }
+.miName { font-weight:950; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px; }
+.miSub { font-size:11px; }
+.miRight { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+.tag { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#6b7280; font-weight:900; }
+.modalFoot { border-top:1px solid #eef2f7; padding:12px 14px; display:flex; justify-content:flex-end; gap:8px; }
 </style>

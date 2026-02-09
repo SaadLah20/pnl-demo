@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionGeneralizeModal, { type CopyPreset } from "@/components/SectionGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -101,6 +102,7 @@ type Row = {
   momd: number; // DH/m³
   pv: number; // DH/m³
   ca: number; // DH
+  formuleId: string;
 };
 
 const baseRows = computed<Row[]>(() => {
@@ -111,14 +113,12 @@ const baseRows = computed<Row[]>(() => {
     const qte = toNum(d.volumeM3);
     const momd = toNum(d.momd);
 
-    // PV (DH/m³) = CMP + Transport + MOMD
     const pv = cmp + transportPrixMoyen.value + momd;
-
-    // CA (DH) = PV * Qté
     const ca = pv * qte;
 
     return {
       id: String(vf.id),
+      formuleId: String(vf?.formuleId ?? vf?.formule?.id ?? ""),
       designation: String(vf?.formule?.label ?? vf?.formule?.resistance ?? "Formule"),
       cmp,
       qte,
@@ -130,38 +130,31 @@ const baseRows = computed<Row[]>(() => {
 });
 
 /* =========================
-   ORDER STABLE (tri appliqué uniquement quand on le décide)
+   ORDER STABLE
 ========================= */
 const orderIds = ref<string[]>([]);
 const didInitialSort = ref(false);
 
 function setInitialOrderFromVariant() {
-  // ordre DB (variant.formules.items) si présent
   orderIds.value = formules.value.map((vf: any) => String(vf.id));
 }
 
 function applySortNow() {
-  // Tri PV desc, mais on ne modifie QUE orderIds
   const sorted = [...baseRows.value].sort((a, b) => toNum(b.pv) - toNum(a.pv));
   orderIds.value = sorted.map((r) => r.id);
 }
 
-/* ✅ rows affichées = baseRows + orderIds */
 const rows = computed<Row[]>(() => {
   const map = new Map(baseRows.value.map((r) => [r.id, r]));
   const out: Row[] = [];
 
-  // 1) on respecte orderIds
   for (const id of orderIds.value) {
     const r = map.get(id);
     if (r) out.push(r);
   }
-
-  // 2) si nouveaux ids pas dans orderIds (cas rare), on les ajoute à la fin
   for (const r of baseRows.value) {
     if (!orderIds.value.includes(r.id)) out.push(r);
   }
-
   return out;
 });
 
@@ -174,7 +167,6 @@ watch(
     loadDraftsFromVariant();
     setInitialOrderFromVariant();
 
-    // tri initial : uniquement au chargement initial de la page
     if (!didInitialSort.value) {
       applySortNow();
       didInitialSort.value = true;
@@ -197,7 +189,7 @@ const caTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.ca), 0));
 const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
 
 /* =========================
-   MODAL
+   MODAL simple (déjà existant)
 ========================= */
 const modal = reactive({
   open: false,
@@ -251,9 +243,7 @@ async function save() {
 
     await (store as any).updateVariant(variant.value.id, { formules: { items } });
 
-    // ✅ tri uniquement après enregistrement
     applySortNow();
-
     openInfo("Enregistré", "Quantités & MOMD mises à jour (tri PV appliqué).");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
@@ -274,9 +264,114 @@ function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
     loadDraftsFromVariant();
-
-    // ✅ pas de tri ici
   });
+}
+
+/* =========================
+   ✅ GENERALISER (Qté & MOMD)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+function labelForCopy(copy: CopyPreset) {
+  if (copy === "ZERO") return "Formules seulement (Qté=0 / MOMD=0)";
+  if (copy === "QTY_ONLY") return "Formules + Qté (MOMD=0)";
+  if (copy === "MOMD_ONLY") return "Formules + MOMD (Qté=0)";
+  return "Formules + Qté + MOMD";
+}
+
+function patchFromCopy(copy: CopyPreset, src: { volumeM3: number; momd: number }) {
+  if (copy === "ZERO") return { volumeM3: 0, momd: 0 };
+  if (copy === "QTY_ONLY") return { volumeM3: Number(src.volumeM3 ?? 0), momd: 0 };
+  if (copy === "MOMD_ONLY") return { volumeM3: 0, momd: Number(src.momd ?? 0) };
+  return { volumeM3: Number(src.volumeM3 ?? 0), momd: Number(src.momd ?? 0) };
+}
+
+function getVariantById(variantId: string): any | null {
+  const p = store.activePnl;
+  if (!p) return null;
+  for (const c of p.contracts ?? []) {
+    const v = (c.variants ?? []).find((x: any) => String(x?.id ?? "") === String(variantId));
+    if (v) return v;
+  }
+  return null;
+}
+
+async function ensureVariantHasFormulesItems(variantId: string) {
+  const v = getVariantById(variantId) as any;
+  if (v?.formules?.items && Array.isArray(v.formules.items)) return v;
+
+  // fallback safe: on charge deep temporairement (sans casser l'écran => on restaure ensuite)
+  if ((store as any).loadVariantDeep) {
+    const current = String((store as any).activeVariantId ?? "");
+    await (store as any).loadVariantDeep(String(variantId));
+    const loaded = (store as any).activeVariant;
+
+    // restore
+    if (current && current !== String(variantId)) {
+      await (store as any).loadVariantDeep(current);
+    }
+    return loaded ?? v ?? null;
+  }
+
+  return v ?? null;
+}
+
+async function generalizeTo(variantIds: string[], copy: CopyPreset) {
+  const sourceVariantId = String((store as any).activeVariantId ?? "").trim();
+  if (!sourceVariantId) return;
+
+  genErr.value = null;
+  genBusy.value = true;
+
+  try {
+    // snapshot source by formuleId
+    const srcByFormuleId = new Map<string, { volumeM3: number; momd: number }>();
+    for (const r of rows.value) {
+      if (!r.formuleId) continue;
+      srcByFormuleId.set(String(r.formuleId), { volumeM3: toNum(r.qte), momd: toNum(r.momd) });
+    }
+
+    for (const targetIdRaw of variantIds) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceVariantId) continue;
+
+      const target = await ensureVariantHasFormulesItems(targetId);
+      const targetItems = ((target as any)?.formules?.items ?? (target as any)?.variantFormules ?? []) as any[];
+      if (!Array.isArray(targetItems) || targetItems.length === 0) continue;
+
+      const items = targetItems.map((vf: any) => {
+        const id = String(vf?.id ?? "");
+        const formuleId = String(vf?.formuleId ?? vf?.formule?.id ?? "");
+        const src = srcByFormuleId.get(formuleId) ?? { volumeM3: 0, momd: 0 };
+        const patch = patchFromCopy(copy, src);
+        return { id, ...patch };
+      });
+
+      await (store as any).updateVariant(targetId, { formules: { items } });
+    }
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[]; copy: CopyPreset }) {
+  const ids = payload?.variantIds ?? [];
+  const copy = payload?.copy ?? "QTY_MOMD";
+  if (!ids.length) return;
+
+  const ok = window.confirm(
+    payload.mode === "ALL"
+      ? `Généraliser “Qté & MOMD” sur TOUTES les variantes ?\nMode: ${labelForCopy(copy)}`
+      : `Généraliser “Qté & MOMD” sur ${ids.length} variante(s) ?\nMode: ${labelForCopy(copy)}`
+  );
+  if (!ok) return;
+
+  await generalizeTo(ids, copy);
+  if (!genErr.value) genOpen.value = false;
 }
 
 /* =========================
@@ -292,7 +387,6 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <!-- ✅ Top ultra compact, sans bloc meta haut -->
     <div class="top">
       <div class="tleft">
         <div class="titleRow">
@@ -308,12 +402,16 @@ onMounted(async () => {
       </div>
 
       <div class="actions">
+        <button class="btn" :disabled="!variant || genBusy" @click="genOpen = true">Généraliser</button>
         <button class="btn" :disabled="!variant || saving" @click="askReset()">Reset</button>
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
           {{ saving ? "…" : "Enregistrer" }}
         </button>
       </div>
     </div>
+
+    <div v-if="genErr" class="alert error"><b>Généralisation :</b> {{ genErr }}</div>
+    <div v-if="genBusy" class="alert"><b>Généralisation :</b> traitement…</div>
 
     <div v-if="(store as any).loading" class="alert">Chargement…</div>
     <div v-else-if="(store as any).error" class="alert error"><b>Erreur :</b> {{ (store as any).error }}</div>
@@ -326,7 +424,6 @@ onMounted(async () => {
       </div>
 
       <template v-else>
-        <!-- ✅ KPIs compacts -->
         <div class="kpis">
           <div class="kpi"><div class="kLbl">CMP</div><div class="kVal mono">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div></div>
           <div class="kpi"><div class="kLbl">CMP Tot</div><div class="kVal mono">{{ money(cmpTotal, 2) }}</div></div>
@@ -338,7 +435,6 @@ onMounted(async () => {
           <div class="kpi"><div class="kLbl">Volume</div><div class="kVal mono">{{ n(volumeTotal, 2) }} <span>m³</span></div></div>
         </div>
 
-        <!-- ✅ Table compacte -->
         <div class="card pad0">
           <div class="tableWrap">
             <table class="table">
@@ -415,7 +511,7 @@ onMounted(async () => {
       </template>
     </template>
 
-    <!-- MODAL -->
+    <!-- MODAL (simple confirm/info) -->
     <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
       <div class="modal">
         <div class="modalTitle">{{ modal.title }}</div>
@@ -429,6 +525,15 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- ✅ MODAL GENERALISATION -->
+    <SectionGeneralizeModal
+      v-model="genOpen"
+      section-label="Qté & MOMD"
+      :source-variant-id="String((store as any).activeVariantId ?? '') || null"
+      @apply="onApplyGeneralize"
+      @close="() => {}"
+    />
   </div>
 </template>
 
@@ -554,7 +659,7 @@ onMounted(async () => {
   padding: 0;
 }
 
-/* ✅ KPIs: 1 ligne dense sur desktop, plus lignes sur petits écrans */
+/* ✅ KPIs */
 .kpis {
   display: grid;
   grid-template-columns: repeat(8, minmax(120px, 1fr));
@@ -601,7 +706,7 @@ onMounted(async () => {
 
 /* table */
 .tableWrap {
-  overflow-x: auto; /* au cas où sur petits écrans */
+  overflow-x: auto;
 }
 .table {
   width: 100%;
@@ -631,7 +736,7 @@ onMounted(async () => {
 .th,
 .table td {
   border-bottom: 1px solid #e5e7eb;
-  padding: 6px 7px; /* ✅ dense */
+  padding: 6px 7px;
   vertical-align: middle;
 }
 .th {
@@ -694,11 +799,11 @@ onMounted(async () => {
 }
 
 .foot {
-  padding: 7px 10px; /* ✅ petit footer */
+  padding: 7px 10px;
   border-top: 1px solid #e5e7eb;
 }
 
-/* modal compact */
+/* modal compact (confirm/info) */
 .modalMask {
   position: fixed;
   inset: 0;

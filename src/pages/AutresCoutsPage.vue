@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -95,8 +96,6 @@ function cmpParM3For(vf: any): number {
 }
 
 const caTotal = computed(() => {
-  // CA = Σ (PVformule * volume)
-  // PV = CMP + Transport + MOMD
   return formules.value.reduce((s: number, vf: any) => {
     const vol = clamp(getFormDraft(vf.id).volumeM3);
     const momd = clamp(getFormDraft(vf.id).momd);
@@ -118,7 +117,7 @@ const pvMoy = computed(() => {
 type Unite = "FORFAIT" | "MOIS" | "M3" | "POURCENT_CA";
 
 type DraftRow = {
-  _id: string; // local id pour v-for stable
+  _id: string;
   label: string;
   unite: Unite;
   valeur: number;
@@ -156,7 +155,6 @@ function totalFor(r: DraftRow): number {
   if (r.unite === "MOIS") return v * clamp(dureeMois.value);
   if (r.unite === "M3") return v * clamp(volumeTotal.value);
 
-  // POURCENT_CA
   return (v / 100) * clamp(caTotal.value);
 }
 
@@ -171,7 +169,6 @@ function monthlyFor(r: DraftRow): number {
     return totalFor(r) / d;
   }
 
-  // M3 et %CA -> mensuel dépend de volumes mensuels (non dispo)
   return 0;
 }
 
@@ -300,6 +297,52 @@ function askReset() {
     loadFromVariant();
   });
 }
+
+/* =========================
+   ✅ GENERALISER (AutresCouts)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+async function generalizeTo(variantIds: string[]) {
+  const sourceVariantId = String((store as any).activeVariantId ?? (variant.value as any)?.id ?? "").trim();
+  if (!sourceVariantId) return;
+
+  const payload = buildPayload();
+
+  genErr.value = null;
+  genBusy.value = true;
+  try {
+    for (const targetIdRaw of variantIds) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceVariantId) continue;
+
+      await (store as any).updateVariant(targetId, {
+        autresCouts: { items: payload },
+      });
+    }
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const ok = window.confirm(
+    payload.mode === "ALL"
+      ? "Généraliser “Autres coûts” sur TOUTES les variantes ?"
+      : `Généraliser “Autres coûts” sur ${ids.length} variante(s) ?`
+  );
+  if (!ok) return;
+
+  await generalizeTo(ids);
+  if (!genErr.value) genOpen.value = false;
+}
 </script>
 
 <template>
@@ -319,6 +362,7 @@ function askReset() {
       </div>
 
       <div class="hRight">
+        <button class="btn" type="button" :disabled="!variant || genBusy" @click="genOpen = true">Généraliser</button>
         <button class="btn" type="button" :disabled="!variant || saving" @click="addRow()">+ Ajouter</button>
         <button class="btn" type="button" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
         <button class="btn primary" type="button" :disabled="!variant || saving" @click="askSave()">
@@ -326,6 +370,9 @@ function askReset() {
         </button>
       </div>
     </div>
+
+    <div v-if="genErr" class="panel error"><b>Généralisation :</b> {{ genErr }}</div>
+    <div v-if="genBusy" class="panel">Généralisation…</div>
 
     <div v-if="(store as any).loading" class="panel">Chargement…</div>
     <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
@@ -338,7 +385,7 @@ function askReset() {
       </div>
 
       <template v-else>
-        <!-- KPIs: 1 ligne, très compacte -->
+        <!-- KPIs -->
         <div class="kpis">
           <div class="kpi">
             <div class="kLbl">Autres coûts /m³</div>
@@ -358,7 +405,7 @@ function askReset() {
           </div>
         </div>
 
-        <!-- LIST (grid rows) : compact + no overflow -->
+        <!-- LIST -->
         <div class="panel list">
           <div class="listHead">
             <div class="cLabel">Désignation</div>
@@ -373,12 +420,10 @@ function askReset() {
           <div v-if="rows.length === 0" class="empty muted">Aucun autre coût.</div>
 
           <div v-for="(r0, idx) in rows" :key="r0._id" class="row">
-            <!-- label -->
             <div class="cell cLabel">
               <input class="in" v-model="r0.label" placeholder="Ex: Sécurité, gardiennage…" />
             </div>
 
-            <!-- unite -->
             <div class="cell cUnite">
               <select class="in" v-model="r0.unite">
                 <option value="FORFAIT">FORFAIT</option>
@@ -388,7 +433,6 @@ function askReset() {
               </select>
             </div>
 
-            <!-- valeur -->
             <div class="cell cVal r">
               <div class="valWrap">
                 <input
@@ -406,12 +450,10 @@ function askReset() {
               </div>
             </div>
 
-            <!-- computed -->
             <div class="cell cPm3 r mono">{{ n(perM3For(r0), 2) }}</div>
             <div class="cell cTot r mono"><b>{{ money(totalFor(r0), 2) }}</b></div>
             <div class="cell cPct r mono">{{ n(pctFor(r0), 2) }}%</div>
 
-            <!-- actions -->
             <div class="cell cAct r">
               <button class="icon danger" type="button" title="Supprimer" @click="removeRow(idx)">✕</button>
             </div>
@@ -425,7 +467,7 @@ function askReset() {
       </template>
     </template>
 
-    <!-- MODAL -->
+    <!-- MODAL confirm/info -->
     <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
       <div class="modal">
         <div class="modalTitle">{{ modal.title }}</div>
@@ -439,6 +481,15 @@ function askReset() {
         </div>
       </div>
     </div>
+
+    <!-- ✅ MODAL GENERALISATION -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      section-label="Autres coûts"
+      :source-variant-id="String((store as any).activeVariantId ?? (variant?.id ?? '')) || null"
+      @apply="onApplyGeneralize"
+      @close="() => {}"
+    />
   </div>
 </template>
 
@@ -454,7 +505,7 @@ function askReset() {
   padding: 12px;
 }
 
-/* Header (compact, dashboard-like) */
+/* Header */
 .head {
   display: flex;
   align-items: center;
@@ -508,7 +559,7 @@ function askReset() {
 .btn.primary:hover { background: rgba(24, 64, 112, 1); }
 .btn:disabled { opacity: .6; cursor: not-allowed; }
 
-/* KPI row (very compact) */
+/* KPI row */
 .kpis{
   display:grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -623,7 +674,7 @@ function askReset() {
   font-size: 11.5px;
 }
 
-/* responsive: stack columns to avoid overflow */
+/* responsive */
 @media (max-width: 1100px){
   .listHead, .row{
     grid-template-columns: 1.5fr 120px 140px 90px 140px 70px 40px;
@@ -650,7 +701,7 @@ function askReset() {
   .hSub{ white-space: normal; }
 }
 
-/* modal */
+/* modal confirm/info */
 .modalMask {
   position: fixed;
   inset: 0;

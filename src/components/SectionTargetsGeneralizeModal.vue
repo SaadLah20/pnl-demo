@@ -1,38 +1,25 @@
-<!-- src/components/SectionGeneralizeModal.vue -->
+<!-- src/components/SectionTargetsGeneralizeModal.vue -->
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
-export type CopyPreset = "ZERO" | "QTY_ONLY" | "MOMD_ONLY" | "QTY_MOMD";
-
-type VariantRow = {
-  id: string;
-  title: string;
-  status: string;
-  contractLabel: string;
-  ebit: number;
-  pvMoy: number;
-  raw: any;
-};
-
 const props = defineProps<{
   modelValue: boolean;
-  sectionLabel: string; // ex: "Formules", "Qté & MOMD"
+  sectionLabel: string;
   sourceVariantId: string | null;
 }>();
 
 const emit = defineEmits<{
   (e: "update:modelValue", v: boolean): void;
   (e: "close"): void;
-  (e: "apply", payload: { mode: "ALL" | "SELECT"; variantIds: string[]; copy: CopyPreset }): void;
+  (e: "apply", payload: { mode: "ALL" | "SELECT"; variantIds: string[] }): void;
 }>();
 
 const store = usePnlStore();
 const isOpen = computed(() => !!props.modelValue);
 
 const mode = ref<"ALL" | "SELECT">("ALL");
-const copy = ref<CopyPreset>("QTY_MOMD"); // défaut: copie complète
 const picked = reactive<Record<string, boolean>>({});
 const q = ref("");
 
@@ -53,6 +40,15 @@ function computeKpisFor(v: any, dureeMois: number) {
     return null;
   }
 }
+
+type VariantRow = {
+  id: string;
+  title: string;
+  status: string;
+  contractLabel: string;
+  ebit: number;
+  pvMoy: number;
+};
 
 const rows = computed<VariantRow[]>(() => {
   const pnl = store.activePnl;
@@ -83,7 +79,6 @@ const rows = computed<VariantRow[]>(() => {
         contractLabel,
         ebit,
         pvMoy,
-        raw: v,
       });
     }
   }
@@ -109,7 +104,6 @@ watch(
     if (!open) return;
 
     mode.value = "ALL";
-    copy.value = "QTY_MOMD";
     q.value = "";
     for (const k of Object.keys(picked)) delete picked[k];
   }
@@ -121,7 +115,7 @@ function toggleAll(v: boolean) {
 
 function submit() {
   const ids = mode.value === "ALL" ? allIds.value : selectedIds.value;
-  emit("apply", { mode: mode.value, variantIds: ids, copy: copy.value });
+  emit("apply", { mode: mode.value, variantIds: ids });
 }
 </script>
 
@@ -131,7 +125,7 @@ function submit() {
       <div class="head">
         <div class="ttl">
           <div class="h">Généraliser — {{ sectionLabel }}</div>
-          <div class="s">Copier les données de la section active vers d'autres variantes du même P&L</div>
+          <div class="s">Copier la section active vers d'autres variantes du même P&L</div>
         </div>
         <button class="x" @click="close">✕</button>
       </div>
@@ -151,31 +145,6 @@ function submit() {
           <div class="spacer"></div>
 
           <input class="in" v-model="q" placeholder="Filtrer variantes…" />
-        </div>
-
-        <!-- ✅ Combinaisons -->
-        <div class="copyBox">
-          <div class="copyTitle">Données à copier</div>
-
-          <label class="radio line">
-            <input type="radio" value="ZERO" v-model="copy" />
-            <span><b>Formules seulement</b> (Qté = 0, MOMD = 0)</span>
-          </label>
-
-          <label class="radio line">
-            <input type="radio" value="QTY_ONLY" v-model="copy" />
-            <span><b>Formules + Qté</b> (Qté copiée, MOMD = 0)</span>
-          </label>
-
-          <label class="radio line">
-            <input type="radio" value="MOMD_ONLY" v-model="copy" />
-            <span><b>Formules + MOMD</b> (Qté = 0, MOMD copié)</span>
-          </label>
-
-          <label class="radio line">
-            <input type="radio" value="QTY_MOMD" v-model="copy" />
-            <span><b>Formules + Qté + MOMD</b> (copie complète)</span>
-          </label>
         </div>
 
         <div v-if="rows.length === 0" class="empty">Aucune autre variante trouvée dans ce P&L.</div>
@@ -305,9 +274,6 @@ function submit() {
   font-size: 12px;
   color: #111827;
 }
-.radio.line {
-  align-items: flex-start;
-}
 .spacer {
   flex: 1 1 auto;
 }
@@ -322,21 +288,6 @@ function submit() {
 .in:focus {
   border-color: #111827;
   box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.12);
-}
-
-.copyBox {
-  border: 1px solid #eef2f7;
-  background: #fcfcfd;
-  border-radius: 14px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.copyTitle {
-  font-weight: 950;
-  font-size: 12px;
-  color: #111827;
 }
 
 .empty {
