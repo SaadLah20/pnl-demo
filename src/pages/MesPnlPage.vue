@@ -223,6 +223,37 @@ function fmtDate(v: any) {
     return "-";
   }
 }
+function toDateInput(v: any): string {
+  try {
+    if (!v) return "";
+    const d = new Date(v);
+    if (!Number.isFinite(d.getTime())) return "";
+
+    // ✅ On formate en LOCAL (pas en UTC) pour éviter le -1j dans le input date
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`; // YYYY-MM-DD
+  } catch {
+    return "";
+  }
+}
+
+
+function fromDateInput(v: any): string | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+
+  // ✅ On envoie un ISO stable en UTC midnight (pas "local midnight" -> UTC veille)
+  // s = "YYYY-MM-DD"
+  const [y, m, d] = s.split("-").map((x) => Number(x));
+  if (!y || !m || !d) return null;
+
+  const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+  return dt.toISOString();
+}
+
+
 function idShort(id: any) {
   const s = String(id ?? "");
   if (!s) return "";
@@ -476,6 +507,7 @@ const draft = reactive<any>({
   city: "",
   status: "",
   createdAt: "",
+  startDate: "", // ✅ AJOUT
 
   // contract
   ref: "",
@@ -509,6 +541,7 @@ function resetDraft() {
   draft.city = "";
   draft.status = "";
   draft.createdAt = "";
+  draft.startDate = ""; // ✅ AJOUT
 
   draft.ref = "";
   draft.dureeMois = 0;
@@ -550,6 +583,8 @@ function openEdit(mode: EditMode, data: any) {
     draft.city = String(data.city ?? "");
     draft.status = String(data.status ?? "");
     draft.createdAt = data.createdAt ?? "";
+    draft.startDate = toDateInput(data.startDate); // ✅ AJOUT
+
   }
 
   if (mode === "contract") {
@@ -598,6 +633,7 @@ function openCreatePnl() {
   draft.city = "";
   draft.status = "ENCOURS";
   draft.model = draft.model || "MODEL";
+  draft.startDate = new Date().toISOString().slice(0, 10);
 }
 
 function openCreateContract(pnlId: string) {
@@ -632,6 +668,8 @@ async function saveEdit() {
             city: draft.city,
             status: draft.status,
             model: draft.model,
+            startDate: fromDateInput(draft.startDate), // ✅ AJOUT
+
           }),
         });
 
@@ -654,6 +692,7 @@ async function saveEdit() {
           client: draft.client,
           city: draft.city,
           status: draft.status,
+          startDate: fromDateInput(draft.startDate), // ✅ AJOUT
         }),
       });
     }
@@ -1159,6 +1198,11 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <div class="k">Modèle (non modifiable)</div>
                 <input class="in in--disabled" v-model="draft.model" disabled />
               </div>
+              <div class="f">
+  <div class="k">Date de démarrage</div>
+  <input class="in" type="date" v-model="draft.startDate" />
+</div>
+
               <div class="f">
                 <div class="k">Date de création</div>
                 <input class="in in--disabled" :value="fmtDate(draft.createdAt)" disabled />

@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 /* =========================
    STORE / STATE
@@ -13,6 +14,52 @@ const saving = ref(false);
 const error = ref<string | null>(null);
 
 const variant = computed<any | null>(() => (store as any).activeVariant ?? null);
+
+/* =========================
+   ✅ GENERALISER (AJOUT UNIQUEMENT)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+async function generalizeTo(variantIds: string[]) {
+  const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
+  if (!sourceId) return;
+
+  genErr.value = null;
+  genBusy.value = true;
+
+  try {
+    for (const targetIdRaw of variantIds ?? []) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceId) continue;
+
+      // On généralise la map des majorations via la même API/store que "Enregistrer"
+      await (store as any).saveMajorations(targetId, { ...draft.map });
+    }
+
+    genOpen.value = false;
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const msg =
+    payload.mode === "ALL"
+      ? "Confirmer la généralisation des majorations sur TOUTES les variantes ?"
+      : `Confirmer la généralisation des majorations sur ${ids.length} variante(s) ?`;
+
+  // Pas de modal custom ici (page existante) → confirmation simple
+  if (!window.confirm(msg)) return;
+
+  await generalizeTo(ids);
+}
 
 /* =========================
    DRAFT MAJORATIONS (UI)
@@ -62,6 +109,9 @@ function rebuildDraft() {
 
   // IMPORTANT: pas de preview automatique
   (store as any).clearHeaderMajorationsPreview();
+
+  // ✅ ajout uniquement: reset erreurs généraliser
+  genErr.value = null;
 }
 
 onMounted(async () => {
@@ -104,11 +154,10 @@ async function save() {
       ...draft.map,
     });
     // après await saveMajorations(...)
-(store as any).clearHeaderMajorationsPreview();
+    (store as any).clearHeaderMajorationsPreview();
 
-// ✅ IMPORTANT: ne pas forcer l’activation du toggle ici
-// (tu veux rester BASE tant que l’utilisateur n’a pas coché)
-
+    // ✅ IMPORTANT: ne pas forcer l’activation du toggle ici
+    // (tu veux rester BASE tant que l’utilisateur n’a pas coché)
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -272,6 +321,17 @@ function closeAll() {
 
       <div class="maj__actions">
         <button class="maj__btn maj__btn--ghost" type="button" @click="resetAll">Réinit</button>
+
+        <!-- ✅ AJOUT: bouton Généraliser -->
+        <button
+          class="maj__btn maj__btn--primary"
+          type="button"
+          :disabled="!variant?.id || saving || loading || genBusy"
+          @click="genOpen = true"
+        >
+          {{ genBusy ? "..." : "Généraliser" }}
+        </button>
+
         <button class="maj__btn maj__btn--primary" type="button" @click="applyPreview">Appliquer</button>
         <button class="maj__btn maj__btn--success" type="button" :disabled="saving" @click="save">
           {{ saving ? "..." : "Enregistrer" }}
@@ -281,6 +341,11 @@ function closeAll() {
 
     <div v-if="error" class="maj__alert maj__alert--error">
       {{ error }}
+    </div>
+
+    <!-- ✅ AJOUT: erreur généralisation -->
+    <div v-if="genErr" class="maj__alert maj__alert--error">
+      {{ genErr }}
     </div>
 
     <div v-if="loading" class="maj__loading">Chargement…</div>
@@ -326,6 +391,14 @@ function closeAll() {
     <div v-if="!loading" class="maj__foot">
       Quitter la page sans enregistrer annule le preview.
     </div>
+
+    <!-- ✅ AJOUT: modal généraliser -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      sectionLabel="Majorations"
+      :sourceVariantId="variant?.id ?? null"
+      @apply="onApplyGeneralize"
+    />
   </div>
 </template>
 

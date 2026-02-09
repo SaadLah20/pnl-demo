@@ -584,8 +584,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* ===== Header frame ===== */
+/* ===== Header frame (Holcim + Sidebar coherent) ===== */
 .hd {
+  --navy: #184070;
+  --cyan: #20b8e8;
+
   --text: #0f172a;
   --muted: rgba(15, 23, 42, 0.65);
   --border: rgba(16, 24, 40, 0.12);
@@ -595,31 +598,35 @@ onBeforeUnmount(() => {
   z-index: 9999;
   isolation: isolate;
 
-  background: #eef1f6;
+  /* ✅ plus “clean” comme la sidebar */
+  background: #f2f5fa;
   border-bottom: 1px solid var(--border);
 
-  padding: 6px 8px;
+  /* ✅ plus compact */
+  padding: 4px 8px;
   display: grid;
-  gap: 6px;
+  gap: 4px;
+
   overflow-x: hidden;
 }
 .hd.collapsed {
   gap: 0;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
 /* ===== Top bar ===== */
 .bar {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   align-items: stretch;
   width: 100%;
   min-width: 0;
 }
 
+/* sizing: keep same behavior but slightly tighter */
 .pill.pnl {
-  flex: 0 1 360px; /* ✅ réduit pour laisser place aux toggles */
+  flex: 0 1 340px;
   max-width: 420px;
 }
 .pill.contract {
@@ -649,20 +656,21 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 14px;
 
-  padding: 4px 8px; /* ✅ compact */
+  /* ✅ plus compact en hauteur */
+  padding: 3px 8px;
   display: flex;
   align-items: center;
-  gap: 7px; /* ✅ compact */
+  gap: 7px;
 }
 
-/* Controls => readable, flat */
+/* Controls => flat, readable */
 .pill.control {
   background: #f8fafc;
   border-color: rgba(15, 23, 42, 0.16);
 }
 .pill.control:hover {
   background: #f1f5f9;
-  border-color: rgba(2, 132, 199, 0.22);
+  border-color: rgba(32, 184, 232, 0.28);
 }
 
 .pill__head {
@@ -679,6 +687,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+/* mini icon */
 .pill__miniic {
   width: 16px;
   height: 16px;
@@ -686,16 +695,22 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+/* ✅ label compact + net */
 .pill__label {
-  font-size: 10px; /* ✅ compact */
+  font-size: 10px;
   font-weight: 950;
+  letter-spacing: 0.2px;
   color: rgba(15, 23, 42, 0.62);
   white-space: nowrap;
 }
+
+/* ✅ valeur beaucoup plus lisible (demande principale) */
 .pill__value {
-  font-size: 12px; /* ✅ compact */
+  font-size: 13px;           /* ↑ lisibilité */
   font-weight: 950;
-  color: var(--text);
+  color: var(--navy);        /* Holcim navy */
+  line-height: 1.1;
+
   min-width: 0;
   flex: 1 1 auto;
   white-space: nowrap;
@@ -722,9 +737,10 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+/* ✅ icons encore plus compacts */
 .iconbtn {
-  width: 24px; /* ✅ compact */
-  height: 24px; /* ✅ compact */
+  width: 22px;
+  height: 22px;
   border-radius: 9px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
@@ -734,16 +750,16 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .iconbtn:hover {
-  background: rgba(2, 132, 199, 0.08);
-  border-color: rgba(2, 132, 199, 0.18);
+  background: rgba(32, 184, 232, 0.10);
+  border-color: rgba(32, 184, 232, 0.22);
 }
 .ic {
-  width: 14px; /* ✅ compact */
-  height: 14px; /* ✅ compact */
+  width: 13px;
+  height: 13px;
   color: rgba(15, 23, 42, 0.75);
 }
 
-/* ✅ Toggles container à droite du P&L (même hauteur visuelle, no wrap) */
+/* ✅ Toggles container : compact & aligned */
 .hdToggles {
   display: inline-flex;
   align-items: center;
@@ -753,14 +769,13 @@ onBeforeUnmount(() => {
   background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 14px;
-  padding: 4px 8px;
+  padding: 3px 8px;
 
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 
-/* Toggle pill small (réutilisé) */
 .toggSm {
   display: inline-flex;
   align-items: center;
@@ -790,16 +805,16 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* Select overlay clickable */
+/* Select overlay clickable (tight) */
 .contractHead {
   position: relative;
-  min-height: 24px;
+  min-height: 22px; /* ✅ plus compact */
 }
 .pill__selectOverlay {
   position: absolute;
-  inset: -6px;
-  width: calc(100% + 12px);
-  height: calc(100% + 12px);
+  inset: -4px; /* ✅ moins agressif que -6 (évite “décalages” visuels) */
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
   opacity: 0;
   cursor: pointer;
   border: none;
@@ -811,8 +826,8 @@ onBeforeUnmount(() => {
 
 /* fold button */
 .foldBtn {
-  width: 32px; /* ✅ compact */
-  height: 32px; /* ✅ compact */
+  width: 30px;
+  height: 30px;
   border-radius: 13px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(255, 255, 255, 0.9);
@@ -823,12 +838,12 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 .foldBtn:hover {
-  background: rgba(2, 132, 199, 0.08);
-  border-color: rgba(2, 132, 199, 0.18);
+  background: rgba(32, 184, 232, 0.10);
+  border-color: rgba(32, 184, 232, 0.22);
 }
 .foldIc {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   transition: transform 160ms ease;
   color: rgba(15, 23, 42, 0.75);
 }
@@ -836,7 +851,7 @@ onBeforeUnmount(() => {
   transform: rotate(180deg);
 }
 
-/* ===== Dropdown ===== */
+/* ===== Dropdown (kept, just palette aligned) ===== */
 .dd {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -865,7 +880,7 @@ onBeforeUnmount(() => {
   outline: none;
   background: transparent;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.88);
 }
 .dd__list {
@@ -887,8 +902,8 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 .dd__item:hover {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.16);
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.18);
 }
 .dd__item.active {
   background: rgba(16, 185, 129, 0.08);
@@ -915,7 +930,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-/* ===== Cockpit ===== */
+/* ===== Cockpit / KPI / Summary (UNCHANGED from your original) ===== */
 .cockpit {
   display: grid;
   grid-template-columns: 1fr 185px;
@@ -928,8 +943,6 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 }
-
-/* transition fold */
 .hdFold-enter-active,
 .hdFold-leave-active {
   transition: max-height 200ms ease, opacity 160ms ease, transform 160ms ease;
@@ -947,7 +960,6 @@ onBeforeUnmount(() => {
   opacity: 1;
   transform: translateY(0);
 }
-
 .kpis-left {
   display: grid;
   gap: 6px;
@@ -964,58 +976,30 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ===== KPI flat + compact height ===== */
+/* ===== KPI flat + compact height (as in your file) ===== */
 .kpi {
   position: relative;
-
   --accent: rgba(148, 163, 184, 0.9);
   background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-left: 4px solid var(--accent);
   border-radius: 14px;
-
   padding: 7px 8px 7px 7px;
   overflow: hidden;
 }
+.kpi.asp { --accent: rgba(2, 132, 199, 0.9); }
+.kpi.cmp { --accent: rgba(67, 56, 202, 0.88); }
+.kpi.transport { --accent: rgba(234, 88, 12, 0.86); }
+.kpi.momd { --accent: rgba(147, 51, 234, 0.86); }
+.kpi.prod { --accent: rgba(13, 148, 136, 0.86); }
+.kpi.ebitda { --accent: rgba(5, 150, 105, 0.86); }
+.kpi.amort { --accent: rgba(71, 85, 105, 0.78); }
 
-/* Palette via accent ONLY */
-.kpi.asp {
-  --accent: rgba(2, 132, 199, 0.9);
-}
-.kpi.cmp {
-  --accent: rgba(67, 56, 202, 0.88);
-}
-.kpi.transport {
-  --accent: rgba(234, 88, 12, 0.86);
-}
-.kpi.momd {
-  --accent: rgba(147, 51, 234, 0.86);
-}
-.kpi.prod {
-  --accent: rgba(13, 148, 136, 0.86);
-}
-.kpi.ebitda {
-  --accent: rgba(5, 150, 105, 0.86);
-}
-.kpi.amort {
-  --accent: rgba(71, 85, 105, 0.78);
-}
+.kpi.ebit.ebit-neg { --accent: rgba(220, 38, 38, 0.88); }
+.kpi.ebit.ebit-low { --accent: rgba(245, 158, 11, 0.88); }
+.kpi.ebit.ebit-mid { --accent: rgba(37, 99, 235, 0.88); }
+.kpi.ebit.ebit-good { --accent: rgba(16, 185, 129, 0.9); }
 
-/* EBIT bucket: keep logic */
-.kpi.ebit.ebit-neg {
-  --accent: rgba(220, 38, 38, 0.88);
-}
-.kpi.ebit.ebit-low {
-  --accent: rgba(245, 158, 11, 0.88);
-}
-.kpi.ebit.ebit-mid {
-  --accent: rgba(37, 99, 235, 0.88);
-}
-.kpi.ebit.ebit-good {
-  --accent: rgba(16, 185, 129, 0.9);
-}
-
-/* KPI content (compact) */
 .kpi__top {
   display: flex;
   justify-content: space-between;
@@ -1029,7 +1013,6 @@ onBeforeUnmount(() => {
   letter-spacing: 0.35px;
   color: rgba(15, 23, 42, 0.72);
 }
-
 .kpi__pct {
   font-size: 10px;
   font-weight: 950;
@@ -1044,7 +1027,6 @@ onBeforeUnmount(() => {
   padding: 4px 12px;
   letter-spacing: 0.2px;
 }
-
 .kpi__valRow {
   display: flex;
   justify-content: center;
@@ -1067,7 +1049,6 @@ onBeforeUnmount(() => {
   font-weight: 900;
   color: rgba(15, 23, 42, 0.5);
 }
-
 .kpi__mini {
   margin-top: 5px;
   display: flex;
@@ -1079,50 +1060,29 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.7);
   font-variant-numeric: tabular-nums;
 }
-.mini__left {
+.mini__left, .mini__right {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
   white-space: nowrap;
 }
 .mini__right {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
   min-width: 0;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dot {
-  color: rgba(15, 23, 42, 0.26);
-}
-.kmini {
-  font-size: 10px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.82);
-}
-.kmini.m3 {
-  color: rgba(24, 64, 112, 0.95);
-  font-weight: 950;
-}
-.u {
-  font-size: 9px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.45);
-}
-.u.m3u {
-  color: rgba(24, 64, 112, 0.6);
-  font-weight: 950;
-}
+.dot { color: rgba(15, 23, 42, 0.26); }
+.kmini { font-size: 10px; font-weight: 950; color: rgba(15, 23, 42, 0.82); }
+.kmini.m3 { color: rgba(24, 64, 112, 0.95); font-weight: 950; }
+.u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.45); }
+.u.m3u { color: rgba(24, 64, 112, 0.6); font-weight: 950; }
 
-/* ===== EBIT HERO (flat, premium, compact) ===== */
+/* ===== EBIT HERO (as your file) ===== */
 .kpi.ebit.hero {
   border-left-width: 6px;
   outline: 2px solid rgba(15, 23, 42, 0.08);
   outline-offset: 0px;
 }
-
 .kpi.ebit.hero::after {
   content: "";
   position: absolute;
@@ -1131,8 +1091,6 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
 }
-
-/* Title + value more “hero” without adding height */
 .kpi.ebit.hero .kpi__name {
   font-size: 11px;
   letter-spacing: 0.55px;
@@ -1157,8 +1115,6 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 950;
 }
-
-/* Keep bucket tint on badge only (still flat) */
 .kpi.ebit.ebit-neg .kpi__pct.hot {
   color: rgba(185, 28, 28, 0.98);
   border-color: rgba(220, 38, 38, 0.3);
@@ -1180,7 +1136,7 @@ onBeforeUnmount(() => {
   background: rgba(16, 185, 129, 0.07);
 }
 
-/* ===== Summary flat ===== */
+/* ===== Summary (unchanged) ===== */
 .summary {
   background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -1188,8 +1144,6 @@ onBeforeUnmount(() => {
   padding: 9px 9px 7px;
   overflow: hidden;
 }
-
-/* ✅ head (toggles removed) */
 .summary__head {
   display: flex;
   align-items: center;
@@ -1197,7 +1151,6 @@ onBeforeUnmount(() => {
   gap: 8px;
   margin-bottom: 6px;
 }
-
 .summary__title {
   font-size: 11px;
   font-weight: 950;
@@ -1206,7 +1159,6 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.68);
   margin-bottom: 0;
 }
-
 .summary__grid {
   display: grid;
   gap: 7px;

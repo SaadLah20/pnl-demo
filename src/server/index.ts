@@ -1077,6 +1077,13 @@ app.post("/pnls", async (req: Request, res: Response) => {
 
         status: String(body.status ?? "ENCOURS"),
         model: String(body.model ?? "MODEL"),
+        startDate:
+  body.startDate === undefined
+    ? undefined
+    : body.startDate
+    ? new Date(String(body.startDate))
+    : null,
+
       } as any,
     });
 
@@ -1105,6 +1112,13 @@ app.put("/pnls/:id", async (req: Request, res: Response) => {
         region: req.body?.region === undefined ? undefined : String(req.body.region ?? ""),
 
         status: req.body?.status === undefined ? undefined : String(req.body.status),
+        startDate:
+  req.body?.startDate === undefined
+    ? undefined
+    : req.body?.startDate
+    ? new Date(String(req.body.startDate))
+    : null,
+
       } as any,
     });
 

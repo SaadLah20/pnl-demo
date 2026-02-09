@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -260,6 +261,53 @@ function askReset() {
     loadFromVariant();
   });
 }
+
+/* =========================
+   ✅ GENERALISER (AJOUT UNIQUEMENT)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+async function generalizeTo(variantIds: string[]) {
+  const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
+  if (!sourceId) return;
+
+  const payload = buildPayload();
+
+  genErr.value = null;
+  genBusy.value = true;
+  try {
+    for (const targetIdRaw of variantIds ?? []) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceId) continue;
+
+      await (store as any).updateVariant(targetId, { coutOccasionnel: payload });
+    }
+    openInfo("Généralisé", "La section Coûts occasionnels a été généralisée sur les variantes ciblées.");
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+    openInfo("Erreur", String(genErr.value ?? e?.message ?? e));
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const msg =
+    payload.mode === "ALL"
+      ? "Confirmer la généralisation de la section Coûts occasionnels sur TOUTES les variantes ?"
+      : `Confirmer la généralisation de la section Coûts occasionnels sur ${ids.length} variante(s) ?`;
+
+  openConfirm("Généraliser Coûts occasionnels", msg, async () => {
+    closeModal();
+    await generalizeTo(ids);
+    if (!genErr.value) genOpen.value = false;
+  });
+}
 </script>
 
 <template>
@@ -276,6 +324,12 @@ function askReset() {
 
       <div class="actions">
         <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
+
+        <!-- ✅ AJOUT: bouton Généraliser -->
+        <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
+          {{ genBusy ? "..." : "Généraliser" }}
+        </button>
+
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
           {{ saving ? "..." : "Enregistrer" }}
         </button>
@@ -287,6 +341,10 @@ function askReset() {
 
     <template v-else>
       <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
+
+      <!-- ✅ AJOUT: feedback généralisation -->
+      <div v-if="genErr" class="panel error"><b>Généralisation :</b> {{ genErr }}</div>
+      <div v-if="genBusy" class="panel"><b>Généralisation :</b> traitement…</div>
 
       <div v-if="!variant" class="panel"><div class="muted">Sélectionne une variante.</div></div>
 
@@ -355,13 +413,7 @@ function askReset() {
               <div class="field">
                 <div class="label">Montant</div>
                 <div class="inCell">
-                  <input
-                    class="inputMoney"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    v-model.number="draft.remisePointCentrale"
-                  />
+                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.remisePointCentrale" />
                   <span class="unit">DH</span>
                 </div>
               </div>
@@ -426,6 +478,14 @@ function askReset() {
       </template>
     </template>
 
+    <!-- ✅ AJOUT: MODAL GENERALISATION -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      sectionLabel="Coûts occasionnels"
+      :sourceVariantId="variant?.id ?? null"
+      @apply="onApplyGeneralize"
+    />
+
     <!-- MODAL -->
     <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
       <div class="modal">
@@ -433,7 +493,9 @@ function askReset() {
         <div class="modalMsg">{{ modal.message }}</div>
         <div class="modalActions">
           <button class="btn" @click="closeModal()">Fermer</button>
-          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">Confirmer</button>
+          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
+            Confirmer
+          </button>
         </div>
       </div>
     </div>
