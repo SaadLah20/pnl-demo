@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -116,7 +117,58 @@ const total = computed(() => monthly.value * clamp(dureeMois.value));
 const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
-/* modal */
+/* ✅ GENERALISER (employes) */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+function buildPayload() {
+  const existing: any = (variant.value as any)?.employes ?? {};
+  const out: any = { category: existing.category ?? "COUTS_CHARGES" };
+  for (const g of EMP_GROUPS) {
+    out[`${g.key}Nb`] = Number(clamp(draft[`${g.key}Nb`], 0, 9999));
+    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`], 0, 999999));
+  }
+  return out;
+}
+
+async function generalizeEmployesTo(variantIds: string[]) {
+  const sourceVariantId = String(variant.value?.id ?? (store as any).activeVariantId ?? "").trim();
+  if (!sourceVariantId) return;
+
+  const payload = buildPayload();
+
+  genErr.value = null;
+  genBusy.value = true;
+  try {
+    for (const idRaw of variantIds) {
+      const targetId = String(idRaw ?? "").trim();
+      if (!targetId || targetId === sourceVariantId) continue;
+      await (store as any).updateVariant(targetId, { employes: payload });
+    }
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const ok = window.confirm(
+    payload.mode === "ALL"
+      ? "Généraliser “Coûts employés” sur TOUTES les variantes ?"
+      : `Généraliser “Coûts employés” sur ${ids.length} variante(s) ?`
+  );
+  if (!ok) return;
+
+  await generalizeEmployesTo(ids);
+  if (!genErr.value) genOpen.value = false;
+}
+
+/* modal (confirm/info) */
 const modal = reactive({
   open: false,
   title: "",
@@ -148,16 +200,6 @@ function closeModal() {
 /* save/reset */
 const saving = ref(false);
 const err = ref<string | null>(null);
-
-function buildPayload() {
-  const existing: any = (variant.value as any)?.employes ?? {};
-  const out: any = { category: existing.category ?? "COUTS_CHARGES" };
-  for (const g of EMP_GROUPS) {
-    out[`${g.key}Nb`] = Number(clamp(draft[`${g.key}Nb`], 0, 9999));
-    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`], 0, 999999));
-  }
-  return out;
-}
 
 async function save() {
   if (!variant.value) return;
@@ -200,12 +242,16 @@ function askReset() {
       </div>
 
       <div class="actions">
+        <button class="btn" :disabled="!variant || genBusy" @click="genOpen = true">Généraliser</button>
         <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
           {{ saving ? "..." : "Enregistrer" }}
         </button>
       </div>
     </div>
+
+    <div v-if="genErr" class="panel error"><b>Généralisation :</b> {{ genErr }}</div>
+    <div v-if="genBusy" class="panel">Généralisation…</div>
 
     <div v-if="(store as any).loading" class="panel">Chargement…</div>
     <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
@@ -304,6 +350,15 @@ function askReset() {
         </div>
       </div>
     </div>
+
+    <!-- ✅ MODAL GENERALISATION -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      section-label="Coûts employés"
+      :source-variant-id="String((store as any).activeVariantId ?? (variant?.id ?? '')) || null"
+      @apply="onApplyGeneralize"
+      @close="() => {}"
+    />
   </div>
 </template>
 
@@ -434,7 +489,7 @@ function askReset() {
   font-weight: 900;
 }
 
-/* ✅ responsive grid: jamais de débordement */
+/* responsive grid */
 .gridCards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -472,7 +527,6 @@ function askReset() {
   white-space: nowrap;
 }
 
-/* ✅ champs + unités: toujours contenues */
 .empRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -512,7 +566,6 @@ function askReset() {
   font-weight: 900;
 }
 
-/* ✅ tailles + responsive: pas de width fixe, jamais de débordement */
 .inputNb,
 .inputCout {
   border: 1px solid #d1d5db;
@@ -524,18 +577,13 @@ function askReset() {
   text-align: right;
   min-width: 0;
 }
-
-/* Nb compact (mais responsive) */
 .inputNb {
   max-width: 92px;
 }
-
-/* Coût: correct pour 6 chiffres, mais s’adapte */
 .inputCout {
   max-width: 140px;
 }
 
-/* ✅ champs /mois distingués */
 .inputMonth {
   border-color: rgba(59, 130, 246, 0.35);
   background: rgba(239, 246, 255, 0.8);
@@ -601,7 +649,6 @@ function askReset() {
   margin-top: 12px;
 }
 
-/* petit écran: empRow empile */
 @media (max-width: 420px) {
   .empRow {
     grid-template-columns: 1fr;

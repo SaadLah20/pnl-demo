@@ -36,15 +36,11 @@ async function jsonFetch(url: string, opts?: RequestInit) {
     // patches métier
     if (j?.error === "FORMULE_IN_USE") {
       const d = j?.details ?? {};
-      msg = `Formule utilisée dans des variantes (${Number(
-        d.usedInVariants ?? 0
-      )}). Supprime d'abord les références.`;
+      msg = `Formule utilisée dans des variantes (${Number(d.usedInVariants ?? 0)}). Supprime d'abord les références.`;
     }
     if (j?.error === "MP_IN_USE") {
       const d = j?.details ?? {};
-      msg = `MP utilisée (formules: ${Number(d.usedInFormules ?? 0)}, variantes: ${Number(
-        d.usedInVariants ?? 0
-      )}).`;
+      msg = `MP utilisée (formules: ${Number(d.usedInFormules ?? 0)}, variantes: ${Number(d.usedInVariants ?? 0)}).`;
     }
 
     throw new Error(msg);
@@ -70,6 +66,7 @@ export const usePnlStore = defineStore("pnl", {
 
     loading: false,
     error: null as string | null,
+
     headerUseMajorations: false,
     headerUseDevisSurcharge: false,
 
@@ -103,48 +100,43 @@ export const usePnlStore = defineStore("pnl", {
       return null;
     },
 
-activeHeaderKPIs(): any {
-  const variant = (this as any).activeVariant;
-  if (!variant) return null;
+    activeHeaderKPIs(): any {
+      const variant = (this as any).activeVariant;
+      if (!variant) return null;
 
-  const dureeMois = (this as any).activeContract?.dureeMois ?? 0;
+      const dureeMois = (this as any).activeContract?.dureeMois ?? 0;
 
-  const useMaj = Boolean((this as any).headerUseMajorations);
-  const majPreview = (this as any).headerMajorationsPreview as Record<string, number> | null;
+      const useMaj = Boolean((this as any).headerUseMajorations);
+      const majPreview = (this as any).headerMajorationsPreview as Record<string, number> | null;
 
-  const useDevis = Boolean((this as any).headerUseDevisSurcharge);
-  const devisPreview = (this as any).headerDevisSurchargesPreview as Record<string, number> | null;
+      const useDevis = Boolean((this as any).headerUseDevisSurcharge);
+      const devisPreview = (this as any).headerDevisSurchargesPreview as Record<string, number> | null;
 
-  // ✅ Si "Avec majoration" est OFF → calcul BASE garanti
-  const vForCalc = useMaj
-    ? variant
-    : {
-        ...variant,
-        autresCouts: {
-          ...(variant.autresCouts ?? {}),
-          majorations: null,
-        },
-      };
+      // ✅ Si "Avec majoration" est OFF → calcul BASE garanti
+      const vForCalc = useMaj
+        ? variant
+        : {
+            ...variant,
+            autresCouts: {
+              ...(variant.autresCouts ?? {}),
+              majorations: null,
+            },
+          };
 
-  // ✅ Ajout surcharge devis (persistée + preview) uniquement si toggle ON
-  return computeHeaderKpis(
-    vForCalc,
-    dureeMois,
-    useMaj ? majPreview : null,
-    useDevis ? devisPreview : null,
-    useDevis
-  );
-},
-
-
+      // ✅ surcharge devis (persistée + preview) uniquement si toggle ON
+      return computeHeaderKpis(
+        vForCalc,
+        Number(dureeMois ?? 0),
+        useMaj ? majPreview : null,
+        useDevis ? devisPreview : null,
+        useDevis
+      );
+    },
   },
 
   actions: {
-
     /* =========================
        ACTIVE SELECTION (UI)
-       - utilisé par MesPnlPage.vue
-       - permet à "Ouvrir" + sélection initiale de fonctionner
     ========================= */
     setActivePnl(id: string | null) {
       this.activePnlId = id ? String(id) : null;
@@ -155,7 +147,7 @@ activeHeaderKPIs(): any {
         const stillThere =
           !!pnl &&
           (pnl.contracts ?? []).some((c: any) =>
-            (c.variants ?? []).some((v: any) => String(v?.id ?? "") === String(this.activeVariantId)),
+            (c.variants ?? []).some((v: any) => String(v?.id ?? "") === String(this.activeVariantId))
           );
         if (!stillThere) this.activeVariantId = null;
       }
@@ -169,7 +161,7 @@ activeHeaderKPIs(): any {
         for (const p of this.pnls ?? []) {
           for (const c of (p as any)?.contracts ?? []) {
             const hit = (c?.variants ?? []).some(
-              (v: any) => String(v?.id ?? "") === String(this.activeVariantId),
+              (v: any) => String(v?.id ?? "") === String(this.activeVariantId)
             );
             if (hit) {
               this.activePnlId = String((p as any)?.id ?? null);
@@ -180,74 +172,85 @@ activeHeaderKPIs(): any {
       }
     },
 
-    // MesPnlPage appelle setActiveContract, mais dans notre store
-    // la relation "contrat actif" est déduite via activeVariantId.
-    // On laisse cette action pour compatibilité.
     setActiveContract(_id: string | null) {
       /* no-op */
     },
 
-    // -------------------------
-    // internal helper
-    // -------------------------
-// -------------------------
-// internal helper
-// -------------------------
-replaceActiveVariantInState(next: AnyObj) {
-  if (!next?.id) return;
+    // =========================================================
+    // internal helper (robuste + merge sections)
+    // =========================================================
+    replaceActiveVariantInState(next: AnyObj) {
+      if (!next?.id) return;
 
-  const pnl = this.pnls.find((p) => p.id === this.activePnlId);
-  if (!pnl) return;
+      // ✅ 1) essaie d'abord dans le pnl actif
+      const pools = [];
+      const active = this.pnls.find((p) => p.id === this.activePnlId);
+      if (active) pools.push(active);
 
-  for (const c of pnl.contracts ?? []) {
-    const i = (c.variants ?? []).findIndex((v: any) => v.id === next.id);
-    if (i < 0) continue;
-
-    const prev = c.variants[i] ?? {};
-
-    // ✅ merge shallow (empêche "formules only" d'écraser le reste)
-    const merged: AnyObj = { ...prev, ...next };
-
-    // ✅ merge shallow des sections (évite perte de sous-champs)
-    const sectionKeys = [
-      "cab",
-      "transport",
-      "mp",
-      "formules",
-      "momd",
-      "maintenance",
-      "coutM3",
-      "coutMensuel",
-      "coutEmployes",
-      "coutsOccasionnels",
-      "autresCouts",
-      "majorations",
-      "devis",
-      "details",
-    ];
-
-    for (const k of sectionKeys) {
-      const p = (prev as any)?.[k];
-      const n = (next as any)?.[k];
-      if (p && n && typeof p === "object" && typeof n === "object" && !Array.isArray(p) && !Array.isArray(n)) {
-        merged[k] = { ...p, ...n };
+      // ✅ 2) fallback: chercher partout (si activePnlId pas synchro)
+      for (const p of this.pnls) {
+        if (p?.id !== active?.id) pools.push(p);
       }
-    }
 
-    c.variants[i] = merged;
+      for (const pnl of pools) {
+        for (const c of pnl.contracts ?? []) {
+          const i = (c.variants ?? []).findIndex((v: any) => v.id === next.id);
+          if (i < 0) continue;
 
-    // ✅ garde activeVariantId cohérent
-    this.activeVariantId = merged.id;
+          const prev = c.variants[i] ?? {};
 
-    return;
-  }
-},
+          // ✅ merge shallow (empêche "formules only" d'écraser le reste)
+          const merged: AnyObj = { ...prev, ...next };
 
+          // ✅ merge shallow des sections (évite perte de sous-champs)
+          const sectionKeys = [
+            "cab",
+            "transport",
+            "mp",
+            "formules",
+            "momd",
+            "maintenance",
+            "coutM3",
+            "coutMensuel",
+            "coutEmployes",
+            "coutsOccasionnels",
+            "autresCouts",
+            "majorations",
+            "devis",
+            "details",
+          ];
 
+          for (const k of sectionKeys) {
+            const p = (prev as any)?.[k];
+            const n = (next as any)?.[k];
+            if (
+              p &&
+              n &&
+              typeof p === "object" &&
+              typeof n === "object" &&
+              !Array.isArray(p) &&
+              !Array.isArray(n)
+            ) {
+              merged[k] = { ...p, ...n };
+            }
+          }
 
-    // -------------------------
+          c.variants[i] = merged;
+
+          // ✅ garde activeVariantId cohérent
+          this.activeVariantId = merged.id;
+
+          // ✅ si on a trouvé dans un autre pnl, on synchronise aussi activePnlId
+          this.activePnlId = String((pnl as any)?.id ?? this.activePnlId);
+
+          return;
+        }
+      }
+    },
+
+    // =========================================================
     // Load hierarchy
-    // -------------------------
+    // =========================================================
     async loadPnls() {
       this.loading = true;
       this.error = null;
@@ -260,6 +263,11 @@ replaceActiveVariantInState(next: AnyObj) {
         if (this.activePnlId && !this.pnls.some((p) => p.id === this.activePnlId)) {
           this.activePnlId = this.pnls[0]?.id ?? null;
         }
+
+        // si variant active mais pnl pas set, on resync
+        if (this.activeVariantId && !this.activePnlId) {
+          this.setActiveVariant(this.activeVariantId);
+        }
       } catch (e: any) {
         this.error = e?.message ?? String(e);
       } finally {
@@ -267,163 +275,140 @@ replaceActiveVariantInState(next: AnyObj) {
       }
     },
 
-    // -------------------------
+    // =========================================================
     // Catalogues
-    // -------------------------
+    // =========================================================
     async loadMpCatalogue() {
       const data = await jsonFetch("/mp-catalogue");
       this.mpCatalogue = data ?? [];
     },
-    // -------------------------
-// ✅ MP Catalogue (UPDATE)
-// -------------------------
-async updateMpCatalogue(mpId: string, patch: Record<string, any>) {
-  const id = encodeURIComponent(String(mpId ?? ""));
-  const updated = await jsonFetch(`/mp-catalogue/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(patch ?? {}),
-  });
 
-  // 1) met à jour le catalogue en mémoire
-  const i = (this.mpCatalogue ?? []).findIndex((m: any) => m.id === updated?.id);
-  if (i >= 0) this.mpCatalogue[i] = { ...this.mpCatalogue[i], ...updated };
-  else if (updated?.id) this.mpCatalogue.unshift(updated);
+    async updateMpCatalogue(mpId: string, patch: Record<string, any>) {
+      const id = encodeURIComponent(String(mpId ?? ""));
+      const updated = await jsonFetch(`/mp-catalogue/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(patch ?? {}),
+      });
 
-  // 2) optionnel mais recommandé : patch aussi les MP déjà “embarquées” dans les variantes
-  // (sinon tu ne verras les changements qu’après reloadPnls)
-  if (updated?.id) {
-    for (const p of this.pnls ?? []) {
-      for (const c of p.contracts ?? []) {
-        for (const v of c.variants ?? []) {
-          const items = v?.mp?.items ?? [];
-          for (const it of items) {
-            if (it?.mpId === updated.id && it?.mp) {
-              it.mp = { ...it.mp, ...updated };
+      // 1) met à jour le catalogue en mémoire
+      const i = (this.mpCatalogue ?? []).findIndex((m: any) => m.id === updated?.id);
+      if (i >= 0) this.mpCatalogue[i] = { ...this.mpCatalogue[i], ...updated };
+      else if (updated?.id) this.mpCatalogue.unshift(updated);
+
+      // 2) patch aussi les MP déjà embarquées dans les variantes
+      if (updated?.id) {
+        for (const p of this.pnls ?? []) {
+          for (const c of p.contracts ?? []) {
+            for (const v of c.variants ?? []) {
+              const items = v?.mp?.items ?? [];
+              for (const it of items) {
+                if (it?.mpId === updated.id && it?.mp) {
+                  it.mp = { ...it.mp, ...updated };
+                }
+              }
             }
           }
         }
       }
-    }
-  }
 
-  return updated;
-},
+      return updated;
+    },
+
+    async createMpCatalogue(payload: Record<string, any>) {
+      const created = await jsonFetch("/mp-catalogue", {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      });
+
+      if (created?.id) {
+        const i = (this.mpCatalogue ?? []).findIndex((m: any) => m.id === created.id);
+        if (i >= 0) this.mpCatalogue[i] = { ...this.mpCatalogue[i], ...created };
+        else this.mpCatalogue.unshift(created);
+      }
+
+      return created;
+    },
+
+    async deleteMpCatalogue(mpId: string) {
+      const id = encodeURIComponent(String(mpId ?? ""));
+      const resp = await jsonFetch(`/mp-catalogue/${id}`, { method: "DELETE" });
+
+      this.mpCatalogue = (this.mpCatalogue ?? []).filter((m: any) => m.id !== mpId);
+      return resp;
+    },
 
     async loadFormulesCatalogue() {
       const data = await jsonFetch("/formules-catalogue");
       this.formulesCatalogue = data ?? [];
     },
 
-    async createMpCatalogue(payload: Record<string, any>) {
-  const created = await jsonFetch("/mp-catalogue", {
-    method: "POST",
-    body: JSON.stringify(payload ?? {}),
-  });
+    async updateFormuleCatalogue(formuleId: string, patch: Record<string, any>) {
+      const id = encodeURIComponent(String(formuleId ?? ""));
+      const updated = await jsonFetch(`/formules-catalogue/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(patch ?? {}),
+      });
 
-  if (created?.id) {
-    const i = (this.mpCatalogue ?? []).findIndex((m: any) => m.id === created.id);
-    if (i >= 0) this.mpCatalogue[i] = { ...this.mpCatalogue[i], ...created };
-    else this.mpCatalogue.unshift(created);
-  }
+      const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === updated?.id);
+      if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...updated };
+      else if (updated?.id) this.formulesCatalogue.unshift(updated);
 
-  return created;
-},
+      return updated;
+    },
 
-async deleteMpCatalogue(mpId: string) {
-  const id = encodeURIComponent(String(mpId ?? ""));
-  const resp = await jsonFetch(`/mp-catalogue/${id}`, { method: "DELETE" });
+    async updateFormuleCatalogueItems(formuleId: string, items: Array<{ mpId: string; qty: number }>) {
+      const id = encodeURIComponent(String(formuleId ?? ""));
 
-  this.mpCatalogue = (this.mpCatalogue ?? []).filter((m: any) => m.id !== mpId);
-  return resp; // { ok: true }
-},
+      const resp = await jsonFetch(`/formules-catalogue/${id}/items`, {
+        method: "PUT",
+        body: JSON.stringify({ items: items ?? [] }),
+      });
 
-    // -------------------------
-// ✅ Formules Catalogue (UPDATE meta)
-// -------------------------
-async updateFormuleCatalogue(formuleId: string, patch: Record<string, any>) {
-  const id = encodeURIComponent(String(formuleId ?? ""));
-  const updated = await jsonFetch(`/formules-catalogue/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(patch ?? {}),
-  });
+      const updated = (resp as any)?.updated ?? null;
 
-  // met à jour le cache local du catalogue
-  const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === updated?.id);
-  if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...updated };
-  else if (updated?.id) this.formulesCatalogue.unshift(updated);
+      if (updated?.id) {
+        const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === updated.id);
+        if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...updated };
+        else this.formulesCatalogue.unshift(updated);
+      }
 
-  return updated;
-},
+      return resp;
+    },
 
-// -------------------------
-// ✅ Formules Catalogue (UPDATE items)
-// -------------------------
-async updateFormuleCatalogueItems(formuleId: string, items: Array<{ mpId: string; qty: number }>) {
-  const id = encodeURIComponent(String(formuleId ?? ""));
+    async createFormuleCatalogue(payload: Record<string, any>) {
+      const created = await jsonFetch(`/formules-catalogue`, {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      });
 
-  const resp = await jsonFetch(`/formules-catalogue/${id}/items`, {
-    method: "PUT",
-    body: JSON.stringify({ items: items ?? [] }),
-  });
+      if (created?.id) {
+        const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === created.id);
+        if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...created };
+        else this.formulesCatalogue.unshift(created);
+      }
 
-  const updated = (resp as any)?.updated ?? null;
+      return created;
+    },
 
-  if (updated?.id) {
-    const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === updated.id);
-    if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...updated };
-    else this.formulesCatalogue.unshift(updated);
-  }
+    async deleteFormuleCatalogue(formuleId: string) {
+      const id = encodeURIComponent(String(formuleId ?? ""));
 
-  return resp;
-},
+      try {
+        const resp = await jsonFetch(`/formules-catalogue/${id}`, { method: "DELETE" });
+        this.formulesCatalogue = (this.formulesCatalogue ?? []).filter((f: any) => f.id !== formuleId);
+        return resp;
+      } catch (e: any) {
+        const msg =
+          e?.error === "FORMULE_IN_USE"
+            ? "Impossible : cette formule est utilisée dans au moins une variante."
+            : e?.message ?? String(e);
+        throw new Error(msg);
+      }
+    },
 
-// -------------------------
-// ✅ Formules Catalogue (CREATE)
-// -------------------------
-async createFormuleCatalogue(payload: Record<string, any>) {
-  const created = await jsonFetch(`/formules-catalogue`, {
-    method: "POST",
-    body: JSON.stringify(payload ?? {}),
-  });
-
-  // met à jour le cache local
-  if (created?.id) {
-    const i = (this.formulesCatalogue ?? []).findIndex((f: any) => f.id === created.id);
-    if (i >= 0) this.formulesCatalogue[i] = { ...this.formulesCatalogue[i], ...created };
-    else this.formulesCatalogue.unshift(created);
-  }
-
-  return created;
-},
-
-// -------------------------
-// ✅ Formules Catalogue (DELETE)
-// -------------------------
-async deleteFormuleCatalogue(formuleId: string) {
-  const id = encodeURIComponent(String(formuleId ?? ""));
-
-  try {
-    const resp = await jsonFetch(`/formules-catalogue/${id}`, { method: "DELETE" });
-
-    // sync cache local
-    this.formulesCatalogue = (this.formulesCatalogue ?? []).filter((f: any) => f.id !== formuleId);
-
-    return resp; // { ok: true }
-  } catch (e: any) {
-    // ton backend renvoie souvent { error: "FORMULE_IN_USE", details: { usedInVariants } }
-    const msg =
-      e?.error === "FORMULE_IN_USE"
-        ? "Impossible : cette formule est utilisée dans au moins une variante."
-        : e?.message ?? String(e);
-
-    throw new Error(msg);
-  }
-},
-
-
-    // -------------------------
+    // =========================================================
     // Header toggles / preview
-    // -------------------------
+    // =========================================================
     setHeaderMajorationsPreview(map: Record<string, number> | null) {
       this.headerMajorationsPreview = map;
     },
@@ -434,6 +419,10 @@ async deleteFormuleCatalogue(formuleId: string) {
     clearHeaderMajorationsPreview() {
       this.headerMajorationsPreview = null;
     },
+    clearHeaderDevisSurchargesPreview() {
+      this.headerDevisSurchargesPreview = null;
+    },
+
     setHeaderUseMajorations(v: boolean) {
       (this as any).headerUseMajorations = Boolean(v);
     },
@@ -441,95 +430,91 @@ async deleteFormuleCatalogue(formuleId: string) {
       (this as any).headerUseDevisSurcharge = Boolean(v);
     },
 
-    // -------------------------
+    // =========================================================
     // Majorations
-    // -------------------------
+    // =========================================================
     async saveMajorations(variantId: string, majorations: Record<string, number>) {
-      const updated = await jsonFetch(`/variants/${variantId}/majorations`, {
+      const resp = await jsonFetch(`/variants/${variantId}/majorations`, {
         method: "PUT",
         body: JSON.stringify({ majorations }),
       });
 
+      const updated = (resp as any)?.variant ?? resp;
       if (updated?.id) this.replaceActiveVariantInState(updated);
 
-      // après enregistrement, on coupe le preview : le header doit lire la valeur persistée
       this.headerMajorationsPreview = null;
-
       return updated;
     },
 
-    // -------------------------
+    // =========================================================
     // Devis
-    // -------------------------
+    // =========================================================
     async saveDevis(variantId: string, devis: any) {
-      const updated = await jsonFetch(`/variants/${variantId}/devis`, {
+      const resp = await jsonFetch(`/variants/${variantId}/devis`, {
         method: "PUT",
-        body: JSON.stringify(devis),
+        body: JSON.stringify(devis ?? {}),
       });
 
+      const updated = (resp as any)?.variant ?? resp;
       if (updated?.id) this.replaceActiveVariantInState(updated);
 
-      // après save: preview OFF (le header relit la valeur persistée)
       this.headerDevisSurchargesPreview = null;
+      return updated;
+    },
+
+    // =========================================================
+    // Variant update (optimistic + normalisation réponse)
+    // =========================================================
+    async updateVariant(variantId: string, patch: Record<string, any>) {
+      const p = patch ?? {};
+
+      // 1) optimistic UI
+      const current = (this as any).activeVariant;
+      if (current?.id === variantId) {
+        const optimistic = {
+          ...current,
+          ...p,
+          transport: p.transport ? { ...(current.transport ?? {}), ...(p.transport ?? {}) } : current.transport,
+          autresCouts: p.autresCouts ? { ...(current.autresCouts ?? {}), ...(p.autresCouts ?? {}) } : current.autresCouts,
+          coutM3: p.coutM3 ? { ...(current.coutM3 ?? {}), ...(p.coutM3 ?? {}) } : current.coutM3,
+          coutMensuel: p.coutMensuel ? { ...(current.coutMensuel ?? {}), ...(p.coutMensuel ?? {}) } : current.coutMensuel,
+          maintenance: p.maintenance ? { ...(current.maintenance ?? {}), ...(p.maintenance ?? {}) } : current.maintenance,
+          coutEmployes: p.coutEmployes ? { ...(current.coutEmployes ?? {}), ...(p.coutEmployes ?? {}) } : current.coutEmployes,
+          coutsOccasionnels: p.coutsOccasionnels
+            ? { ...(current.coutsOccasionnels ?? {}), ...(p.coutsOccasionnels ?? {}) }
+            : current.coutsOccasionnels,
+          details: p.details ? { ...(current.details ?? {}), ...(p.details ?? {}) } : current.details,
+          cab: p.cab ? { ...(current.cab ?? {}), ...(p.cab ?? {}) } : current.cab,
+        };
+
+        this.replaceActiveVariantInState(optimistic);
+      }
+
+      // 2) api
+      const resp = await jsonFetch(`/variants/${variantId}`, {
+        method: "PUT",
+        body: JSON.stringify(p),
+      });
+
+      // 3) normalise
+      const updated = (resp as any)?.variant ?? resp;
+
+      // 4) apply final
+      if (updated?.id) this.replaceActiveVariantInState(updated);
 
       return updated;
     },
 
-    // -------------------------
-    // ✅ Variant (UPDATE sections)
-    // -------------------------
-    // Fix: tes pages sections appellent store.updateVariant(...)
-    // Sans cette action => "store.updateVariant is not a function"
-async updateVariant(variantId: string, patch: Record<string, any>) {
-  const p = patch ?? {};
+    async loadVariantDeep(variantId: string) {
+      const resp = await jsonFetch(`/variants/${variantId}`);
+      const updated = (resp as any)?.variant ?? resp;
+      if (updated?.id) this.replaceActiveVariantInState(updated);
+      return resp;
+    },
 
-  // 1) ✅ Optimistic UI: merge local immédiat pour que pages + header s’actualisent sans attendre l’API
-  const current = (this as any).activeVariant;
-  if (current?.id === variantId) {
-    const optimistic = {
-      ...current,
-      ...p,
-      // merge shallow des sous-objets sections si présents
-      transport: p.transport ? { ...(current.transport ?? {}), ...(p.transport ?? {}) } : current.transport,
-      autresCouts: p.autresCouts ? { ...(current.autresCouts ?? {}), ...(p.autresCouts ?? {}) } : current.autresCouts,
-      coutM3: p.coutM3 ? { ...(current.coutM3 ?? {}), ...(p.coutM3 ?? {}) } : current.coutM3,
-      coutMensuel: p.coutMensuel ? { ...(current.coutMensuel ?? {}), ...(p.coutMensuel ?? {}) } : current.coutMensuel,
-      maintenance: p.maintenance ? { ...(current.maintenance ?? {}), ...(p.maintenance ?? {}) } : current.maintenance,
-      coutEmployes: p.coutEmployes ? { ...(current.coutEmployes ?? {}), ...(p.coutEmployes ?? {}) } : current.coutEmployes,
-      coutsOccasionnels: p.coutsOccasionnels
-        ? { ...(current.coutsOccasionnels ?? {}), ...(p.coutsOccasionnels ?? {}) }
-        : current.coutsOccasionnels,
-      details: p.details ? { ...(current.details ?? {}), ...(p.details ?? {}) } : current.details,
-      cab: p.cab ? { ...(current.cab ?? {}), ...(p.cab ?? {}) } : current.cab,
-    };
-
-    this.replaceActiveVariantInState(optimistic);
-  }
-
-  // 2) ✅ Call API
-  const resp = await jsonFetch(`/variants/${variantId}`, {
-    method: "PUT",
-    body: JSON.stringify(p),
-  });
-
-  // 3) ✅ Normalise: parfois backend renvoie { variant }, parfois renvoie la variante directement
-  const updated = (resp as any)?.variant ?? resp;
-
-  // 4) ✅ Replace final server version
-  if (updated?.id) this.replaceActiveVariantInState(updated);
-
-  return updated;
-},
-
-async loadVariantDeep(variantId: string) {
-  const resp = await jsonFetch(`/variants/${variantId}`);
-  if (resp?.variant?.id) this.replaceActiveVariantInState(resp.variant);
-  return resp;
-},
-
-    // -------------------------
-    // ✅ Variant MP (override MP) - optionnel mais utile
-    // -------------------------
+    // =========================================================
+    // Variant MP override (fallback paths)
+    // =========================================================
     async updateVariantMp(variantMpId: string, payload: AnyObj) {
       const id = encodeURIComponent(String(variantMpId ?? ""));
       const body = JSON.stringify(payload ?? {});
@@ -551,26 +536,28 @@ async loadVariantDeep(variantId: string) {
       throw lastErr ?? new Error("Impossible de mettre à jour la MP de variante.");
     },
 
-    // -------------------------
+    // =========================================================
     // Variant / Formules
-    // -------------------------
+    // =========================================================
     async addFormuleToVariant(variantId: string, formuleId: string) {
       const resp = await jsonFetch(`/variants/${variantId}/formules`, {
         method: "POST",
         body: JSON.stringify({ formuleId }),
       });
 
-      if (resp?.variant?.id) this.replaceActiveVariantInState(resp.variant);
+      const updated = (resp as any)?.variant ?? resp;
+      if (updated?.id) this.replaceActiveVariantInState(updated);
       return resp;
     },
 
     async updateVariantFormule(variantId: string, variantFormuleId: string, payload: AnyObj) {
       const resp = await jsonFetch(`/variants/${variantId}/formules/${variantFormuleId}`, {
         method: "PUT",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payload ?? {}),
       });
 
-      if (resp?.variant?.id) this.replaceActiveVariantInState(resp.variant);
+      const updated = (resp as any)?.variant ?? resp;
+      if (updated?.id) this.replaceActiveVariantInState(updated);
       return resp;
     },
 
@@ -579,7 +566,8 @@ async loadVariantDeep(variantId: string) {
         method: "DELETE",
       });
 
-      if (resp?.variant?.id) this.replaceActiveVariantInState(resp.variant);
+      const updated = (resp as any)?.variant ?? resp;
+      if (updated?.id) this.replaceActiveVariantInState(updated);
       return resp;
     },
   },

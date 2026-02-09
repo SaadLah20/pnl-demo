@@ -1,735 +1,731 @@
-<!-- src/pages/DevisPage.vue -->
+<!-- src/pages/DetailsPage.vue -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch, nextTick } from "vue";
+import { computed, onMounted, reactive } from "vue";
+import { useRouter } from "vue-router";
 import { usePnlStore } from "@/stores/pnl.store";
-import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
-import {
-  InformationCircleIcon,
-  ArrowPathIcon,
-  CheckBadgeIcon,
-} from "@heroicons/vue/24/outline";
-
+const router = useRouter();
 const store = usePnlStore();
 
-const loading = ref(false);
-const busy = reactive({ reload: false, save: false, apply: false });
-const error = ref<string | null>(null);
-
-function n(x: any): number {
-  const v = Number(x);
-  return Number.isFinite(v) ? v : 0;
-}
-function money2(v: any) {
-  const x = n(v);
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(x);
-}
-function money0(v: any) {
-  const x = n(v);
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(x);
-}
-function int(v: any) {
-  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n(v));
-}
-function pricePerKg(prixTonne: number): number {
-  const p = n(prixTonne);
-  if (p <= 0) return 0;
-  return p / 1000; // DH/tonne -> DH/kg
-}
-function roundTo5(x: number): number {
-  const v = n(x);
-  if (!Number.isFinite(v)) return 0;
-  return Math.round(v / 5) * 5;
-}
-
-/* =========================
-   STATE
-========================= */
-const variant = computed<any | null>(() => (store as any).activeVariant ?? null);
-const contract = computed<any | null>(() => (store as any).activeContract ?? null);
-
-const dureeMois = computed(() => n(contract.value?.dureeMois ?? 0));
-const rows = computed<any[]>(() => variant.value?.formules?.items ?? []);
-const volumeTotal = computed(() => rows.value.reduce((s, r) => s + n(r?.volumeM3), 0));
-
-/* =========================
-   TOGGLES
-========================= */
-const withMajorations = computed({
-  get: () => Boolean((store as any).headerUseMajorations),
-  set: (v: boolean) => (store as any).setHeaderUseMajorations(Boolean(v)),
-});
-
-const withDevisSurcharge = computed({
-  get: () => Boolean((store as any).headerUseDevisSurcharge),
-  set: (v: boolean) => (store as any).setHeaderUseDevisSurcharge(Boolean(v)),
-});
-
-/* =========================
-   DRAFT SURCHARGES
-========================= */
-const draft = reactive({
-  surcharges: {} as Record<string, number>,
-  applyToDashboardOnSave: true,
-});
-
-function rowKey(r: any): string {
-  return String(r?.id ?? r?.variantFormuleId ?? r?.formuleId ?? r?.formule?.id ?? "");
-}
-
-function getSurcharge(r: any): number {
-  const k = rowKey(r);
-  return n(draft.surcharges[k] ?? 0);
-}
-function setSurcharge(r: any, v: any) {
-  const k = rowKey(r);
-  draft.surcharges[k] = n(v);
-}
-
-/* =========================
-   LOAD persisted devis.surcharges
-   - accepte: devis.surcharges (string|object)
-   - ou devis.meta / devis.data (compat)
-========================= */
-function loadPersisted() {
-  draft.surcharges = {};
-  const v = variant.value;
-  if (!v) return;
-
-  const raw = v?.devis?.surcharges ?? v?.devis?.meta ?? v?.devis?.data ?? null;
-  if (!raw) return;
-
-  try {
-    const obj = typeof raw === "object" ? raw : JSON.parse(String(raw));
-    const map = (obj?.surcharges ?? obj) as any;
-    if (map && typeof map === "object") {
-      for (const [k, val] of Object.entries(map)) {
-        draft.surcharges[String(k)] = n(val);
-      }
-    }
-  } catch {
-    // ignore
-  }
-}
-
 onMounted(async () => {
-  await reload();
+  if (store.pnls.length === 0) await store.loadPnls();
+  if ((store as any).formulesCatalogue?.length === 0 && (store as any).loadFormulesCatalogue) {
+    await (store as any).loadFormulesCatalogue();
+  }
 });
 
-watch(
-  () => variant.value?.id,
-  () => loadPersisted()
-);
+/* =========================
+   HELPERS
+========================= */
+function toNum(v: any): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function n(v: any, digits = 2) {
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
+}
+function money(v: any) {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "MAD",
+    maximumFractionDigits: 2,
+  }).format(toNum(v));
+}
+function safeDiv(a: number, b: number): number {
+  return b === 0 ? 0 : a / b;
+}
 
 /* =========================
-   COMPUTES (BASE)
+   ACTIVE
 ========================= */
-function mpPrixUsed(mpId: string): number {
-  const mpItems = variant.value?.mp?.items ?? [];
-  const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
+const variant = computed<any>(() => store.activeVariant as any);
+const contract = computed<any>(() => store.activeContract as any);
+const dureeMois = computed<number>(() => Math.max(1, toNum(contract.value?.dureeMois) || 1));
+
+const formules = computed<any[]>(() => (variant.value?.formules?.items ?? []) as any[]);
+const volumeTotal = computed<number>(() => formules.value.reduce((s, vf) => s + toNum(vf?.volumeM3), 0));
+
+const volumePompePct = computed<number>(() => toNum(variant.value?.transport?.volumePompePct));
+const volumePompe = computed<number>(() => volumeTotal.value * (volumePompePct.value / 100));
+const amortMois = computed<number>(() => toNum(variant.value?.cab?.amortMois));
+
+/* =========================
+   CMP / PV / CA (pour %)
+========================= */
+function mpPriceUsed(mpId: string): number {
+  const vmp = ((variant.value as any)?.mp?.items ?? []).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-  if (vmp?.prix != null) return n(vmp.prix);
-  return n(vmp?.mp?.prix);
+
+  // ✅ prix variante (override)
+  if (vmp?.prix != null) return toNum(vmp.prix);
+
+  // fallback catalogue
+  return toNum(vmp?.mp?.prix);
 }
 
-function cmpFormuleBaseM3(formule: any): number {
-  const compo = formule?.items ?? [];
-  return (compo ?? []).reduce((s: number, it: any) => {
-    const mpId = String(it?.mpId ?? "");
-    const qtyKg = n(it?.qty);
-    const prixKg = pricePerKg(mpPrixUsed(mpId));
-    return s + qtyKg * prixKg;
+type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
+
+function compositionFor(formuleCatalogue: any): CompRow[] {
+  const items = (formuleCatalogue?.items ?? []) as any[];
+  return items.map((it: any) => {
+    const mpId = String(it.mpId);
+    const qty = toNum(it.qty);
+    const prix = mpPriceUsed(mpId);
+    return { mpId, qty, prix, coutParM3: (qty / 1000) * prix };
+  });
+}
+
+function cmpParM3For(vf: any): number {
+  const comp = compositionFor(vf?.formule);
+  return comp.reduce((s, x) => s + toNum(x.coutParM3), 0);
+}
+
+const transportPrixMoyen = computed<number>(() => toNum(variant.value?.transport?.prixMoyen));
+
+const pvParM3Moy = computed<number>(() => {
+  const vol = volumeTotal.value;
+  if (vol === 0) return 0;
+
+  const total = formules.value.reduce((s, vf) => {
+    const v = toNum(vf?.volumeM3);
+    const pv = cmpParM3For(vf) + toNum(vf?.momd) + transportPrixMoyen.value;
+    return s + pv * v;
   }, 0);
-}
 
-const transportBaseM3 = computed(() => n(variant.value?.transport?.prixMoyen ?? 0));
-
-function pvBaseM3(r: any): number {
-  const cmp = cmpFormuleBaseM3(r?.formule);
-  const momd = n(r?.momd);
-  return cmp + transportBaseM3.value + momd;
-}
-
-/* =========================
-   IMPACT MAJORATIONS (/m3)
-   - delta CA (headerKpis) / volume
-========================= */
-const impactMajorationM3 = computed(() => {
-  const v = variant.value;
-  const vol = volumeTotal.value;
-  if (!v || vol <= 0) return 0;
-
-  const d = dureeMois.value;
-
-  // BASE = majorations null
-  const vBase = {
-    ...v,
-    autresCouts: {
-      ...(v.autresCouts ?? {}),
-      majorations: null,
-    },
-  };
-
-  const kBase = computeHeaderKpis(vBase, d, null);
-  const kMaj = computeHeaderKpis(v, d, null);
-
-  const deltaCA = n(kMaj?.caTotal) - n(kBase?.caTotal);
-  return deltaCA / vol;
-});
-
-function pvWithMajorationM3(r: any): number {
-  return pvBaseM3(r) + impactMajorationM3.value;
-}
-
-/* =========================
-   PONDERE / DEFINITIF
-========================= */
-function pvPondereM3(r: any): number {
-  const base = withMajorations.value ? pvWithMajorationM3(r) : pvBaseM3(r);
-  return roundTo5(base);
-}
-
-function pvDefinitifM3(r: any): number {
-  return pvPondereM3(r) + getSurcharge(r);
-}
-
-const prixMoyenDefinitif = computed(() => {
-  const vol = volumeTotal.value;
-  if (vol <= 0) return 0;
-  const total = rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
   return total / vol;
 });
 
-const caDevisTotal = computed(() => {
-  return rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
+const caTotal = computed<number>(() => pvParM3Moy.value * volumeTotal.value);
+
+function pctOfCa(totalCost: number): number {
+  const ca = caTotal.value;
+  if (ca <= 0) return 0;
+  return (toNum(totalCost) / ca) * 100;
+}
+
+/* =========================
+   NAVIGATION (vers pages sidebar)
+========================= */
+/**
+ * On mappe chaque "block.key" -> item sidebar
+ * (qui est ensuite résolu via la même logique PageView / routes hard)
+ */
+const sectionToSidebarItem: Record<string, string> = {
+  Transport: "Transport",
+  "Coûts / m³": "Cout au m3",
+  "Coûts / mois": "Cout au mois",
+  "Coûts occasionnels": "Couts occasionnels",
+  Maintenance: "Maintenance",
+  Employés: "Cout employés",
+  CAB: "CAB",
+  "Autres coûts": "Autres couts",
+};
+
+/**
+ * Reproduit la logique de ta sidebar (goToPage) mais localement,
+ * pour éviter d'importer le composant sidebar.
+ */
+function goToSidebarItem(item: string) {
+  // ✅ routes "hard" = exactement comme Sidebar.vue
+  const routeByItem: Record<string, string> = {
+    Transport: "Transport",
+    CAB: "CAB",
+    MP: "Mp",
+
+    Maintenance: "Maintenance",
+    "Cout au m3": "cout au m3",
+    "Cout au mois": "CoutMensuel",
+    "Cout employés": "CoutEmployes",
+    "Couts occasionnels": "CoutsOccasionnels",
+    "Autres couts": "AutresCouts",
+
+    Formules: "Formules",
+    "Qté et MOMD": "MomdAndQuantity",
+  };
+
+  const rn = routeByItem[item];
+  if (rn) {
+    router.push({ name: rn });
+    return;
+  }
+
+  // fallback PageView (au cas où un item n'a pas de route)
+  const pageNameMap: Record<string, string> = {
+    Maintenance: "Variante/Sections/Couts/Maintenance",
+    "Cout au m3": "Variante/Sections/Couts/Cout au m3",
+    "Cout au mois": "Variante/Sections/Couts/Cout au mois",
+    "Cout employés": "Variante/Sections/Couts/Cout employés",
+    "Couts occasionnels": "Variante/Sections/Couts/Couts occasionnels",
+    "Autres couts": "Variante/Sections/Couts/Autres couts",
+  };
+
+  const pageName = pageNameMap[item] ?? item;
+  router.push({ name: "PageView", params: { name: pageName } });
+}
+
+
+function editSection(blockKey: string) {
+  const item = sectionToSidebarItem[blockKey];
+  if (!item) return;
+  goToSidebarItem(item);
+}
+
+/* =========================
+   HIERARCHY MODEL
+========================= */
+type Line = {
+  level: 0 | 1;
+  section: string;
+  label: string;
+
+  perM3: number;
+  perMonth: number;
+  total: number;
+  pct: number;
+
+  isParent: boolean;
+};
+
+function makeFromTotal(section: string, label: string, total: number, level: 0 | 1, isParent: boolean): Line {
+  const t = toNum(total);
+  return {
+    level,
+    section,
+    label,
+    isParent,
+    total: t,
+    perMonth: safeDiv(t, dureeMois.value),
+    perM3: safeDiv(t, volumeTotal.value),
+    pct: pctOfCa(t),
+  };
+}
+
+function makeFromPerM3(section: string, label: string, perM3: number, level: 0 | 1, isParent: boolean): Line {
+  const total = toNum(perM3) * volumeTotal.value;
+  return makeFromTotal(section, label, total, level, isParent);
+}
+
+function makeFromPerMonth(section: string, label: string, perMonth: number, level: 0 | 1, isParent: boolean): Line {
+  const total = toNum(perMonth) * dureeMois.value;
+  return makeFromTotal(section, label, total, level, isParent);
+}
+
+/** somme des valeurs numériques d'un objet (TS strict-safe) */
+function sumSectionObj(obj: any): number {
+  if (!obj) return 0;
+  return Object.values(obj).reduce((s: number, v: unknown) => s + toNum(v), 0);
+}
+
+/* =========================
+   BUILD SECTIONS + CHILDREN
+========================= */
+type SectionBlock = {
+  key: string;
+  title: string;
+  parent: Line;
+  children: Line[];
+};
+
+const blocks = computed<SectionBlock[]>(() => {
+  const v = variant.value;
+  if (!v) return [];
+
+  const out: SectionBlock[] = [];
+
+  // 1) Transport
+  {
+    const key = "Transport";
+    const parent = makeFromPerM3(key, "Transport", transportPrixMoyen.value, 0, true);
+    const children: Line[] = [makeFromPerM3(key, "Prix moyen transport", transportPrixMoyen.value, 1, false)];
+    out.push({ key, title: "Transport", parent, children });
+  }
+
+  // 2) Coûts / m3 (champs)
+  {
+    const key = "Coûts / m³";
+    const obj = v?.coutM3 ?? {};
+    const filtered = Object.fromEntries(Object.entries(obj).filter(([k]) => !["id", "category"].includes(k)));
+    const parentTotalPerM3 = sumSectionObj(filtered);
+    const parent = makeFromPerM3(key, "Coûts / m³", parentTotalPerM3, 0, true);
+
+    const children: Line[] = [];
+    for (const k of Object.keys(filtered)) {
+      const val = toNum((filtered as any)[k]);
+      if (val === 0) continue;
+      children.push(makeFromPerM3(key, k, val, 1, false));
+    }
+    out.push({ key, title: "Coûts / m³", parent, children });
+  }
+
+  // 3) Coûts / mois (champs)
+  {
+    const key = "Coûts / mois";
+    const obj = v?.coutMensuel ?? {};
+    const filtered = Object.fromEntries(Object.entries(obj).filter(([k]) => !["id", "category"].includes(k)));
+    const parentPerMonth = sumSectionObj(filtered);
+    const parent = makeFromPerMonth(key, "Coûts / mois", parentPerMonth, 0, true);
+
+    const children: Line[] = [];
+    for (const k of Object.keys(filtered)) {
+      const val = toNum((filtered as any)[k]);
+      if (val === 0) continue;
+      children.push(makeFromPerMonth(key, k, val, 1, false));
+    }
+    out.push({ key, title: "Coûts / mois", parent, children });
+  }
+
+  // 4) Coûts occasionnels (total)
+  {
+    const key = "Coûts occasionnels";
+    const obj = v?.coutOccasionnel ?? {};
+    const filtered = Object.fromEntries(Object.entries(obj).filter(([k]) => !["id", "category"].includes(k)));
+    const parentTotal = sumSectionObj(filtered);
+    const parent = makeFromTotal(key, "Coûts occasionnels", parentTotal, 0, true);
+
+    const children: Line[] = [];
+    for (const k of Object.keys(filtered)) {
+      const val = toNum((filtered as any)[k]);
+      if (val === 0) continue;
+      children.push(makeFromTotal(key, k, val, 1, false));
+    }
+    out.push({ key, title: "Coûts occasionnels", parent, children });
+  }
+
+  // 5) Maintenance (mensuel)
+  {
+    const key = "Maintenance";
+    const obj = v?.maintenance ?? {};
+    const filtered = Object.fromEntries(Object.entries(obj).filter(([k]) => !["id", "category"].includes(k)));
+    const parentPerMonth = sumSectionObj(filtered);
+    const parent = makeFromPerMonth(key, "Maintenance", parentPerMonth, 0, true);
+
+    const children: Line[] = [];
+    for (const k of Object.keys(filtered)) {
+      const val = toNum((filtered as any)[k]);
+      if (val === 0) continue;
+      children.push(makeFromPerMonth(key, k, val, 1, false));
+    }
+    out.push({ key, title: "Maintenance", parent, children });
+  }
+
+  // 6) Employés (mensuel) : nb*cout
+  {
+    const key = "Employés";
+    const e = v?.employes ?? {};
+    const keys = Object.keys(e);
+
+    const children: Line[] = [];
+    let parentPerMonth = 0;
+
+    for (const k of keys) {
+      if (!k.endsWith("Nb")) continue;
+      const base = k.slice(0, -2);
+      const nb = toNum(e[k]);
+      const cout = toNum(e[base + "Cout"]);
+      const perMonth = nb * cout;
+      if (perMonth === 0) continue;
+
+      parentPerMonth += perMonth;
+      children.push(makeFromPerMonth(key, base, perMonth, 1, false));
+    }
+
+    const parent = makeFromPerMonth(key, "Employés", parentPerMonth, 0, true);
+    out.push({ key, title: "Employés", parent, children });
+  }
+
+  // 7) CAB amortissement (mensuel)
+  {
+    const key = "CAB";
+    const parent = makeFromPerMonth(key, "CAB (amortissement)", amortMois.value, 0, true);
+    const children: Line[] = [];
+    if (amortMois.value !== 0) children.push(makeFromPerMonth(key, "Amortissement / mois", amortMois.value, 1, false));
+    out.push({ key, title: "CAB", parent, children });
+  }
+
+  // 8) Autres coûts (mix unités)
+  {
+    const key = "Autres coûts";
+    const items = v?.autresCouts?.items ?? [];
+    const ca = caTotal.value;
+    const vol = volumeTotal.value;
+    const d = dureeMois.value;
+
+    const children: Line[] = [];
+    let parentTotal = 0;
+
+    for (const it of items) {
+      const label = String(it?.label ?? "Autre coût");
+      const unite = String(it?.unite ?? "FORFAIT");
+      const valeur = toNum(it?.valeur);
+      let total = 0;
+
+      if (unite === "FORFAIT") total = valeur;
+      else if (unite === "MOIS") total = valeur * d;
+      else if (unite === "M3") total = valeur * vol;
+      else if (unite === "POURCENT_CA") total = (ca * valeur) / 100;
+
+      if (total === 0) continue;
+      parentTotal += total;
+
+      children.push(makeFromTotal(key, `${label} (${unite})`, total, 1, false));
+    }
+
+    const parent = makeFromTotal(key, "Autres coûts", parentTotal, 0, true);
+    out.push({ key, title: "Autres coûts", parent, children });
+  }
+
+  return out;
 });
 
 /* =========================
-   API
+   COLLAPSE / EXPAND (default collapsed)
 ========================= */
-async function reload() {
-  loading.value = true;
-  busy.reload = true;
-  error.value = null;
+const open = reactive<Record<string, boolean>>({});
 
-  try {
-    if ((store as any).pnls?.length === 0) {
-      await (store as any).loadPnls();
-    }
-    loadPersisted();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    loading.value = false;
-    busy.reload = false;
+function initOpenState() {
+  for (const b of blocks.value) {
+    if (!(b.key in open)) open[b.key] = false; // collapsed by default
   }
 }
 
-function applyToDashboard() {
-  busy.apply = true;
-  try {
-    (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
-    withDevisSurcharge.value = true;
-  } finally {
-    busy.apply = false;
-  }
+onMounted(() => initOpenState());
+const _blocksWatcher = computed(() => {
+  initOpenState();
+  return blocks.value.length;
+});
+
+function toggle(key: string) {
+  open[key] = !open[key];
 }
-
-async function saveDevis() {
-  const v = variant.value;
-  if (!v?.id) return;
-
-  busy.save = true;
-  error.value = null;
-
-  try {
-    if (draft.applyToDashboardOnSave) {
-      (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
-      withDevisSurcharge.value = true;
-    }
-
-    await (store as any).saveDevis(String(v.id), {
-      surcharges: { ...draft.surcharges },
-    });
-
-    // sécurité UI (recharge la hiérarchie)
-    await (store as any).loadPnls();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    busy.save = false;
-  }
+function collapseAll() {
+  for (const k of Object.keys(open)) open[k] = false;
 }
-
-function resetSurcharges() {
-  loadPersisted();
-  nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+function expandAll() {
+  for (const k of Object.keys(open)) open[k] = true;
 }
 </script>
 
 <template>
   <div class="page">
-    <!-- TOP -->
-    <div class="top">
-      <div class="tleft">
-        <div class="title">Devis</div>
-
-        <div class="subline">
-          <span class="muted">Variante :</span>
-          <b class="ell">{{ variant?.title ?? "—" }}</b>
-
-          <span class="sep">•</span>
-
-          <span class="muted">Volume :</span>
-          <b>{{ int(volumeTotal) }}</b><span class="muted">m³</span>
-
-          <span class="sep">•</span>
-
-          <span class="muted">Prix moyen devis :</span>
-          <b>{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
-        </div>
+    <div class="topbar">
+      <div class="titleWrap">
+        <div class="h1">Détails</div>
+        <div class="sub" v-if="variant">{{ variant?.title ?? "Variante" }} — {{ dureeMois }} mois</div>
       </div>
 
-      <div class="tright">
-        <button class="btn" @click="reload" :disabled="busy.reload || loading" title="Recharger">
-          <ArrowPathIcon class="actIc" />
-        </button>
-
-        <button class="btn" @click="resetSurcharges" :disabled="busy.save">
-          Réinitialiser
-        </button>
-
-        <button class="btn" @click="applyToDashboard" :disabled="busy.apply">
-          Appliquer au dashboard
-        </button>
-
-        <button class="btn primary" @click="saveDevis" :disabled="busy.save || !variant?.id">
-          <CheckBadgeIcon class="actIc" />
-          {{ busy.save ? "Enregistrement..." : "Enregistrer devis" }}
-        </button>
+      <div class="actions" v-if="variant">
+        <button class="btn" @click="expandAll()">Tout ouvrir</button>
+        <button class="btn" @click="collapseAll()">Tout réduire</button>
       </div>
     </div>
 
-    <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
-    <div v-if="loading" class="alert">Chargement…</div>
+    <div v-if="store.loading" class="panel">Chargement…</div>
+    <div v-else-if="store.error" class="panel error"><b>Erreur :</b> {{ store.error }}</div>
 
-    <!-- CONTROLS -->
-    <div class="card">
-      <div class="controls">
-        <div class="leftControls">
-          <label class="chk">
-            <input type="checkbox" v-model="withMajorations" />
-            <span>Appliquer majorations</span>
-          </label>
+    <template v-else>
+      <div v-if="!variant" class="panel muted">Aucune variante active.</div>
 
-          <label class="chk">
-            <input type="checkbox" v-model="withDevisSurcharge" />
-            <span>Dashboard : surcharge devis</span>
-          </label>
-
-          <label class="chk">
-            <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
-            <span>Appliquer au dashboard lors du save</span>
-          </label>
-        </div>
-
-        <div v-if="withMajorations" class="pillInfo">
-          <span class="muted">Impact majorations :</span>
-          <b class="mono">{{ money2(impactMajorationM3) }}</b>
-          <span class="muted">DH/m³</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- GRID "TABLE" (no horizontal scroll) -->
-    <div class="card cardTable">
-      <!-- header -->
-      <div class="gHead theadSticky" :class="withMajorations ? 'colsMaj' : 'colsBase'" role="row">
-        <div class="hCell">Désignation</div>
-        <div class="hCell right">CMP</div>
-        <div class="hCell right">MOMD</div>
-        <div class="hCell right">Prix calculé</div>
-        <div v-if="withMajorations" class="hCell right">Prix avec majorations</div>
-        <div class="hCell right">Prix pondéré</div>
-        <div class="hCell right">Surcharge</div>
-        <div class="hCell right">Prix définitif</div>
-        <div class="hCell right">Volume</div>
-        <div class="hCell right">Total</div>
-      </div>
-
-      <!-- body -->
-      <div class="gBody">
-        <div v-if="rows.length === 0" class="emptyRow">
-          Aucune formule dans cette variante.
-        </div>
-
-        <div
-          v-for="r in rows"
-          :key="rowKey(r)"
-          class="gRow"
-          :class="withMajorations ? 'colsMaj' : 'colsBase'"
-          role="row"
-        >
-          <!-- designation -->
-          <div class="cell cellMain" data-label="Désignation">
-            <div class="mainLine">
-              <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
-
-              <span class="cmtWrap">
-                <button class="cmtBtn" type="button" aria-label="Info">
-                  <InformationCircleIcon class="cmtIc" />
-                </button>
-                <span class="cmtTip" role="tooltip">
-                  Transport (base) : <b>{{ money2(transportBaseM3) }}</b> DH/m³
-                  <br />
-                  Volume : <b>{{ int(r?.volumeM3) }}</b> m³
-                </span>
-              </span>
+      <template v-else>
+        <!-- KPIs -->
+        <div class="panel">
+          <div class="kpiGrid">
+            <div class="kpi">
+              <div class="k">Volume total</div>
+              <div class="v">{{ n(volumeTotal, 0) }} <span class="u">m³</span></div>
             </div>
 
-            <div class="subText ell">
-              Clé: <span class="mono">{{ rowKey(r) }}</span>
+            <div class="kpi">
+              <div class="k">Volume pompé</div>
+              <div class="v">
+                {{ n(volumePompe, 0) }} <span class="u">m³</span>
+                <span class="tag">{{ n(volumePompePct, 0) }}%</span>
+              </div>
             </div>
-          </div>
 
-          <!-- CMP -->
-          <div class="cell right" data-label="CMP">
-            <div class="value mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</div>
-          </div>
-
-          <!-- MOMD -->
-          <div class="cell right" data-label="MOMD">
-            <div class="value mono">{{ money2(r?.momd) }}</div>
-          </div>
-
-          <!-- PV base -->
-          <div class="cell right" data-label="Prix calculé">
-            <div class="badgeWrap">
-              <span class="priceBadge">
-                <span class="mono">{{ money2(pvBaseM3(r)) }}</span>
-                <span class="dh">DH</span>
-                <span class="unitTag">/m³</span>
-              </span>
-            </div>
-          </div>
-
-          <!-- PV majoré -->
-          <div v-if="withMajorations" class="cell right" data-label="Prix avec majorations">
-            <div class="badgeWrap">
-              <span class="priceBadge maj">
-                <span class="mono">{{ money2(pvWithMajorationM3(r)) }}</span>
-                <span class="dh">DH</span>
-                <span class="unitTag">/m³</span>
-              </span>
-            </div>
-          </div>
-
-          <!-- pondéré -->
-          <div class="cell right" data-label="Prix pondéré">
-            <span class="pillStrong mono">{{ money0(pvPondereM3(r)) }}</span>
-          </div>
-
-          <!-- surcharge -->
-          <div class="cell right" data-label="Surcharge">
-            <input
-              class="input numInput"
-              type="number"
-              step="1"
-              :value="getSurcharge(r)"
-              @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
-            />
-          </div>
-
-          <!-- définitif -->
-          <div class="cell right" data-label="Prix définitif">
-            <span class="pillStrong mono">{{ money0(pvDefinitifM3(r)) }}</span>
-          </div>
-
-          <!-- volume -->
-          <div class="cell right" data-label="Volume">
-            <div class="value mono">{{ int(r?.volumeM3) }}</div>
-          </div>
-
-          <!-- total -->
-          <div class="cell right" data-label="Total">
-            <div class="value mono strong">
-              {{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}
+            <div class="kpi">
+              <div class="k">Amortissement</div>
+              <div class="v">{{ money(amortMois) }} <span class="u">/mois</span></div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- footer -->
-      <div class="gFoot">
-        <div class="footLine">
-          <span class="muted">Prix moyen devis :</span>
-          <b class="mono">{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
+        <!-- SECTIONS -->
+        <div class="panel">
+          <div class="sectionHead">
+            <div class="sectionTitle">Sections (hiérarchie)</div>
+            <div class="hint">% = part du CA total (CA = PV moyen × volume total). Les champs à 0 sont masqués.</div>
+          </div>
 
-          <span class="sep">•</span>
+          <div class="tableWrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Libellé</th>
+                  <th class="r">/m³</th>
+                  <th class="r">/mois</th>
+                  <th class="r">Total</th>
+                  <th class="r">%</th>
+                  <th class="r editCol">Édit</th>
+                </tr>
+              </thead>
 
-          <span class="muted">Volume :</span>
-          <b class="mono">{{ int(volumeTotal) }}</b><span class="muted">m³</span>
+              <tbody>
+                <template v-for="b in blocks" :key="b.key">
+                  <!-- Parent row -->
+                  <tr class="parentRow">
+                    <td>
+                      <div class="labelCell">
+                        <!-- toggle uniquement via chevron -->
+                        <button class="chevBtn" @click.stop="toggle(b.key)" :aria-label="'toggle ' + b.key">
+                          <span class="chev">{{ open[b.key] ? "▾" : "▸" }}</span>
+                        </button>
 
-          <span class="sep">•</span>
+                        <!-- clic sur le nom => edit/navigate -->
+                        <button class="sectionLink" @click.stop="editSection(b.key)" :title="'Ouvrir: ' + b.key">
+                          <b>{{ b.parent.label }}</b>
+                        </button>
+                      </div>
+                    </td>
 
-          <span class="muted">CA devis :</span>
-          <b class="mono">{{ money0(caDevisTotal) }}</b><span class="muted">DH</span>
+                    <td class="r">{{ n(b.parent.perM3) }}</td>
+                    <td class="r">{{ money(b.parent.perMonth) }}</td>
+                    <td class="r"><b>{{ money(b.parent.total) }}</b></td>
+                    <td class="r">{{ n(b.parent.pct) }}%</td>
+
+                    <td class="r editCol">
+                      <button class="editBtn" @click.stop="editSection(b.key)">Éditer</button>
+                    </td>
+                  </tr>
+
+                  <!-- Children rows -->
+                  <tr
+                    v-for="c in b.children"
+                    v-show="open[b.key]"
+                    :key="b.key + '::' + c.label"
+                    class="childRow"
+                  >
+                    <td>
+                      <div class="labelCell child">
+                        <span class="indent">—</span>
+                        <span>{{ c.label }}</span>
+                      </div>
+                    </td>
+                    <td class="r">{{ n(c.perM3) }}</td>
+                    <td class="r">{{ money(c.perMonth) }}</td>
+                    <td class="r">{{ money(c.total) }}</td>
+                    <td class="r">{{ n(c.pct) }}%</td>
+                    <td class="r editCol"></td>
+                  </tr>
+
+                  <!-- If no children -->
+                  <tr v-if="open[b.key] && b.children.length === 0" class="childRow empty">
+                    <td class="muted" colspan="6" style="padding-left: 40px">Aucun détail (valeurs = 0).</td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
-    </div>
-
-    <div class="card hint">
-      <div class="muted">
-        • <b>Prix pondéré</b> = prix (base ou majoré) arrondi au multiple de 5.
-        &nbsp;• <b>Surcharge</b> peut être négative et s’ajoute après pondération.
-      </div>
-    </div>
+      </template>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
+/* Palette proche HeaderDashboard.vue */
+.page{
+  --text:#0f172a;
+  --muted: rgba(15,23,42,0.65);
+  --border: rgba(16,24,40,0.12);
+  --soft: rgba(15,23,42,0.04);
+  --soft2: rgba(15,23,42,0.03);
 
-.top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.tleft { display:flex; flex-direction:column; gap:4px; min-width:240px; }
-.title { font-size:18px; font-weight:900; color:#111827; }
-.subline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.sep { color:#9ca3af; }
-
-.tright { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-
-.alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
-.alert.error { border-color:#ef4444; background:#fff5f5; }
-
-.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
-.cardTable { padding:0; overflow:hidden; }
-.hint { padding:10px 12px; }
-
-.btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
-.btn:hover { background:#f9fafb; }
-.btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
-.btn.primary:hover { background: rgba(24,64,112,1); }
-
-.input { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:12px; font-size:13px; background:#fff; }
-.right { text-align:right; }
-.muted { color:#6b7280; font-size:12px; }
-.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.mono { font-variant-numeric: tabular-nums; }
-.strong { font-weight:950; }
-
-.controls{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
-.leftControls{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
-.chk{ display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:900; color:#111827; user-select:none; }
-.chk input{ width:16px; height:16px; border-radius:6px; }
-
-.pillInfo{
-  display:inline-flex; align-items:center; gap:8px;
-  padding:6px 10px; border-radius:999px;
-  border:1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.03);
-  font-size:12px; font-weight:900; color:#111827;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding:10px 10px 14px;
 }
 
-/* GRID TABLE */
-.gHead, .gRow{
-  display:grid;
-  width:100%;
-  column-gap:10px;
-  align-items:center;
+/* top */
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+  flex-wrap:wrap;
 }
-.colsBase{
-  grid-template-columns:
-    minmax(180px, 2.2fr)
-    minmax(70px, .8fr)
-    minmax(70px, .8fr)
-    minmax(110px, 1.1fr)
-    minmax(110px, 1.0fr)
-    minmax(110px, 1.0fr)
-    minmax(110px, 1.0fr)
-    minmax(80px, .8fr)
-    minmax(120px, 1.1fr);
-}
-.colsMaj{
-  grid-template-columns:
-    minmax(180px, 2.0fr)
-    minmax(70px, .75fr)
-    minmax(70px, .75fr)
-    minmax(110px, 1.0fr)
-    minmax(120px, 1.05fr)
-    minmax(110px, 0.95fr)
-    minmax(110px, 0.95fr)
-    minmax(110px, 0.95fr)
-    minmax(80px, .75fr)
-    minmax(120px, 1.05fr);
-}
+.titleWrap{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.h1{ font-size:14px; font-weight:950; color:var(--text); }
+.sub{ font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-.gHead{
-  padding:10px 12px;
-  background:#fafafa;
-  border-bottom:1px solid #e5e7eb;
-  font-size:11px; font-weight:900; color:#6b7280;
-}
-.hCell{
-  min-width:0;
-  white-space:normal;
-  line-height:1.15;
-}
-
-.gRow{
-  padding:10px 12px;
-  border-bottom:1px solid #e5e7eb;
-}
-.gRow:hover{ background:#fafafa; }
-
-.cell{ min-width:0; }
-.value{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-
-.cellMain{ overflow:visible; }
-.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
-.subText { margin-top:2px; font-size:11px; color: rgba(15,23,42,0.62); }
-
-.emptyRow{ padding:14px 12px; color:#6b7280; font-size:12px; }
-
-.gFoot{ padding:10px 12px; background: rgba(15,23,42,0.02); }
-.footLine{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-
-/* Sticky header collé sous HeaderDashboard */
-.theadSticky{
-  position: sticky;
-  top: -14px;
-  z-index: 20;
-  box-shadow: 0 6px 14px rgba(2, 6, 23, 0.06);
-}
-
-/* Tooltip */
-.cmtWrap { position:relative; display:inline-flex; align-items:center; z-index:5; }
-.cmtBtn{
-  width:26px; height:26px;
-  border-radius:10px;
-  border:1px solid #e5e7eb;
-  background:#fff;
-  display:inline-flex; align-items:center; justify-content:center;
-  cursor: default;
-}
-.cmtIc{ width:16px; height:16px; color:#6b7280; }
-.cmtTip{
-  position:absolute;
-  left:34px; top:50%;
-  transform: translateY(-50%) translateX(-4px);
-  min-width:240px; max-width:360px;
-  background: rgba(17,24,39,0.95);
-  color:#fff;
-  border:1px solid rgba(255,255,255,0.12);
-  padding:8px 10px;
-  border-radius:12px;
+.actions{ display:flex; gap:8px; align-items:center; }
+.btn{
+  border:1px solid var(--border);
+  background: rgba(255,255,255,0.80);
+  border-radius:14px;
+  padding:7px 10px;
   font-size:12px;
-  line-height:1.25;
-  opacity:0;
-  pointer-events:none;
-  transition: opacity .12s ease, transform .12s ease;
-  z-index: 9999;
+  font-weight:900;
+  color: rgba(15,23,42,0.86);
+  cursor:pointer;
+  box-shadow: 0 4px 14px rgba(15,23,42,0.06);
 }
-.cmtWrap:hover .cmtTip{
-  opacity:1;
-  transform: translateY(-50%) translateX(0px);
+.btn:hover{
+  background: rgba(32,184,232,0.12);
+  border-color: rgba(32,184,232,0.18);
 }
 
-/* Badges */
-.badgeWrap{ display:flex; justify-content:flex-end; min-width:0; }
-.priceBadge{
-  display:inline-flex; align-items:center; gap:6px;
-  padding:6px 10px;
-  border-radius:999px;
-  border:1px solid rgba(2,132,199,0.22);
-  background: rgba(2,132,199,0.08);
-  color:#0b3b63;
-  font-weight:1000; font-size:13px;
-  white-space:nowrap;
-  max-width:100%;
-  overflow:hidden;
-  text-overflow: ellipsis;
-  box-sizing: border-box;
+/* panels */
+.panel{
+  background: rgba(255,255,255,0.92);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:12px;
+  box-shadow: 0 10px 26px rgba(15,23,42,0.06);
 }
-.priceBadge.maj{
-  border-color: rgba(16, 185, 129, 0.22);
-  background: rgba(16, 185, 129, 0.10);
-  color: #065f46;
+.error{ border-color: rgba(239,68,68,0.45); background: rgba(255,245,245,0.92); }
+.muted{ color:var(--muted); font-size:12px; }
+
+/* KPIs */
+.kpiGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap:10px;
 }
-.priceBadge .dh{ font-size:11px; font-weight:900; opacity:0.9; }
-.unitTag{
-  font-size:11px; font-weight:950;
-  color: rgba(15,23,42,0.65);
-  background: rgba(255,255,255,0.65);
-  border: 1px solid rgba(16,24,40,0.10);
+@media (max-width: 980px){ .kpiGrid{ grid-template-columns: 1fr; } }
+
+.kpi{
+  border:1px solid rgba(16,24,40,0.10);
+  border-radius:16px;
+  padding:10px 10px;
+  background: linear-gradient(180deg, var(--soft2), rgba(255,255,255,0.92));
+}
+.k{ font-size:10px; font-weight:950; color: rgba(15,23,42,0.55); letter-spacing:0.2px; }
+.v{
+  font-size:15px;
+  font-weight:950;
+  margin-top:4px;
+  display:flex;
+  gap:8px;
+  align-items:baseline;
+  flex-wrap:wrap;
+  color: var(--text);
+}
+.u{ font-size:11px; font-weight:900; color: rgba(15,23,42,0.55); }
+.tag{
+  border:1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.9);
   padding:2px 8px;
   border-radius:999px;
-  flex: 0 0 auto;
+  font-size:11px;
+  font-weight:950;
+  color: rgba(15,23,42,0.86);
 }
 
-.pillStrong{
-  display:inline-flex; align-items:center; justify-content:center;
-  height:28px;
-  padding:0 10px;
-  border-radius:999px;
-  border:1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.04);
-  font-weight:1000;
-  color:#111827;
-  max-width:100%;
-  overflow:hidden;
-  text-overflow: ellipsis;
+/* sections head */
+.sectionHead{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:8px;
+}
+.sectionTitle{ font-size:12px; font-weight:950; color: var(--text); }
+.hint{ font-size:11px; color: var(--muted); }
+
+/* table */
+.tableWrap{
+  overflow:auto;
+  border: 1px solid rgba(16,24,40,0.10);
+  border-radius: 14px;
+  background:#fff;
+}
+.table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  font-size:12px;
+}
+.table th, .table td{
+  border-bottom:1px solid rgba(16,24,40,0.10);
+  padding:8px 10px;
+  text-align:left;
+  vertical-align:middle; /* ✅ centrage vertical */
   white-space:nowrap;
 }
+.table thead th{
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(15,23,42,0.02), rgba(15,23,42,0.04));
+  color: rgba(15,23,42,0.55);
+  font-size:10px;
+  font-weight:950;
+  letter-spacing:0.2px;
+}
+.r{ text-align:right; }
+.editCol{ width: 98px; }
 
-.numInput{
-  width:100%;
-  min-width:0;
-  max-width:140px;
-  text-align:right;
-  padding-right:10px;
-  font-variant-numeric: tabular-nums;
-  margin-left:auto;
+/* rows */
+.parentRow{
+  background: rgba(15,23,42,0.02);
+  user-select:none;
+}
+.parentRow:hover{ background: rgba(32,184,232,0.08); }
+.childRow{ background:#fff; }
+.childRow.empty{ background:#fff; }
+
+.labelCell{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width: 260px;
+}
+.labelCell.child{ padding-left: 18px; }
+
+.chev{ width:16px; display:inline-block; color: rgba(15,23,42,0.55); font-weight:900; }
+.indent{ width:16px; display:inline-block; color: rgba(15,23,42,0.35); }
+
+/* controls */
+.chevBtn{
+  border:1px solid transparent;
+  background: transparent;
+  cursor:pointer;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+.chevBtn:hover{
+  background: rgba(15,23,42,0.04);
+  border-color: rgba(16,24,40,0.10);
 }
 
-.actIc{ width:18px; height:18px; }
+.sectionLink{
+  border:0;
+  background: transparent;
+  cursor:pointer;
+  padding: 2px 6px;
+  border-radius: 10px;
+  text-align:left;
+  color: var(--text);
+}
+.sectionLink:hover{ background: rgba(15,23,42,0.04); }
 
-/* RESPONSIVE: cards 2 colonnes, sans scroll horizontal */
-@media (max-width: 980px) {
-  .colsBase, .colsMaj{
-    grid-template-columns: 1fr 1fr;
-    row-gap: 10px;
-  }
-  .gHead{ display:none; }
-  .gRow{
-    border-bottom:none;
-    border-top:1px solid #e5e7eb;
-  }
-  .gRow .cell:nth-child(1){ grid-column: 1 / -1; }
-
-  .gRow .cell{
-    display:flex;
-    justify-content:space-between;
-    gap:10px;
-    align-items:center;
-    padding:2px 0;
-  }
-  .gRow .cell::before{
-    content: attr(data-label);
-    color:#6b7280;
-    font-weight:900;
-    font-size:11px;
-    flex: 0 0 auto;
-  }
-  .gRow .cellMain{ display:block; padding:0; }
-  .gRow .cellMain::before{ content:""; display:none; }
-
-  .badgeWrap{ justify-content:flex-end; }
-  .numInput{ max-width: 160px; }
+.editBtn{
+  border:1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  border-radius: 14px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  cursor:pointer;
+  color: rgba(15,23,42,0.86);
+}
+.editBtn:hover{
+  background: rgba(32,184,232,0.12);
+  border-color: rgba(32,184,232,0.18);
 }
 </style>

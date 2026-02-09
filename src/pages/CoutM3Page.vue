@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -193,6 +194,53 @@ function askReset() {
     loadDraftFromVariant();
   });
 }
+
+/* =========================
+   ✅ GENERALISER (AJOUT UNIQUEMENT)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+async function generalizeTo(variantIds: string[]) {
+  const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
+  if (!sourceId) return;
+
+  const payload = buildPayload();
+
+  genErr.value = null;
+  genBusy.value = true;
+  try {
+    for (const targetIdRaw of variantIds ?? []) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceId) continue;
+
+      await (store as any).updateVariant(targetId, { coutM3: payload });
+    }
+    openInfo("Généralisé", "La section Coût au m³ a été généralisée sur les variantes ciblées.");
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+    openInfo("Erreur", String(genErr.value ?? e?.message ?? e));
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const msg =
+    payload.mode === "ALL"
+      ? "Confirmer la généralisation de la section Coût au m³ sur TOUTES les variantes ?"
+      : `Confirmer la généralisation de la section Coût au m³ sur ${ids.length} variante(s) ?`;
+
+  openConfirm("Généraliser Coût au m³", msg, async () => {
+    closeModal();
+    await generalizeTo(ids);
+    if (!genErr.value) genOpen.value = false;
+  });
+}
 </script>
 
 <template>
@@ -214,6 +262,12 @@ function askReset() {
 
       <div class="actions">
         <button class="btn" :disabled="!variant || saving" @click="askReset()">Reset</button>
+
+        <!-- ✅ AJOUT: bouton Généraliser -->
+        <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
+          {{ genBusy ? "…" : "Généraliser" }}
+        </button>
+
         <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
           {{ saving ? "…" : "Enregistrer" }}
         </button>
@@ -225,6 +279,10 @@ function askReset() {
 
     <template v-else>
       <div v-if="err" class="alert error"><b>Erreur :</b> {{ err }}</div>
+
+      <!-- ✅ AJOUT: feedback généralisation (non intrusif) -->
+      <div v-if="genErr" class="alert error"><b>Généralisation :</b> {{ genErr }}</div>
+      <div v-if="genBusy" class="alert"><b>Généralisation :</b> traitement…</div>
 
       <div v-if="!variant" class="card">
         <div class="muted">Sélectionne une variante puis reviens ici.</div>
@@ -303,6 +361,14 @@ function askReset() {
         </div>
       </template>
     </template>
+
+    <!-- ✅ AJOUT: MODAL GENERALISATION -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      sectionLabel="Coût au m³"
+      :sourceVariantId="variant?.id ?? null"
+      @apply="onApplyGeneralize"
+    />
 
     <!-- MODAL -->
     <div v-if="modal.open" class="modalMask" @click.self="closeModal()">

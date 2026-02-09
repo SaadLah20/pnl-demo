@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 const store = usePnlStore();
 
@@ -151,6 +152,58 @@ async function saveCab() {
   dirty.value = false;
 }
 
+/* =========================
+   ✅ GENERALISER (CAB)
+========================= */
+const genOpen = ref(false);
+const genBusy = ref(false);
+const genErr = ref<string | null>(null);
+
+function buildCabPayload() {
+  return {
+    etat: String(draft.etat ?? "NEUVE"),
+    mode: String(draft.mode ?? "ACHAT"),
+    capaciteM3: toNum(draft.capaciteM3),
+    amortMois: toNum(draft.amortMois),
+  };
+}
+
+async function generalizeCabTo(variantIds: string[]) {
+  const sourceVariantId = String(variant.value?.id ?? store.activeVariantId ?? "").trim();
+  if (!sourceVariantId) return;
+
+  const payload = buildCabPayload();
+
+  genErr.value = null;
+  genBusy.value = true;
+  try {
+    for (const targetIdRaw of variantIds) {
+      const targetId = String(targetIdRaw ?? "").trim();
+      if (!targetId || targetId === sourceVariantId) continue;
+
+      await (store as any).updateVariant(targetId, { cab: payload });
+    }
+  } catch (e: any) {
+    genErr.value = e?.message ?? String(e);
+  } finally {
+    genBusy.value = false;
+  }
+}
+
+async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = payload?.variantIds ?? [];
+  if (!ids.length) return;
+
+  const ok = window.confirm(
+    payload.mode === "ALL"
+      ? "Généraliser “CAB” sur TOUTES les variantes ?"
+      : `Généraliser “CAB” sur ${ids.length} variante(s) ?`
+  );
+  if (!ok) return;
+
+  await generalizeCabTo(ids);
+  if (!genErr.value) genOpen.value = false;
+}
 
 /* =========================
    INDICATEUR UNIQUE
@@ -207,10 +260,14 @@ const amortPctCa = computed<number>(() => {
       </div>
 
       <div class="actions" v-if="variant && !cabChargeClient">
+        <button class="btn" :disabled="genBusy" @click="genOpen = true">Généraliser</button>
         <button class="btn" :disabled="!dirty" @click="resetFromVariant()">Annuler</button>
         <button class="btn primary" :disabled="!dirty" @click="saveCab()">Enregistrer (local)</button>
       </div>
     </div>
+
+    <div v-if="genErr" class="card error"><b>Généralisation :</b> {{ genErr }}</div>
+    <div v-if="genBusy" class="card">Généralisation…</div>
 
     <div v-if="store.loading" class="card">Chargement…</div>
     <div v-else-if="store.error" class="card error"><b>Erreur :</b> {{ store.error }}</div>
@@ -308,7 +365,7 @@ const amortPctCa = computed<number>(() => {
             </div>
           </div>
 
-          <!-- KPI unique (à droite, pour réduire la hauteur globale) -->
+          <!-- KPI unique -->
           <div class="card kpiCard">
             <div class="kpiLabel">Amortissement total</div>
             <div class="kpiValue">
@@ -322,6 +379,15 @@ const amortPctCa = computed<number>(() => {
         </div>
       </template>
     </template>
+
+    <!-- ✅ MODAL GENERALISATION -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      section-label="CAB"
+      :source-variant-id="String(store.activeVariantId ?? (variant?.id ?? '')) || null"
+      @apply="onApplyGeneralize"
+      @close="() => {}"
+    />
   </div>
 </template>
 
@@ -333,7 +399,7 @@ h1 { margin:0; font-size:18px; }
 .muted { color:#6b7280; font-size:12px; }
 .small { font-size: 11px; }
 
-.actions { display:flex; gap:8px; align-items:center; }
+.actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .btn { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer; }
 .btn:hover { background:#f9fafb; }
 .btn:disabled { opacity:.5; cursor:not-allowed; }
@@ -343,7 +409,7 @@ h1 { margin:0; font-size:18px; }
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
 .error { border-color:#ef4444; background:#fff5f5; }
 
-/* layout: CAB à gauche, KPI à droite */
+/* layout */
 .mainGrid { display:grid; grid-template-columns: 1fr 320px; gap:10px; align-items:start; }
 @media (max-width: 980px) { .mainGrid { grid-template-columns: 1fr; } }
 

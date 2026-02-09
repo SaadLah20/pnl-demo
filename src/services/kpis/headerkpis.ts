@@ -22,8 +22,6 @@ function pricePerKg(prix: number): number {
 
 /* =========================
    MAJORATIONS (persisted + preview)
-   - Persisted: variant.autresCouts.majorations (JSON string)
-   - Preview: 3rd param (store.headerMajorationsPreview)
 ========================= */
 function readPersistedMajorations(variant: any): Record<string, number> {
   try {
@@ -54,11 +52,9 @@ function applyMajoration(value: number, pct: number): number {
    DEVIS SURCHARGE (persisted + preview)
    - Persisted: variant.devis.surcharges (JSON string or object)
    - Preview: 4th param (store.headerDevisSurchargesPreview)
-   - Applied only when `useDevisSurcharge` is true
 ========================= */
 function readPersistedDevisSurcharges(variant: any): Record<string, number> {
   try {
-    // prefer explicit column if exists
     const raw =
       variant?.devis?.surcharges ??
       variant?.devis?.surcharge ??
@@ -67,7 +63,6 @@ function readPersistedDevisSurcharges(variant: any): Record<string, number> {
 
     if (!raw) return {};
     if (typeof raw === "object") {
-      // allow nested shape { surcharges: { ... } }
       const maybe = (raw as any).surcharges ?? raw;
       return maybe && typeof maybe === "object" ? (maybe as Record<string, number>) : {};
     }
@@ -89,7 +84,6 @@ function getDevisSurchargeM3(
   const map = (preview && typeof preview === "object" ? preview : persisted) as any;
   if (!map || typeof map !== "object") return 0;
 
-  // try multiple keys to be resilient to schema/UI storage
   const keys = [
     String(formuleItem?.id ?? ""),
     String(formuleItem?.variantFormuleId ?? ""),
@@ -135,12 +129,8 @@ export function computeHeaderKpis(
   function mpPrixUsed(mpId: string): number {
     const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
     if (!vmp) return 0;
-
-    // ✅ override (prix variante)
-    if (vmp?.prix != null) return n(vmp.prix);
-
-    // fallback catalogue
-    return n(vmp?.mp?.prix);
+    if (vmp?.prix != null) return n(vmp.prix); // override (prix variante)
+    return n(vmp?.mp?.prix); // fallback catalogue
   }
 
   // 3) CMP formule (DH/m3) — MP majorées par mpId
@@ -160,6 +150,17 @@ export function computeHeaderKpis(
     });
   }
 
+  // ✅ Helper: MOMD effective (inclut surcharge devis si toggle ON)
+  function momdEffM3(f: any): number {
+    const baseMomd = n(f?.momd);
+    const surchargeM3 = useDevisSurcharge
+      ? getDevisSurchargeM3(f, persistedDevisSurcharges, previewDevisSurcharges)
+      : 0;
+
+    // ✅ surcharge appliquée sur MOMD (pas sur PV directement)
+    return baseMomd + surchargeM3;
+  }
+
   // 4) Totaux pondérés
   const coutMpTotal = sum(formulesItems, (f: any) => {
     const vol = n(f?.volumeM3);
@@ -167,19 +168,14 @@ export function computeHeaderKpis(
     return cmp * vol;
   });
 
-  const momdTotal = sum(formulesItems, (f: any) => n(f?.momd) * n(f?.volumeM3));
+  // ✅ MOMD total tient compte des surcharges si ON
+  const momdTotal = sum(formulesItems, (f: any) => momdEffM3(f) * n(f?.volumeM3));
 
+  // ✅ CA total utilise momdEff (cohérent avec ebitda/ebit)
   const caTotal = sum(formulesItems, (f: any) => {
     const vol = n(f?.volumeM3);
-    const momd = n(f?.momd);
     const cmp = cmpFormuleM3(f?.formule);
-
-    // PV = CMP + Transport + MOMD (+ surcharge devis optionnelle)
-    const surchargeM3 = useDevisSurcharge
-      ? getDevisSurchargeM3(f, persistedDevisSurcharges, previewDevisSurcharges)
-      : 0;
-
-    const pv = cmp + transportMoyenM3 + momd + surchargeM3;
+    const pv = cmp + transportMoyenM3 + momdEffM3(f);
     return pv * vol;
   });
 
@@ -214,7 +210,7 @@ export function computeHeaderKpis(
 
   const coutM3Total = (coutM3Eau + coutM3Qualite + coutM3Dechets) * volumeTotalM3;
 
-  // 5.2) Coûts mensuels (majorables par champ)
+  // 5.2) Coûts mensuels
   const cmElectricite = applyMajoration(
     n(coutMensuel?.electricite),
     getMajorationPct("coutMensuel.electricite", persistedMajorations, previewMajorations)
@@ -285,7 +281,7 @@ export function computeHeaderKpis(
 
   const coutMensuelTotal = coutMensuelMensuel * duree;
 
-  // 5.3) Maintenance (majorables par champ)
+  // 5.3) Maintenance
   const mCab = applyMajoration(
     n(maintenance?.cab),
     getMajorationPct("maintenance.cab", persistedMajorations, previewMajorations)
@@ -314,7 +310,7 @@ export function computeHeaderKpis(
   const maintenanceMensuel = mCab + mElec + mChargeur + mGenerale + mBassins + mPreventive;
   const maintenanceTotal = maintenanceMensuel * duree;
 
-  // 5.4) Employés (majoration par poste : employes.<role>)
+  // 5.4) Employés
   const empResponsable = applyMajoration(
     n(employes?.responsableNb) * n(employes?.responsableCout),
     getMajorationPct("employes.responsable", persistedMajorations, previewMajorations)
@@ -365,7 +361,7 @@ export function computeHeaderKpis(
 
   const employesTotal = employesMensuel * duree;
 
-  // 5.5) Occasionnels (majorables par champ)
+  // 5.5) Occasionnels
   const occGenieCivil = applyMajoration(
     n(coutOcc?.genieCivil),
     getMajorationPct("coutOccasionnel.genieCivil", persistedMajorations, previewMajorations)
@@ -384,11 +380,7 @@ export function computeHeaderKpis(
   );
   const occRemise = applyMajoration(
     n(coutOcc?.remisePointCentrale),
-    getMajorationPct(
-      "coutOccasionnel.remisePointCentrale",
-      persistedMajorations,
-      previewMajorations
-    )
+    getMajorationPct("coutOccasionnel.remisePointCentrale", persistedMajorations, previewMajorations)
   );
   const occSilots = applyMajoration(
     n(coutOcc?.silots),
@@ -413,13 +405,11 @@ export function computeHeaderKpis(
     occLocalAdjuvant +
     occBungalows;
 
-  // 5.6) Autres coûts (items)
-  // - frais généraux = item % (on ne majore pas ce % ici)
+  // 5.6) Autres coûts
   const fraisGenPct = n(
     autresItems.find((x: any) => String(x?.unite ?? "").includes("POURCENT"))?.valeur
   );
 
-  // - autres coûts hors % : majoration par item (autresCoutsItem:<id>)
   const autresCoutsHorsPctTotal = sum(autresItems, (x: any) => {
     const unite = String(x?.unite ?? "");
     const baseVal = n(x?.valeur);
@@ -459,6 +449,7 @@ export function computeHeaderKpis(
   const amortissementMensuel = n(variant?.cab?.amortMois);
   const amortissementTotal = amortissementMensuel * duree;
 
+  // ✅ EBITDA dépend de momdTotal → surcharge impacte EBITDA/EBIT naturellement
   const ebitdaTotal = momdTotal + margePompageTotal - productionTotal - fraisGenerauxTotal;
   const ebitTotal = ebitdaTotal - amortissementTotal;
 
