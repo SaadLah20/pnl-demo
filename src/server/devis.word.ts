@@ -13,11 +13,17 @@ import {
   TableRow,
   TextRun,
   WidthType,
+  BorderStyle,
 } from "docx";
 import { prisma } from "./db";
 
 /** ✅ Dans certaines versions de docx, AlignmentType est une valeur (pas un type) */
 type DocxAlignment = (typeof AlignmentType)[keyof typeof AlignmentType];
+
+type BuildOptions = {
+  useMajorations?: boolean;      // ✅ applique majorations (MP + transport)
+  useDevisSurcharges?: boolean;  // ✅ applique surcharges devis par formule
+};
 
 function n(x: any): number {
   const v = Number(x);
@@ -30,12 +36,14 @@ function fmtMoney2(x: number): string {
     maximumFractionDigits: 2,
   }).format(n(x));
 }
+
 function fmtMoney0(x: number): string {
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(n(x));
 }
+
 function fmtDateFr(d: Date): string {
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -53,43 +61,6 @@ function safeJsonParse(raw: any, fallback: any) {
   }
 }
 
-/** ✅ array tolerant JSON parse */
-function parseJsonArray<T = any>(raw: any): T[] {
-  if (!raw) return [];
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * ✅ Normalize devis line items from DB:
- * accepts:
- * - ["texte..."]
- * - [{label:"texte..."}, {text:"..."}, {value:"..."}]
- * - mixed
- */
-function normalizeDevisLines(raw: any): string[] {
-  const arr = Array.isArray(raw) ? raw : parseJsonArray<any>(raw);
-  const out: string[] = [];
-
-  for (const it of arr) {
-    if (typeof it === "string") {
-      const t = it.trim();
-      if (t) out.push(t);
-      continue;
-    }
-    if (it && typeof it === "object") {
-      const label = String((it as any).label ?? (it as any).text ?? (it as any).value ?? "").trim();
-      if (label) out.push(label);
-      continue;
-    }
-  }
-  return out;
-}
-
 function roundTo5(x: number): number {
   const v = n(x);
   if (!Number.isFinite(v)) return 0;
@@ -102,7 +73,7 @@ function pricePerKg(prixTonne: number): number {
   return p / 1000;
 }
 
-/** majorations stockées (chez toi) dans autresCouts.majorations (JSON string) */
+/** majorations stockées dans autresCouts.majorations (JSON string) */
 function readMajorations(variant: any): Record<string, number> {
   const raw = variant?.autresCouts?.majorations;
   const obj = safeJsonParse(raw, {});
@@ -131,6 +102,7 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
     String(row?.variantFormuleId ?? ""),
     String(row?.formuleId ?? ""),
     String(row?.formule?.id ?? ""),
+    String(row?.formule?.label ?? ""),
   ].filter((k) => k && k !== "undefined" && k !== "null");
 
   for (const k of keys) {
@@ -139,79 +111,108 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
   return 0;
 }
 
-/** ====== TYPO ====== */
+/* =========================
+   DOC HELPERS (Tahoma 9)
+========================= */
+
 const FONT = "Tahoma";
-const SIZE = 18; // 9pt (docx = half-points)
+const SIZE_9 = 18; // docx = half-points (9pt => 18)
 
-function run(text: string, opts?: { bold?: boolean }) {
-  return new TextRun({
-    text: text ?? "",
-    bold: !!opts?.bold,
-    font: FONT,
-    size: SIZE,
-  });
-}
-
-function pTxt(
-  text: string,
-  opts?: {
-    bold?: boolean;
-    align?: DocxAlignment;
-  }
-) {
+function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
   return new Paragraph({
     alignment: opts?.align,
-    children: [run(text ?? "", { bold: !!opts?.bold })],
+    children: [
+      new TextRun({
+        text: text ?? "",
+        bold: !!opts?.bold,
+        font: FONT,
+        size: SIZE_9,
+      }),
+    ],
   });
 }
 
 function blank(lines = 1) {
-  const out: Paragraph[] = [];
-  for (let i = 0; i < lines; i++) out.push(new Paragraph({ children: [run("")] }));
-  return out;
-}
-
-function bullets(lines: string[]) {
-  return (lines ?? [])
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean)
-    .map(
-      (t) =>
-        new Paragraph({
-          bullet: { level: 0 },
-          children: [run(t)],
-        })
-    );
+  // des paragraphes vides pour créer l'espace (stable dans Word)
+  return Array.from({ length: Math.max(1, lines) }).map(
+    () =>
+      new Paragraph({
+        children: [new TextRun({ text: "", font: FONT, size: SIZE_9 })],
+      })
+  );
 }
 
 function sectionTitle(text: string) {
   return new Paragraph({
-    children: [run(text, { bold: true })],
+    children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_9 })],
   });
 }
 
-/** fallback phrases (si l’utilisateur n’a rien mis dans l’onglet Contenu) */
-function defaultPrixComplementaires(contract: any): string[] {
-  const sunday = n(contract?.sundayPrice);
-  const chiller = n(contract?.chillerRent);
-  const penalty = n(contract?.delayPenalty);
-
-  // ✅ Phrases complètes (comme tu veux sur l’onglet contenu)
-  const out: string[] = [];
-
-  out.push(
-    sunday > 0
-      ? `Ouverture en dehors des horaires : ${fmtMoney0(sunday)} DHS HT / poste.`
-      : `Ouverture en dehors des horaires : 5 000 DHS HT / poste.`
-  );
-
-  if (chiller > 0) out.push(`Location chiller : forfait mensuel de ${fmtMoney0(chiller)} MAD HT.`);
-  if (penalty > 0) out.push(`Pénalité dépassement délai : ${fmtMoney0(penalty)} MAD HT.`);
-
-  return out;
+function bulletsFromStrings(lines: string[]) {
+  return (lines ?? [])
+    .filter((x) => String(x ?? "").trim().length > 0)
+    .map(
+      (t) =>
+        new Paragraph({
+          bullet: { level: 0 },
+          children: [new TextRun({ text: String(t ?? ""), font: FONT, size: SIZE_9 })],
+        })
+    );
 }
 
-export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
+/**
+ * ✅ robuste contre: string[] OU object[] (sinon tu as [object Object])
+ * On reconstruit des phrases "comme l'onglet contenu" (au moins lisible et stable).
+ */
+function normalizeLines(raw: any): string[] {
+  const arr = safeJsonParse(raw, []);
+  if (!Array.isArray(arr)) return [];
+
+  return arr
+    .map((it) => {
+      if (typeof it === "string") return it;
+
+      if (it && typeof it === "object") {
+        // cas fréquents
+        const text = (it as any).text ?? (it as any).label ?? (it as any).name ?? (it as any).titre;
+        const value = (it as any).value ?? (it as any).valeur ?? (it as any).amount ?? (it as any).montant;
+        const unit = (it as any).unit ?? (it as any).unite ?? "";
+
+        // si l'objet contient déjà une phrase complète
+        if (typeof text === "string" && text.trim() && (value === undefined || value === null || value === "")) {
+          return text.trim();
+        }
+
+        // si on a label + value, on construit une phrase lisible
+        if (typeof text === "string" && text.trim() && value !== undefined) {
+          const vNum = n(value);
+          const vStr = Number.isFinite(vNum) ? fmtMoney0(vNum) : String(value);
+          const uStr = unit ? ` ${String(unit)}` : "";
+          return `${text.trim()} : ${vStr}${uStr}`.trim();
+        }
+
+        // fallback ultime
+        try {
+          return JSON.stringify(it);
+        } catch {
+          return String(it);
+        }
+      }
+
+      return "";
+    })
+    .map((s) => String(s ?? "").trim())
+    .filter(Boolean);
+}
+
+export async function buildDevisWordBuffer(
+  variantId: string,
+  opts?: BuildOptions
+): Promise<Buffer> {
+  const useMajorations = opts?.useMajorations !== undefined ? !!opts.useMajorations : true;
+  const useDevisSurcharges = opts?.useDevisSurcharges !== undefined ? !!opts.useDevisSurcharges : true;
+
+  // ⚠️ any pour ne pas bloquer si tes types Prisma ne reflètent pas encore devis.*
   const v: any = await prisma.variant.findUnique({
     where: { id: variantId },
     include: {
@@ -219,11 +220,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
       transport: true,
       autresCouts: true,
       mp: { include: { items: { include: { mp: true } } } },
-      variantFormules: {
-        include: {
-          formule: { include: { items: { include: { mp: true } } } },
-        },
-      },
+      variantFormules: { include: { formule: { include: { items: { include: { mp: true } } } } } },
       devis: true,
     },
   });
@@ -244,50 +241,33 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const dureeMois = n(c?.dureeMois ?? 0);
 
   const rows = (v?.variantFormules ?? []) as any[];
-  const volumeTotalFromFormules = rows.reduce((s, r) => s + n(r?.volumeM3), 0);
+  const volumeTotal = rows.reduce((s, r) => s + n(r?.volumeM3), 0);
 
-  const devis = v?.devis ?? null;
-
-  const devisMeta = safeJsonParse((devis as any)?.meta, {});
-  // ✅ toggles de calcul (à brancher sur UI)
-  const useMajorations = devisMeta?.useMajorations === undefined ? true : Boolean(devisMeta.useMajorations);
-  const useDevisSurcharges =
-    devisMeta?.useDevisSurcharges === undefined ? true : Boolean(devisMeta.useDevisSurcharges);
-
+  const devisMeta = safeJsonParse((v?.devis as any)?.meta, {});
   const intro =
-    typeof (devis as any)?.intro === "string" && String((devis as any).intro).trim()
-      ? String((devis as any).intro)
+    typeof (v?.devis as any)?.intro === "string" && (v.devis as any).intro.trim()
+      ? String((v.devis as any).intro)
       : `Nous vous prions de trouver ci-dessous les détails de notre offre de prix pour "${pnlTitle}".`;
 
-  const rappel = safeJsonParse((devis as any)?.rappel, {});
-  const quantiteM3 = n(rappel?.quantiteM3) || volumeTotalFromFormules;
-  const dureeMoisRappel = n(rappel?.dureeMois) || dureeMois;
-  const demarrageRappel = String(rappel?.demarrage ?? demarrage ?? "");
-  const lieuRappel = String(rappel?.lieu ?? ville ?? "");
-
-  // ✅ Texte complet (si tu l’ajoutes en DB un jour, sinon fallback)
+  const rappel = safeJsonParse((v?.devis as any)?.rappel, {});
   const dureeQuantiteTexte =
-    typeof (devis as any)?.dureeQuantiteTexte === "string" && String((devis as any).dureeQuantiteTexte).trim()
-      ? String((devis as any).dureeQuantiteTexte)
-      : `Les prix sont donnés pour un volume de ${fmtMoney0(quantiteM3)} m3 et une durée de ${fmtMoney0(
-          dureeMoisRappel
+    typeof rappel?.dureeQuantiteTexte === "string" && rappel.dureeQuantiteTexte.trim()
+      ? rappel.dureeQuantiteTexte
+      : `Les prix sont donnés pour un volume de ${fmtMoney0(volumeTotal)} m3 et une durée de ${fmtMoney0(
+          dureeMois
         )} mois. En aucun cas les volumes réalisés ne devront être inférieurs de plus de 90% du volume susmentionné.`;
 
   const validiteTexte =
-    typeof (devis as any)?.validiteTexte === "string" && String((devis as any).validiteTexte).trim()
-      ? String((devis as any).validiteTexte)
+    typeof (v?.devis as any)?.validiteTexte === "string" && (v.devis as any).validiteTexte.trim()
+      ? String((v.devis as any).validiteTexte)
       : "Offre valable pour une durée d’un mois à partir de sa date d’envoi.";
 
-  // ✅ FIX: bullets proprement depuis DB (onglet Contenu)
-  const chargeFournisseur = normalizeDevisLines((devis as any)?.chargeFournisseur);
-  const chargeClient = normalizeDevisLines((devis as any)?.chargeClient);
+  // ✅ LECTURE ROBUSTE (string[] OU object[])
+  const chargeFournisseur = normalizeLines((v?.devis as any)?.chargeFournisseur);
+  const chargeClient = normalizeLines((v?.devis as any)?.chargeClient);
+  const prixComplementaires = normalizeLines((v?.devis as any)?.prixComplementaires);
 
-  // ✅ prixComplementaires DOIT venir de DB si existe (phrases complètes)
-  const prixComplementairesFromDb = normalizeDevisLines((devis as any)?.prixComplementaires);
-  const prixComplementaires =
-    prixComplementairesFromDb.length > 0 ? prixComplementairesFromDb : defaultPrixComplementaires(c);
-
-  const sig = safeJsonParse((devis as any)?.signature, {});
+  const sig = safeJsonParse((v?.devis as any)?.signature, {});
   const sigNom = String(sig?.nom ?? "Saad LAHLIMI");
   const sigPoste = String(sig?.poste ?? "Commercial P&L");
   const sigTel = String(sig?.telephone ?? "+212701888888");
@@ -296,7 +276,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const hydroPu = n(devisMeta?.hydrofugePuM3 ?? 0);
   const hydroQty = n(devisMeta?.hydrofugeQtyM3 ?? 0);
 
-  // --- Calcul prix selon choix (majorations / surcharges devis)
+  // --- Calcul prix (CMP + transport + MOMD) + majorations + surcharge devis
   const maj = readMajorations(v);
   const surMap = readDevisSurcharges(v);
 
@@ -317,15 +297,18 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
       const prixT = mpPrixUsed(mpId);
       const prixKgBase = pricePerKg(prixT);
 
-      // ✅ appliquer majorations MP seulement si activées
-      const prixKg = useMajorations ? applyMaj(prixKgBase, getMajPct(`mp:${mpId}`, maj)) : prixKgBase;
+      // ✅ majorations MP uniquement si activées
+      const pctMp = useMajorations ? getMajPct(`mp:${mpId}`, maj) : 0;
+      const prixKg = applyMaj(prixKgBase, pctMp);
 
       return s + qtyKg * prixKg;
     }, 0);
   }
 
   const transportBase = n(v?.transport?.prixMoyen ?? 0);
-  const transportUsed = useMajorations ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj)) : transportBase;
+  const transportUsed = useMajorations
+    ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj))
+    : transportBase;
 
   const tableLines: Array<{ label: string; pu: number; vol: number; total: number }> = rows.map((r: any) => {
     const label = String(r?.formule?.label ?? "—");
@@ -350,7 +333,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const tva = totalHT * 0.2;
   const totalTTC = totalHT + tva;
 
-  // --- Logo (plus grand surtout hauteur)
+  // --- Logo (plus grand surtout en hauteur)
   let logoPara: Paragraph | null = null;
   try {
     const logoPath = path.resolve(process.cwd(), "src/assets/LHM_logo.jpg");
@@ -364,7 +347,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
           new ImageRun({
             data: imgData,
             type: "jpg",
-            transformation: { width: 190, height: 90 }, // ✅ plus grand (hauteur surtout)
+            transformation: { width: 180, height: 95 },
           }),
         ],
       });
@@ -373,7 +356,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
     logoPara = null;
   }
 
-  // --- Table (style proche du modèle)
+  // --- Table (proche du modèle)
   const headerRow = new TableRow({
     children: [
       new TableCell({ children: [pTxt("Désignation", { bold: true })] }),
@@ -425,22 +408,20 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const table = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [headerRow, ...bodyRows, ...footRows],
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+      bottom: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+      left: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+      right: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+    },
   });
 
-  // ✅ “en-tête” en pied de page
+  // ✅ LE "headerLine" doit être un pied de page (footer)
   const footerLine = `${pnlTitle} - offre de prix - ${date}`;
 
   const doc = new Document({
-    styles: {
-      default: {
-        document: {
-          run: { font: FONT, size: SIZE },
-          paragraph: {
-            spacing: { after: 80 }, // petit spacing lisible
-          },
-        },
-      },
-    },
     sections: [
       {
         footers: {
@@ -448,7 +429,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
             children: [
               new Paragraph({
                 alignment: AlignmentType.LEFT,
-                children: [run(footerLine)],
+                children: [new TextRun({ text: footerLine, font: FONT, size: SIZE_9 })],
               }),
             ],
           }),
@@ -459,25 +440,31 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
           // Ville/Date à droite
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [run(`${ville}, le ${date}`)],
+            children: [new TextRun({ text: `${ville}, le ${date}`, font: FONT, size: SIZE_9 })],
           }),
 
           ...blank(1),
 
-          // ✅ Titre centré (retour ligne obligatoire)
+          // ✅ Titre centré avec retour à la ligne entre "Offre de prix" et le nom du P&L
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            children: [run("Offre de prix", { bold: true })],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [run(pnlTitle, { bold: true })],
+            children: [
+              new TextRun({ text: "Offre de prix", bold: true, font: FONT, size: SIZE_9 }),
+              new TextRun({ break: 1, text: pnlTitle, bold: true, font: FONT, size: SIZE_9 }),
+            ],
           }),
 
-          // ✅ Client à droite (format exact)
+          // ✅ Client à droite: "Client: xxxx" en gras
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [run(`Client: ${client}`, { bold: true })],
+            children: [
+              new TextRun({
+                text: client ? `Client: ${client}` : "Client: —",
+                bold: true,
+                font: FONT,
+                size: SIZE_9,
+              }),
+            ],
           }),
 
           ...blank(1),
@@ -489,23 +476,23 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
 
           // Rappel
           sectionTitle("Rappel des données du projet :"),
-          ...bullets([
-            `Quantité : ${fmtMoney0(quantiteM3)} m3`,
-            `Délai : ${fmtMoney0(dureeMoisRappel)} mois`,
-            ...(demarrageRappel ? [`Démarrage : ${demarrageRappel}`] : []),
-            ...(lieuRappel ? [`Lieu : ${lieuRappel}`] : []),
+          ...bulletsFromStrings([
+            `Quantité : ${fmtMoney0(volumeTotal)} m3`,
+            `Délai : ${fmtMoney0(dureeMois)} mois`,
+            ...(demarrage ? [`Démarrage : ${demarrage}`] : []),
+            ...(ville ? [`Lieu : ${ville}`] : []),
           ]),
 
           ...blank(1),
 
-          // ✅ Charges (visuel comme avant)
+          // Charges
           sectionTitle("A la charge de LafargeHolcim Maroc :"),
-          ...(chargeFournisseur.length ? bullets(chargeFournisseur) : bullets(["—"])),
+          ...(chargeFournisseur.length ? bulletsFromStrings(chargeFournisseur) : bulletsFromStrings(["—"])),
 
           ...blank(1),
 
           sectionTitle("A la charge du client :"),
-          ...(chargeClient.length ? bullets(chargeClient) : bullets(["—"])),
+          ...(chargeClient.length ? bulletsFromStrings(chargeClient) : bulletsFromStrings(["—"])),
 
           ...blank(1),
 
@@ -514,9 +501,11 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
 
           ...blank(1),
 
-          // ✅ Prix complémentaires (toujours phrases complètes)
+          // Prix complémentaires
           sectionTitle("Prix complémentaires :"),
-          ...(prixComplementaires.length ? bullets(prixComplementaires) : bullets(["—"])),
+          ...(prixComplementaires.length
+            ? bulletsFromStrings(prixComplementaires)
+            : bulletsFromStrings(["—"])),
 
           ...blank(1),
 
@@ -530,21 +519,19 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
           sectionTitle("Validité de l’offre :"),
           pTxt(validiteTexte),
 
-          // ✅ Espace avant signature (comme demandé)
+          // ✅ Signature: espace vide avant + chaque info sur une ligne séparée
           ...blank(2),
-
-          // ✅ Signature: retour ligne après chaque info + à droite
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [run(sigNom, { bold: true })],
+            children: [new TextRun({ text: sigNom, bold: true, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [run(sigPoste)],
+            children: [new TextRun({ text: sigPoste, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [run(sigTel)],
+            children: [new TextRun({ text: sigTel, font: FONT, size: SIZE_9 })],
           }),
         ],
       },

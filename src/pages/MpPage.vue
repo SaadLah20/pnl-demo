@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MpPage.vue (FICHIER COMPLET / compact + sticky header + search + UX override/restore) -->
+<!-- ✅ src/pages/MpPage.vue (FICHIER COMPLET / compact + sticky header + search + filtres modernes + pagination 10) -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -12,6 +12,9 @@ import {
   CheckIcon,
   XMarkIcon,
   ExclamationTriangleIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  AdjustmentsHorizontalIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -58,10 +61,14 @@ const contractTitle = computed(() => {
 type MpRow = {
   variantMpId: string;
   mpId: string;
+
   categorie: string;
   label: string;
   unite: string;
   fournisseur: string;
+
+  comment: string; // ✅ à afficher (à la place du mpId)
+
   prixCatalogue: number;
   prixModifie: number | null; // (override)
   prixUtilise: number; // = modifié si existe sinon catalogue
@@ -77,6 +84,10 @@ const mpRows = computed<MpRow[]>(() => {
     const raw = it?.prixOverride ?? it?.prix ?? null;
     const prixModifie = raw == null ? null : toNum(raw);
 
+    const comment = String(
+      mp?.comment ?? mp?.commentaire ?? it?.comment ?? it?.commentaire ?? ""
+    ).trim();
+
     return {
       variantMpId: String(it?.id ?? ""),
       mpId: String(it?.mpId ?? mp?.id ?? ""),
@@ -84,6 +95,7 @@ const mpRows = computed<MpRow[]>(() => {
       label: String(mp?.label ?? "").trim(),
       unite: String(mp?.unite ?? "").trim(),
       fournisseur: String(mp?.fournisseur ?? "").trim(),
+      comment,
       prixCatalogue,
       prixModifie,
       prixUtilise: prixModifie ?? prixCatalogue,
@@ -92,29 +104,96 @@ const mpRows = computed<MpRow[]>(() => {
 });
 
 /* =========================
-   UI FILTERS
+   UI (filters + pagination)
 ========================= */
 const ui = reactive({
   q: "",
   groupByCategorie: true,
+
+  // ✅ filtres modernes
+  categorie: "__ALL__",
+  fournisseur: "__ALL__",
+  showFilters: false,
+
+  // ✅ pagination
+  pageSize: 10,
+  page: 1,
 });
 
 function hay(r: MpRow) {
-  return `${r.categorie} ${r.label} ${r.fournisseur} ${r.unite}`.toLowerCase();
+  // recherche globale
+  return `${r.categorie} ${r.label} ${r.fournisseur} ${r.unite} ${r.comment}`.toLowerCase();
 }
+
+const categories = computed(() => {
+  const set = new Set<string>();
+  for (const r of mpRows.value) {
+    const c = r.categorie || "Autre";
+    set.add(c);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
+
+const fournisseurs = computed(() => {
+  const set = new Set<string>();
+  for (const r of mpRows.value) {
+    const f = r.fournisseur || "—";
+    set.add(f);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+});
 
 const filteredRows = computed(() => {
   const q = ui.q.trim().toLowerCase();
+
   let rows = mpRows.value;
+
+  // catégorie
+  if (ui.categorie !== "__ALL__") {
+    rows = rows.filter((r) => (r.categorie || "Autre") === ui.categorie);
+  }
+
+  // fournisseur
+  if (ui.fournisseur !== "__ALL__") {
+    rows = rows.filter((r) => (r.fournisseur || "—") === ui.fournisseur);
+  }
+
+  // recherche
   if (q) rows = rows.filter((r) => hay(r).includes(q));
+
   return rows;
 });
 
+// reset pagination when filters change
+watch(
+  () => [ui.q, ui.categorie, ui.fournisseur, ui.pageSize].join("|"),
+  () => {
+    ui.page = 1;
+  }
+);
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / ui.pageSize)));
+
+watch(
+  () => filteredRows.value.length,
+  () => {
+    // clamp page
+    if (ui.page > totalPages.value) ui.page = totalPages.value;
+    if (ui.page < 1) ui.page = 1;
+  }
+);
+
+const pagedRows = computed(() => {
+  const start = (ui.page - 1) * ui.pageSize;
+  const end = start + ui.pageSize;
+  return filteredRows.value.slice(start, end);
+});
+
 const grouped = computed(() => {
-  if (!ui.groupByCategorie) return [{ key: "__ALL__", title: "Toutes", rows: filteredRows.value }];
+  if (!ui.groupByCategorie) return [{ key: "__ALL__", title: "Toutes", rows: pagedRows.value }];
 
   const map = new Map<string, MpRow[]>();
-  for (const r of filteredRows.value) {
+  for (const r of pagedRows.value) {
     const k = r.categorie || "Autre";
     if (!map.has(k)) map.set(k, []);
     map.get(k)!.push(r);
@@ -128,15 +207,8 @@ const grouped = computed(() => {
   }));
 });
 
-const stats = computed(() => {
-  const total = mpRows.value.length;
-  const shown = filteredRows.value.length;
-  const modif = mpRows.value.filter((r) => r.prixModifie != null).length;
-  return { total, shown, modif };
-});
-
 /* =========================
-   EDIT STATE (prix modifié only)
+   EDIT STATE (prix modifié)
 ========================= */
 type EditState = {
   editing: boolean;
@@ -224,7 +296,7 @@ async function save(row: MpRow) {
 }
 
 /* =========================
-   RESTORE MODAL (prix modifié = catalogue)
+   RESTORE MODAL
 ========================= */
 const restoreModal = reactive<{
   open: boolean;
@@ -283,6 +355,12 @@ async function reload() {
   stopAllEdits();
   await store.loadPnls();
 }
+function prevPage() {
+  ui.page = Math.max(1, ui.page - 1);
+}
+function nextPage() {
+  ui.page = Math.min(totalPages.value, ui.page + 1);
+}
 </script>
 
 <template>
@@ -328,23 +406,67 @@ async function reload() {
         <div class="tools">
           <div class="search">
             <MagnifyingGlassIcon class="sic" />
-            <input v-model="ui.q" class="sin" placeholder="Rechercher (MP, fournisseur, unité, catégorie)…" />
+            <input v-model="ui.q" class="sin" placeholder="Rechercher (MP, fournisseur, unité, catégorie, commentaire)…" />
             <button v-if="ui.q" class="sclear" @click="ui.q = ''" title="Effacer">×</button>
           </div>
+
+          <button class="btn ghost" @click="ui.showFilters = !ui.showFilters" title="Filtres">
+            <AdjustmentsHorizontalIcon class="ic" />
+            <span>Filtres</span>
+          </button>
 
           <label class="toggle" title="Grouper par catégorie">
             <input type="checkbox" v-model="ui.groupByCategorie" />
             <span>Catégories</span>
           </label>
+        </div>
 
-          <div class="meta muted">
-            <b>{{ stats.shown }}</b>/{{ stats.total }} • Modif: <b>{{ stats.modif }}</b>
+        <!-- ✅ Filtres modernes (pliables) -->
+        <div v-show="ui.showFilters" class="filters">
+          <div class="frow">
+            <div class="f">
+              <div class="flab">Catégorie</div>
+              <select class="sel" v-model="ui.categorie">
+                <option value="__ALL__">Toutes</option>
+                <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+              </select>
+            </div>
+
+            <div class="f">
+              <div class="flab">Fournisseur</div>
+              <select class="sel" v-model="ui.fournisseur">
+                <option value="__ALL__">Tous</option>
+                <option v-for="f in fournisseurs" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </div>
+
+            <div class="f">
+              <div class="flab">Par page</div>
+              <select class="sel" v-model.number="ui.pageSize">
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+              </select>
+            </div>
           </div>
         </div>
 
         <div v-if="filteredRows.length === 0" class="empty muted">Aucun résultat.</div>
 
         <template v-else>
+          <!-- ✅ Pagination (affichée seulement si > 10 affichés au total filtré) -->
+          <div v-if="filteredRows.length > ui.pageSize" class="pager">
+            <button class="pbtn" :disabled="ui.page <= 1" @click="prevPage" title="Page précédente">
+              <ChevronLeftIcon class="pi" />
+            </button>
+            <div class="ptext">
+              Page <b>{{ ui.page }}</b> / {{ totalPages }}
+            </div>
+            <button class="pbtn" :disabled="ui.page >= totalPages" @click="nextPage" title="Page suivante">
+              <ChevronRightIcon class="pi" />
+            </button>
+          </div>
+
           <div v-for="g in grouped" :key="g.key" class="group">
             <div v-if="ui.groupByCategorie" class="ghead">
               <div class="gttl">
@@ -375,8 +497,13 @@ async function reload() {
                           <b class="ell" :title="r.label">{{ r.label || "—" }}</b>
                           <span class="unit">({{ r.unite || "—" }})</span>
                         </div>
-                        <div class="mpSub muted">
-                          <span class="ell" :title="r.mpId">{{ r.mpId }}</span>
+
+                        <!-- ✅ commentaire au lieu de l’ID -->
+                        <div class="mpSub muted" v-if="r.comment">
+                          <span class="ell" :title="r.comment">{{ r.comment }}</span>
+                        </div>
+                        <div class="mpSub muted" v-else>
+                          <span class="ell">—</span>
                         </div>
                       </div>
                     </td>
@@ -438,7 +565,7 @@ async function reload() {
                         v-if="r.prixModifie != null"
                         class="miniIcon restore"
                         @click="openRestoreModal(r)"
-                        title="Restaurer au catalogue (prix modifié = catalogue)"
+                        title="Restaurer au catalogue (modifié = catalogue)"
                       >
                         <ArrowUturnLeftIcon class="mi" />
                       </button>
@@ -447,6 +574,19 @@ async function reload() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <!-- pagination bottom (si beaucoup) -->
+          <div v-if="filteredRows.length > ui.pageSize" class="pager bottom">
+            <button class="pbtn" :disabled="ui.page <= 1" @click="prevPage" title="Page précédente">
+              <ChevronLeftIcon class="pi" />
+            </button>
+            <div class="ptext">
+              Page <b>{{ ui.page }}</b> / {{ totalPages }}
+            </div>
+            <button class="pbtn" :disabled="ui.page >= totalPages" @click="nextPage" title="Page suivante">
+              <ChevronRightIcon class="pi" />
+            </button>
           </div>
         </template>
       </div>
@@ -623,8 +763,78 @@ async function reload() {
   color: rgba(15,23,42,0.86);
 }
 .toggle input{ transform: translateY(1px); }
-.meta{ margin-left:auto; font-size:12px; font-weight:850; white-space:nowrap; }
 .muted{ color: var(--muted); }
+
+/* filters panel */
+.filters{
+  margin: 6px 0 10px;
+  border: 1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
+  border-radius: 14px;
+  padding: 8px;
+}
+.frow{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.f{
+  min-width: 200px;
+  flex: 1 1 200px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.flab{
+  font-size: 10.5px;
+  font-weight: 950;
+  color: rgba(15,23,42,0.55);
+}
+.sel{
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.92);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15,23,42,0.86);
+  outline: none;
+}
+.sel:focus{
+  border-color: rgba(32,184,232,0.35);
+  box-shadow: 0 0 0 4px rgba(32,184,232,0.12);
+}
+
+/* pager */
+.pager{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  padding: 6px 2px 10px;
+}
+.pager.bottom{ padding: 10px 2px 2px; }
+.pbtn{
+  width: 34px;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.86);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.pbtn:disabled{ opacity: 0.55; cursor:not-allowed; }
+.pbtn:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
+.pi{ width: 16px; height: 16px; color: rgba(15,23,42,0.78); }
+.ptext{
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15,23,42,0.75);
+  white-space: nowrap;
+}
 
 /* group */
 .group{ margin-top: 8px; }
@@ -655,7 +865,7 @@ async function reload() {
 }
 .table th, .table td{
   border-bottom:1px solid rgba(16,24,40,0.08);
-  padding: 6px 8px; /* ✅ compact height */
+  padding: 6px 8px; /* compact height */
   vertical-align:middle;
 }
 .table thead th{
