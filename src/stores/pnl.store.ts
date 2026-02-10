@@ -543,29 +543,28 @@ export const usePnlStore = defineStore("pnl", {
       return resp;
     },
 
-    // =========================================================
-    // Variant MP override (fallback paths)
-    // =========================================================
-    async updateVariantMp(variantMpId: string, payload: AnyObj) {
-      const id = encodeURIComponent(String(variantMpId ?? ""));
-      const body = JSON.stringify(payload ?? {});
+// =========================================================
+// Variant MP override (route correcte backend)
+// =========================================================
+async updateVariantMp(variantMpId: string, payload: AnyObj) {
+  const variantId = String((this as any).activeVariant?.id ?? "");
+  if (!variantId) throw new Error("Aucune variante active (activeVariant.id introuvable).");
 
-      const candidates = [`/variant-mp/${id}`, `/variants-mp/${id}`, `/variants/mp/${id}`];
+  const id = encodeURIComponent(String(variantMpId ?? ""));
+  const body = JSON.stringify(payload ?? {});
 
-      let lastErr: any = null;
-      for (const path of candidates) {
-        try {
-          const resp = await jsonFetch(path, { method: "PUT", body });
-          const updatedVariant = (resp as any)?.variant ?? resp;
-          if (updatedVariant?.id) this.replaceActiveVariantInState(updatedVariant);
-          return resp;
-        } catch (e: any) {
-          lastErr = e;
-        }
-      }
+  const resp = await jsonFetch(`/variants/${encodeURIComponent(variantId)}/mps/${id}`, {
+    method: "PUT",
+    body,
+  });
 
-      throw lastErr ?? new Error("Impossible de mettre à jour la MP de variante.");
-    },
+  // backend: { ok: true, variant }
+  const updatedVariant = (resp as any)?.variant ?? resp;
+  if (updatedVariant?.id) this.replaceActiveVariantInState(updatedVariant);
+
+  return resp;
+},
+
 
     // =========================================================
     // Variant / Formules

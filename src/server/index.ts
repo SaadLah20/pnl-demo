@@ -413,6 +413,203 @@ async function ensureVariantSkeleton(tx: Prisma.TransactionClient, variantId: st
   });
 }
 
+/* =========================================================
+   INITIÉE → Calcul MOMD pour atteindre un EBIT cible (%)
+   Hypothèse modèle:
+   - CA = (CMP + Transport + MOMD) * Volume
+   - Coûts = (CMP + Transport + CoutM3) * Volume
+            + (Mensuel + Employés + Maintenance) * Durée
+            + CoutOccasionnel
+            + Frais généraux (% CA)
+   - EBIT% cible = EBIT / CA
+========================================================= */
+
+function sumNums(obj: any, keys: string[]): number {
+  let s = 0;
+  for (const k of keys) s += numOr0(obj?.[k]);
+  return s;
+}
+
+async function computeInitieeMomdPerM3(
+  tx: Prisma.TransactionClient,
+  params: {
+    variantId: string;
+    contractId: string;
+    ebitCiblePct: number;
+  }
+): Promise<number> {
+  const { variantId, contractId } = params;
+
+  const t = numOr0(params.ebitCiblePct) / 100; // cible EBIT% (ex: 8.3% => 0.083)
+
+  // Contract (durée)
+  const contract = await tx.contract.findUnique({ where: { id: contractId } });
+  const duree = intOr0(contract?.dureeMois);
+  if (duree <= 0) return 0;
+
+  // Sections nécessaires
+  const transport = await tx.sectionTransport.findUnique({ where: { variantId } });
+  const coutM3 = await tx.sectionCoutM3.findUnique({ where: { variantId } });
+  const coutMensuel = await tx.sectionCoutMensuel.findUnique({ where: { variantId } });
+  const maintenance = await tx.sectionMaintenance.findUnique({ where: { variantId } });
+  const employes = await tx.sectionEmployes.findUnique({ where: { variantId } });
+  const coutOcc = await tx.sectionCoutOccasionnel.findUnique({ where: { variantId } });
+  const cab = await tx.sectionCab.findUnique({ where: { variantId } });
+
+  // Formules (volumes) + items MP (pour CMP)
+  const links = await tx.variantFormule.findMany({
+    where: { variantId },
+    include: { formule: { include: { items: true } } },
+  });
+  if (!links.length) return 0;
+
+  const V = links.reduce((s, l) => s + numOr0(l.volumeM3), 0);
+  if (V <= 0) return 0;
+
+  // Prix MP (variantMp.prix override sinon mpCatalogue.prix)
+  const mps = await tx.variantMp.findMany({
+    where: { variantId },
+    include: { mp: true },
+  });
+  const prixTonneByMp = new Map<string, number>();
+  for (const vmp of mps) {
+    const p = vmp.prix != null ? vmp.prix : (vmp.mp?.prix ?? 0);
+    prixTonneByMp.set(String(vmp.mpId), numOr0(p));
+  }
+
+  // CMP moyen pondéré (MAD/m3)
+  // Hypothèse: formuleCatalogueItem.qty en kg/m3, mp.prix en MAD/tonne
+  const cmpTotal = links.reduce((sum, l) => {
+    const vol = numOr0(l.volumeM3);
+    const cmpM3 = (l.formule?.items ?? []).reduce((s2, it: any) => {
+      const prixTonne = prixTonneByMp.get(String(it.mpId)) ?? 0;
+      const prixKg = prixTonne / 1000;
+      return s2 + numOr0(it.qty) * prixKg;
+    }, 0);
+    return sum + cmpM3 * vol;
+  }, 0);
+  const cmpAvg = cmpTotal / V;
+
+  // Transport (MAD/m3)
+  const transportM3 = numOr0(transport?.prixMoyen);
+
+  // Surcharge devis (pour INITIEE, souvent 0 car surcharges = {} au skeleton)
+  // On laisse volontairement à 0 ici (comme ton usage actuel).
+  const surchargeM3 = 0;
+
+  // 1) MOMD est notre variable "m" (MAD/m3)
+  // 2) CA = (CMP + Transport + Surcharge + MOMD) * V
+  const B = cmpAvg + transportM3 + surchargeM3; // base ASP sans MOMD
+
+  // Coûts "productionTotal" (comme headerkpis.ts)
+  const coutM3M3 = sumNums(coutM3, ["eau", "qualite", "dechets"]);
+  const coutM3Total = coutM3M3 * V;
+
+  const coutMensuelMois = sumNums(coutMensuel, [
+    "electricite",
+    "gasoil",
+    "location",
+    "securite",
+    "hebergements",
+    "locationTerrain",
+    "telephone",
+    "troisG",
+    "taxeProfessionnelle",
+    "locationVehicule",
+    "locationAmbulance",
+    "locationBungalows",
+    "epi",
+  ]);
+  const coutMensuelTotal = coutMensuelMois * duree;
+
+  const maintenanceMois = sumNums(maintenance, ["cab", "elec", "chargeur", "generale", "bassins", "preventive"]);
+  const maintenanceTotal = maintenanceMois * duree;
+
+function employesMensuelFromSection(employes: any): number {
+  if (!employes) return 0;
+
+  // On prend chaque paire xxxNb / xxxCout => Nb * Cout
+  let total = 0;
+  for (const [k, v] of Object.entries(employes)) {
+    const key = String(k);
+    if (!key.endsWith("Nb")) continue;
+
+    const base = key.slice(0, -2); // ex: "responsable"
+    const nb = numOr0(v);
+    const cout = numOr0((employes as any)[`${base}Cout`]);
+
+    total += nb * cout;
+  }
+  return total;
+}
+
+const employesMois = employesMensuelFromSection(employes);
+const employesTotal = employesMois * duree;
+
+
+  const coutOccasionnelTotal = sumNums(coutOcc, [
+    "genieCivil",
+    "installation",
+    "transport",
+    "demontage",
+    "remisePointCentrale",
+    "silots",
+    "localAdjuvant",
+    "bungalows",
+  ]);
+
+  // Autres coûts (hors POURCENT_CA) comme headerkpis.ts
+  const autresItems = await tx.autreCoutItem.findMany({ where: { variantId } });
+
+  const fraisGenPct = autresItems
+    .filter((it: any) => String(it.unite) === "POURCENT_CA")
+    .reduce((s, it: any) => s + numOr0(it.valeur), 0);
+
+  const autresCoutsHorsPctTotal = autresItems
+    .filter((it: any) => String(it.unite) !== "POURCENT_CA")
+    .reduce((s, it: any) => {
+      const unite = String(it.unite ?? "").toUpperCase();
+      const val = numOr0(it.valeur);
+
+      // même logique que headerkpis.ts (approx)
+      if (unite === "MOIS") return s + val * duree;
+      if (unite === "M3") return s + val * V;
+      return s + val; // FORFAIT ou autres
+    }, 0);
+
+  const productionTotal =
+    coutM3Total +
+    coutMensuelTotal +
+    maintenanceTotal +
+    employesTotal +
+    coutOccasionnelTotal +
+    autresCoutsHorsPctTotal;
+
+  // Amortissement (comme headerkpis.ts)
+  const amortissementMensuel = numOr0(cab?.amortMois);
+  const amortissementTotal = amortissementMensuel * duree;
+
+  // Frais généraux = (fraisGenPct/100) * CA
+  const fg = numOr0(fraisGenPct) / 100;
+
+  // Résolution fermée (alignée avec le modèle headerkpis.ts)
+  // EBIT = momdTotal - productionTotal - fraisGenerauxTotal - amortissementTotal
+  // momdTotal = m * V
+  // CA = (B + m) * V
+  //
+  // => m = ( B*(t + fg) + (productionTotal + amortissementTotal)/V ) / (1 - fg - t)
+  const denom = 1 - fg - t;
+  if (denom <= 0) return 0;
+
+  const C = (productionTotal + amortissementTotal) / V;
+  const m = (B * (t + fg) + C) / denom;
+
+  // sécurité: pas de momd négative
+  return Number.isFinite(m) && m > 0 ? m : 0;
+}
+
+
+
 async function applyInitiee(
   tx: Prisma.TransactionClient,
   params: {
@@ -561,10 +758,21 @@ async function applyInitiee(
     });
   }
 
-  await syncVariantMpsFromFormules(tx, variantId);
+await syncVariantMpsFromFormules(tx, variantId);
 
-  // (EBIT cible) — pas d'algo d'optim ici pour l'instant
-  void initiee.ebitCiblePct;
+// ✅ Calcul MOMD pour atteindre EBIT cible (%)
+const momdTarget = await computeInitieeMomdPerM3(tx, {
+  variantId,
+  contractId,
+  ebitCiblePct: initiee.ebitCiblePct,
+});
+
+// ✅ Appliquer la MOMD sur toutes les formules de la variante
+await tx.variantFormule.updateMany({
+  where: { variantId },
+  data: { momd: momdTarget },
+});
+
 }
 
 type ComposeSectionKey =

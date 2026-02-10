@@ -4,7 +4,7 @@ import fs from "fs";
 import {
   AlignmentType,
   Document,
-  Header,
+  Footer,
   ImageRun,
   Packer,
   Paragraph,
@@ -53,6 +53,43 @@ function safeJsonParse(raw: any, fallback: any) {
   }
 }
 
+/** ✅ array tolerant JSON parse */
+function parseJsonArray<T = any>(raw: any): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * ✅ Normalize devis line items from DB:
+ * accepts:
+ * - ["texte..."]
+ * - [{label:"texte..."}, {text:"..."}, {value:"..."}]
+ * - mixed
+ */
+function normalizeDevisLines(raw: any): string[] {
+  const arr = Array.isArray(raw) ? raw : parseJsonArray<any>(raw);
+  const out: string[] = [];
+
+  for (const it of arr) {
+    if (typeof it === "string") {
+      const t = it.trim();
+      if (t) out.push(t);
+      continue;
+    }
+    if (it && typeof it === "object") {
+      const label = String((it as any).label ?? (it as any).text ?? (it as any).value ?? "").trim();
+      if (label) out.push(label);
+      continue;
+    }
+  }
+  return out;
+}
+
 function roundTo5(x: number): number {
   const v = n(x);
   if (!Number.isFinite(v)) return 0;
@@ -94,7 +131,6 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
     String(row?.variantFormuleId ?? ""),
     String(row?.formuleId ?? ""),
     String(row?.formule?.id ?? ""),
-    String(row?.formule?.label ?? ""),
   ].filter((k) => k && k !== "undefined" && k !== "null");
 
   for (const k of keys) {
@@ -103,43 +139,79 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
   return 0;
 }
 
-function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment; size?: number }) {
-  return new Paragraph({
-    alignment: opts?.align,
-    children: [
-      new TextRun({
-        text: text ?? "",
-        bold: !!opts?.bold,
-        size: opts?.size ? opts.size * 2 : undefined, // docx = half-points
-      }),
-    ],
+/** ====== TYPO ====== */
+const FONT = "Tahoma";
+const SIZE = 18; // 9pt (docx = half-points)
+
+function run(text: string, opts?: { bold?: boolean }) {
+  return new TextRun({
+    text: text ?? "",
+    bold: !!opts?.bold,
+    font: FONT,
+    size: SIZE,
   });
 }
 
-function blank() {
-  return new Paragraph({ children: [new TextRun({ text: "" })] });
+function pTxt(
+  text: string,
+  opts?: {
+    bold?: boolean;
+    align?: DocxAlignment;
+  }
+) {
+  return new Paragraph({
+    alignment: opts?.align,
+    children: [run(text ?? "", { bold: !!opts?.bold })],
+  });
+}
+
+function blank(lines = 1) {
+  const out: Paragraph[] = [];
+  for (let i = 0; i < lines; i++) out.push(new Paragraph({ children: [run("")] }));
+  return out;
 }
 
 function bullets(lines: string[]) {
   return (lines ?? [])
+    .map((x) => String(x ?? "").trim())
     .filter(Boolean)
     .map(
       (t) =>
         new Paragraph({
           bullet: { level: 0 },
-          children: [new TextRun({ text: String(t ?? "") })],
+          children: [run(t)],
         })
     );
 }
 
 function sectionTitle(text: string) {
   return new Paragraph({
-    children: [new TextRun({ text, bold: true })],
+    children: [run(text, { bold: true })],
   });
 }
 
+/** fallback phrases (si l’utilisateur n’a rien mis dans l’onglet Contenu) */
+function defaultPrixComplementaires(contract: any): string[] {
+  const sunday = n(contract?.sundayPrice);
+  const chiller = n(contract?.chillerRent);
+  const penalty = n(contract?.delayPenalty);
+
+  // ✅ Phrases complètes (comme tu veux sur l’onglet contenu)
+  const out: string[] = [];
+
+  out.push(
+    sunday > 0
+      ? `Ouverture en dehors des horaires : ${fmtMoney0(sunday)} DHS HT / poste.`
+      : `Ouverture en dehors des horaires : 5 000 DHS HT / poste.`
+  );
+
+  if (chiller > 0) out.push(`Location chiller : forfait mensuel de ${fmtMoney0(chiller)} MAD HT.`);
+  if (penalty > 0) out.push(`Pénalité dépassement délai : ${fmtMoney0(penalty)} MAD HT.`);
+
+  return out;
+}
+
 export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
-  // ⚠️ On utilise "any" pour ne pas bloquer si tes types Prisma ne reflètent pas encore les champs devis.*
   const v: any = await prisma.variant.findUnique({
     where: { id: variantId },
     include: {
@@ -161,7 +233,6 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const c: any = v.contract;
   const p: any = c?.pnl;
 
-  // --- meta (le modèle joint)
   const now = new Date();
   const date = fmtDateFr(now);
 
@@ -169,40 +240,54 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const pnlTitle = String(p?.title ?? "Offre de prix");
   const client = String(p?.client ?? "");
 
-  // démarrage = Pnl.startDate (si présent)
   const demarrage = p?.startDate ? fmtDateFr(new Date(p.startDate)) : "";
-
   const dureeMois = n(c?.dureeMois ?? 0);
 
-  // ⚠️ volume total : somme des volumes des formules
   const rows = (v?.variantFormules ?? []) as any[];
-  const volumeTotal = rows.reduce((s, r) => s + n(r?.volumeM3), 0);
+  const volumeTotalFromFormules = rows.reduce((s, r) => s + n(r?.volumeM3), 0);
 
-  // --- Contenu texte (si tu ajoutes les champs en DB, sinon fallback)
-  const devisMeta = safeJsonParse((v?.devis as any)?.meta, {});
+  const devis = v?.devis ?? null;
+
+  const devisMeta = safeJsonParse((devis as any)?.meta, {});
+  // ✅ toggles de calcul (à brancher sur UI)
+  const useMajorations = devisMeta?.useMajorations === undefined ? true : Boolean(devisMeta.useMajorations);
+  const useDevisSurcharges =
+    devisMeta?.useDevisSurcharges === undefined ? true : Boolean(devisMeta.useDevisSurcharges);
+
   const intro =
-    typeof (v?.devis as any)?.intro === "string" && (v.devis as any).intro.trim()
-      ? String((v.devis as any).intro)
+    typeof (devis as any)?.intro === "string" && String((devis as any).intro).trim()
+      ? String((devis as any).intro)
       : `Nous vous prions de trouver ci-dessous les détails de notre offre de prix pour "${pnlTitle}".`;
 
-  const rappel = safeJsonParse((v?.devis as any)?.rappel, {});
+  const rappel = safeJsonParse((devis as any)?.rappel, {});
+  const quantiteM3 = n(rappel?.quantiteM3) || volumeTotalFromFormules;
+  const dureeMoisRappel = n(rappel?.dureeMois) || dureeMois;
+  const demarrageRappel = String(rappel?.demarrage ?? demarrage ?? "");
+  const lieuRappel = String(rappel?.lieu ?? ville ?? "");
+
+  // ✅ Texte complet (si tu l’ajoutes en DB un jour, sinon fallback)
   const dureeQuantiteTexte =
-    typeof rappel?.dureeQuantiteTexte === "string" && rappel.dureeQuantiteTexte.trim()
-      ? rappel.dureeQuantiteTexte
-      : `Les prix sont donnés pour un volume de ${fmtMoney0(volumeTotal)} m3 et une durée de ${fmtMoney0(
-          dureeMois
+    typeof (devis as any)?.dureeQuantiteTexte === "string" && String((devis as any).dureeQuantiteTexte).trim()
+      ? String((devis as any).dureeQuantiteTexte)
+      : `Les prix sont donnés pour un volume de ${fmtMoney0(quantiteM3)} m3 et une durée de ${fmtMoney0(
+          dureeMoisRappel
         )} mois. En aucun cas les volumes réalisés ne devront être inférieurs de plus de 90% du volume susmentionné.`;
 
   const validiteTexte =
-    typeof (v?.devis as any)?.validiteTexte === "string" && (v.devis as any).validiteTexte.trim()
-      ? String((v.devis as any).validiteTexte)
+    typeof (devis as any)?.validiteTexte === "string" && String((devis as any).validiteTexte).trim()
+      ? String((devis as any).validiteTexte)
       : "Offre valable pour une durée d’un mois à partir de sa date d’envoi.";
 
-  const chargeFournisseur = safeJsonParse((v?.devis as any)?.chargeFournisseur, []) as string[];
-  const chargeClient = safeJsonParse((v?.devis as any)?.chargeClient, []) as string[];
-  const prixComplementaires = safeJsonParse((v?.devis as any)?.prixComplementaires, []) as string[];
+  // ✅ FIX: bullets proprement depuis DB (onglet Contenu)
+  const chargeFournisseur = normalizeDevisLines((devis as any)?.chargeFournisseur);
+  const chargeClient = normalizeDevisLines((devis as any)?.chargeClient);
 
-  const sig = safeJsonParse((v?.devis as any)?.signature, {});
+  // ✅ prixComplementaires DOIT venir de DB si existe (phrases complètes)
+  const prixComplementairesFromDb = normalizeDevisLines((devis as any)?.prixComplementaires);
+  const prixComplementaires =
+    prixComplementairesFromDb.length > 0 ? prixComplementairesFromDb : defaultPrixComplementaires(c);
+
+  const sig = safeJsonParse((devis as any)?.signature, {});
   const sigNom = String(sig?.nom ?? "Saad LAHLIMI");
   const sigPoste = String(sig?.poste ?? "Commercial P&L");
   const sigTel = String(sig?.telephone ?? "+212701888888");
@@ -211,7 +296,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   const hydroPu = n(devisMeta?.hydrofugePuM3 ?? 0);
   const hydroQty = n(devisMeta?.hydrofugeQtyM3 ?? 0);
 
-  // --- Calcul prix (CMP + transport + MOMD) + majorations + surcharge devis
+  // --- Calcul prix selon choix (majorations / surcharges devis)
   const maj = readMajorations(v);
   const surMap = readDevisSurcharges(v);
 
@@ -219,7 +304,6 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
     const mpItems = v?.mp?.items ?? [];
     const found = mpItems.find((x: any) => String(x?.mpId) === String(mpId));
     if (!found) return 0;
-    // priorité: override -> prix
     if (found?.prixOverride != null) return n(found.prixOverride);
     if (found?.prix != null) return n(found.prix);
     return n(found?.mp?.prix);
@@ -233,15 +317,15 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
       const prixT = mpPrixUsed(mpId);
       const prixKgBase = pricePerKg(prixT);
 
-      const pctMp = getMajPct(`mp:${mpId}`, maj);
-      const prixKg = applyMaj(prixKgBase, pctMp);
+      // ✅ appliquer majorations MP seulement si activées
+      const prixKg = useMajorations ? applyMaj(prixKgBase, getMajPct(`mp:${mpId}`, maj)) : prixKgBase;
 
       return s + qtyKg * prixKg;
     }, 0);
   }
 
   const transportBase = n(v?.transport?.prixMoyen ?? 0);
-  const transportMaj = applyMaj(transportBase, getMajPct("transport.prixMoyen", maj));
+  const transportUsed = useMajorations ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj)) : transportBase;
 
   const tableLines: Array<{ label: string; pu: number; vol: number; total: number }> = rows.map((r: any) => {
     const label = String(r?.formule?.label ?? "—");
@@ -249,10 +333,10 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
     const momd = n(r?.momd ?? 0);
     const cmp = cmpFormuleM3(r?.formule);
 
-    const pv = cmp + transportMaj + momd;
+    const pv = cmp + transportUsed + momd;
     const pvArr = roundTo5(pv);
 
-    const surcharge = getSurchargeM3(r, surMap);
+    const surcharge = useDevisSurcharges ? getSurchargeM3(r, surMap) : 0;
     const pu = pvArr + surcharge;
 
     return { label, pu, vol, total: pu * vol };
@@ -263,11 +347,10 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
   }
 
   const totalHT = tableLines.reduce((s, x) => s + n(x.total), 0);
-  // ⚠️ TVA: adapte si besoin (20% ici)
   const tva = totalHT * 0.2;
   const totalTTC = totalHT + tva;
 
-  // --- Logo (optionnel) ✅ type + Uint8Array pour éviter TS2345
+  // --- Logo (plus grand surtout hauteur)
   let logoPara: Paragraph | null = null;
   try {
     const logoPath = path.resolve(process.cwd(), "src/assets/LHM_logo.jpg");
@@ -281,7 +364,7 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
           new ImageRun({
             data: imgData,
             type: "jpg",
-            transformation: { width: 160, height: 70 },
+            transformation: { width: 190, height: 90 }, // ✅ plus grand (hauteur surtout)
           }),
         ],
       });
@@ -344,121 +427,124 @@ export async function buildDevisWordBuffer(variantId: string): Promise<Buffer> {
     rows: [headerRow, ...bodyRows, ...footRows],
   });
 
-  // --- Doc header (en-tête)
-  const headerLine = `${pnlTitle} - offre de prix - ${date}`;
+  // ✅ “en-tête” en pied de page
+  const footerLine = `${pnlTitle} - offre de prix - ${date}`;
 
   const doc = new Document({
+    styles: {
+      default: {
+        document: {
+          run: { font: FONT, size: SIZE },
+          paragraph: {
+            spacing: { after: 80 }, // petit spacing lisible
+          },
+        },
+      },
+    },
     sections: [
       {
-        headers: {
-          /** ✅ TS2353: docx attend un Header, pas un objet { children: [...] } */
-          default: new Header({
+        footers: {
+          default: new Footer({
             children: [
               new Paragraph({
-                children: [new TextRun({ text: headerLine })],
+                alignment: AlignmentType.LEFT,
+                children: [run(footerLine)],
               }),
             ],
           }),
         },
         children: [
-          ...(logoPara ? [logoPara, blank()] : []),
+          ...(logoPara ? [logoPara, ...blank(1)] : []),
 
           // Ville/Date à droite
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: `${ville}, le ${date}` })],
+            children: [run(`${ville}, le ${date}`)],
           }),
 
-          blank(),
+          ...blank(1),
 
-          // Titre centré
+          // ✅ Titre centré (retour ligne obligatoire)
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "Offre de prix", bold: true }),
-              new TextRun({ text: "\n" }),
-              new TextRun({ text: pnlTitle, bold: true }),
-            ],
+            children: [run("Offre de prix", { bold: true })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [run(pnlTitle, { bold: true })],
           }),
 
-          // Client à droite
+          // ✅ Client à droite (format exact)
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: client, bold: true })],
+            children: [run(`Client: ${client}`, { bold: true })],
           }),
 
-          blank(),
+          ...blank(1),
 
           // Intro
           pTxt(intro),
 
-          blank(),
+          ...blank(1),
 
           // Rappel
           sectionTitle("Rappel des données du projet :"),
           ...bullets([
-            `Quantité : ${fmtMoney0(volumeTotal)} m3`,
-            `Délai : ${fmtMoney0(dureeMois)} mois`,
-            ...(demarrage ? [`Démarrage : ${demarrage}`] : []),
-            ...(ville ? [`Lieu : ${ville}`] : []),
+            `Quantité : ${fmtMoney0(quantiteM3)} m3`,
+            `Délai : ${fmtMoney0(dureeMoisRappel)} mois`,
+            ...(demarrageRappel ? [`Démarrage : ${demarrageRappel}`] : []),
+            ...(lieuRappel ? [`Lieu : ${lieuRappel}`] : []),
           ]),
 
-          blank(),
+          ...blank(1),
 
-          // Charges
+          // ✅ Charges (visuel comme avant)
           sectionTitle("A la charge de LafargeHolcim Maroc :"),
-          ...(chargeFournisseur?.length ? bullets(chargeFournisseur) : bullets(["—"])),
+          ...(chargeFournisseur.length ? bullets(chargeFournisseur) : bullets(["—"])),
 
-          blank(),
+          ...blank(1),
 
           sectionTitle("A la charge du client :"),
-          ...(chargeClient?.length ? bullets(chargeClient) : bullets(["—"])),
+          ...(chargeClient.length ? bullets(chargeClient) : bullets(["—"])),
 
-          blank(),
+          ...blank(1),
 
           // Table prix
           table,
 
-          blank(),
+          ...blank(1),
 
-          // Prix complémentaires
+          // ✅ Prix complémentaires (toujours phrases complètes)
           sectionTitle("Prix complémentaires :"),
-          ...(prixComplementaires?.length
-            ? bullets(prixComplementaires)
-            : bullets([
-                ...(n(c?.sundayPrice) > 0
-                  ? [`Ouverture en dehors horaires : ${fmtMoney0(n(c.sundayPrice))} dhs ht/poste`]
-                  : ["Ouverture en dehors horaires : 5.000,00 dhs ht/poste"]),
-                ...(n(c?.chillerRent) > 0 ? [`Chiller : forfait mensuel de ${fmtMoney0(n(c.chillerRent))} MAD HT`] : []),
-                ...(n(c?.delayPenalty) > 0
-                  ? [`Pénalité dépassement délai : ${fmtMoney0(n(c.delayPenalty))} MAD HT`]
-                  : []),
-              ])),
+          ...(prixComplementaires.length ? bullets(prixComplementaires) : bullets(["—"])),
 
-          blank(),
+          ...blank(1),
 
           // Durée-Quantité
           sectionTitle("Durée - Quantité :"),
           pTxt(dureeQuantiteTexte),
 
-          blank(),
+          ...blank(1),
 
           // Validité
           sectionTitle("Validité de l’offre :"),
           pTxt(validiteTexte),
 
-          blank(),
+          // ✅ Espace avant signature (comme demandé)
+          ...blank(2),
 
-          // Signature (droite)
+          // ✅ Signature: retour ligne après chaque info + à droite
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [
-              new TextRun({ text: sigNom, bold: true }),
-              new TextRun({ text: "\n" }),
-              new TextRun({ text: sigPoste }),
-              new TextRun({ text: "\n" }),
-              new TextRun({ text: sigTel }),
-            ],
+            children: [run(sigNom, { bold: true })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [run(sigPoste)],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [run(sigTel)],
           }),
         ],
       },
