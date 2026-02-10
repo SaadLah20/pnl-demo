@@ -50,7 +50,6 @@ function persistActive(pnlId: string | null, variantId: string | null) {
 }
 
 function setActiveIds(pnlId: string | null, contractId: string | null, variantId: string | null) {
-  // IMPORTANT: on set les 3 IDs (si dispo) pour que tout se recalcul correctement
   if (pnlId && (store as any).setActivePnl) (store as any).setActivePnl(String(pnlId));
   if (contractId && (store as any).setActiveContract) (store as any).setActiveContract(String(contractId));
   if (variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(String(variantId));
@@ -59,9 +58,6 @@ function setActiveIds(pnlId: string | null, contractId: string | null, variantId
 
 /* =========================================================
    ✅ INITIAL SELECTION
-   - priorité: variante sauvegardée
-   - sinon: dernier contrat/variante du pnl sauvegardé
-   - sinon: dernière variante globale (par createdAt si dispo)
 ========================================================= */
 function toTs(d: any): number {
   const t = new Date(d ?? 0).getTime();
@@ -93,14 +89,10 @@ function pickLatestVariantGlobal() {
           best = cand;
           continue;
         }
-
-        // si timestamps => max
         if (cand.ts && cand.ts > best.ts) {
           best = cand;
           continue;
         }
-
-        // fallback si pas de dates: on prend le "dernier rencontré" (ordre API)
         if (!cand.ts && !best.ts) best = cand;
       }
     }
@@ -114,7 +106,6 @@ function resolveInitialSelection() {
   const savedPnlId = localStorage.getItem(LS_ACTIVE_PNL);
   const savedVarId = localStorage.getItem(LS_ACTIVE_VARIANT);
 
-  // 1) priorité: variante sauvegardée
   if (savedVarId) {
     for (const p of pnls.value) {
       for (const c of p.contracts ?? []) {
@@ -124,18 +115,15 @@ function resolveInitialSelection() {
     }
   }
 
-  // 2) pnl sauvegardé + dernière variante dedans
   if (savedPnlId) {
     const p = pnls.value.find((x: any) => String(x.id) === String(savedPnlId));
     const picked = pickLastVariantInPnl(p);
     if (picked) return picked;
   }
 
-  // 3) fallback: dernière variante globale (de préférence par date)
   const latest = pickLatestVariantGlobal();
   if (latest) return latest;
 
-  // 4) fallback ultime: premier pnl
   const p0 = pnls.value[0];
   if (!p0) return null;
   return pickLastVariantInPnl(p0);
@@ -228,37 +216,23 @@ function toDateInput(v: any): string {
     if (!v) return "";
     const d = new Date(v);
     if (!Number.isFinite(d.getTime())) return "";
-
-    // ✅ On formate en LOCAL (pas en UTC) pour éviter le -1j dans le input date
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`; // YYYY-MM-DD
+    return `${y}-${m}-${day}`;
   } catch {
     return "";
   }
 }
-
-
 function fromDateInput(v: any): string | null {
   const s = String(v ?? "").trim();
   if (!s) return null;
-
-  // ✅ On envoie un ISO stable en UTC midnight (pas "local midnight" -> UTC veille)
-  // s = "YYYY-MM-DD"
   const [y, m, d] = s.split("-").map((x) => Number(x));
   if (!y || !m || !d) return null;
-
   const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
   return dt.toISOString();
 }
 
-
-function idShort(id: any) {
-  const s = String(id ?? "");
-  if (!s) return "";
-  return s.length > 10 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
-}
 function statusKey(raw: any): string {
   const s = String(raw ?? "")
     .trim()
@@ -302,7 +276,7 @@ const activeContractId = computed(() => {
 /* =========================================================
    UI state
 ========================================================= */
-const q = ref(""); // search P&L only
+const q = ref("");
 const openPnl = reactive<Record<string, boolean>>({});
 
 function isOpenPnl(id: string) {
@@ -317,7 +291,7 @@ function collapseAllPnls() {
 }
 
 /* =========================================================
-   FILTERS/ SORT (P&L ONLY)
+   FILTERS / SORT (P&L ONLY)
 ========================================================= */
 const filterOpen = ref(false);
 
@@ -388,15 +362,7 @@ const filteredPnls = computed<any[]>(() => {
       const model = normalize(p?.model);
       const city = normalize(p?.city);
       const status = normalize(p?.status);
-      const id = normalize(p?.id);
-      return (
-        title.includes(query) ||
-        client.includes(query) ||
-        model.includes(query) ||
-        city.includes(query) ||
-        status.includes(query) ||
-        id.includes(query)
-      );
+      return title.includes(query) || client.includes(query) || model.includes(query) || city.includes(query) || status.includes(query);
     });
   }
 
@@ -420,12 +386,28 @@ const filteredPnls = computed<any[]>(() => {
   return rows;
 });
 
-/* click-outside popover */
+/* =========================================================
+   Menus (kebab) - reduce button clutter
+========================================================= */
+const menuOpen = ref<string | null>(null);
+function openMenu(key: string) {
+  menuOpen.value = menuOpen.value === key ? null : key;
+}
+function closeMenu() {
+  menuOpen.value = null;
+}
 function onDocDown(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (!t) return;
+
+  // allow filter popover anchor
   if (t.closest?.("[data-filter-anchor]")) return;
+
+  // allow menu clicks
+  if (t.closest?.("[data-menu]")) return;
+
   filterOpen.value = false;
+  closeMenu();
 }
 document.addEventListener("mousedown", onDocDown);
 onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
@@ -434,14 +416,12 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
    Actions
 ========================================================= */
 function openVariant(pnlId: string, contractId: string, variantId: string) {
-  // ✅ rend la variante active + ouvre le PNL dans la liste
   openPnl[String(pnlId)] = true;
   setActiveIds(String(pnlId), String(contractId), String(variantId));
 }
 
 async function deleteVariant(variantId: string) {
   if (!confirm("Supprimer définitivement cette variante ?")) return;
-
   try {
     await apiJson(`/variants/${variantId}`, { method: "DELETE" });
     localStorage.removeItem(LS_ACTIVE_VARIANT);
@@ -478,6 +458,7 @@ function openView(mode: ViewMode, data: any) {
   viewMode.value = mode;
   viewData.value = data;
   viewOpen.value = true;
+  closeMenu();
 }
 function closeView() {
   viewOpen.value = false;
@@ -495,7 +476,7 @@ const editErr = ref<string | null>(null);
 
 /** create flags */
 const isCreate = ref(false);
-const createPnlId = ref<string | null>(null); // for creating contract
+const createPnlId = ref<string | null>(null);
 
 const draft = reactive<any>({
   id: "",
@@ -507,7 +488,7 @@ const draft = reactive<any>({
   city: "",
   status: "",
   createdAt: "",
-  startDate: "", // ✅ AJOUT
+  startDate: "",
 
   // contract
   ref: "",
@@ -541,7 +522,7 @@ function resetDraft() {
   draft.city = "";
   draft.status = "";
   draft.createdAt = "";
-  draft.startDate = ""; // ✅ AJOUT
+  draft.startDate = "";
 
   draft.ref = "";
   draft.dureeMois = 0;
@@ -574,6 +555,7 @@ function openEdit(mode: EditMode, data: any) {
 
   editMode.value = mode;
   editOpen.value = true;
+  closeMenu();
 
   if (mode === "pnl") {
     draft.id = String(data.id);
@@ -583,8 +565,7 @@ function openEdit(mode: EditMode, data: any) {
     draft.city = String(data.city ?? "");
     draft.status = String(data.status ?? "");
     draft.createdAt = data.createdAt ?? "";
-    draft.startDate = toDateInput(data.startDate); // ✅ AJOUT
-
+    draft.startDate = toDateInput(data.startDate);
   }
 
   if (mode === "contract") {
@@ -668,8 +649,7 @@ async function saveEdit() {
             city: draft.city,
             status: draft.status,
             model: draft.model,
-            startDate: fromDateInput(draft.startDate), // ✅ AJOUT
-
+            startDate: fromDateInput(draft.startDate),
           }),
         });
 
@@ -692,7 +672,7 @@ async function saveEdit() {
           client: draft.client,
           city: draft.city,
           status: draft.status,
-          startDate: fromDateInput(draft.startDate), // ✅ AJOUT
+          startDate: fromDateInput(draft.startDate),
         }),
       });
     }
@@ -816,6 +796,7 @@ function openCreateVariant(contractId: string) {
   createContractId.value = contractId;
   createDefaultTitle.value = "Variante";
   createOpen.value = true;
+  closeMenu();
 }
 
 function closeCreateModal() {
@@ -906,30 +887,31 @@ async function handleSaveComposee(payload: ComposePayload) {
 
 <template>
   <div class="page">
-    <!-- HEADER -->
-    <div class="header">
-      <div class="titleBlock">
-        <h1>Mes P&amp;L</h1>
+    <!-- ✅ SUB HEADER (sticky under HeaderDashboard) -->
+    <div class="subHeader">
+      <div class="subLeft">
+        <div class="title">Mes P&amp;L</div>
+
+        <div class="searchMini" title="Recherche P&L">
+          <span class="sIc">⌕</span>
+          <input class="sIn" v-model="q" placeholder="Rechercher P&L…" />
+        </div>
       </div>
 
-      <div class="headerActions">
-        <button class="btn btn--primary btn--mini" @click="openCreatePnl">+ Nouveau P&amp;L</button>
-        <button class="btn btn--ghost" @click="collapseAllPnls">Tout réduire</button>
-        <button class="btn btn--ghost" @click="store.loadPnls?.()">Recharger</button>
-      </div>
-    </div>
+      <div class="subRight">
+        <!-- ✅ +P&L : bleu Holcim -->
+        <button class="chipBtn chipBtn--pnl" @click="openCreatePnl">+ P&amp;L</button>
 
-    <!-- ONE-LINE COMPACT SEARCH + FILTER BUTTON (P&L ONLY) -->
-    <div class="toolbarOneLine card">
-      <div class="searchMini">
-        <span class="icon">⌕</span>
-        <input class="input" v-model="q" placeholder="Rechercher P&L…" />
-      </div>
+        <button class="chipBtn" @click="collapseAllPnls" title="Tout réduire">Réduire</button>
 
-      <div class="filterWrap" data-filter-anchor>
-        <button class="btn btn--soft btn--mini" @click="filterOpen = !filterOpen" title="Filtres">⚙</button>
+        <button class="chipIcon" data-filter-anchor @click="filterOpen = !filterOpen" title="Filtres / Tri">
+          ⚙
+        </button>
 
-        <div v-if="filterOpen" class="popover">
+        <button class="chipIcon" @click="store.loadPnls?.()" title="Recharger">↻</button>
+
+        <!-- FILTER POPOVER -->
+        <div v-if="filterOpen" class="popover" data-filter-anchor>
           <div class="popGrid">
             <select class="sel" v-model="pnlStatusFilter" title="Statut">
               <option value="">Statut: Tous</option>
@@ -963,7 +945,7 @@ async function handleSaveComposee(payload: ComposePayload) {
               <option value="desc">Desc</option>
             </select>
 
-            <button class="btn btn--ghost btn--mini" @click="resetPnlFilters">Reset</button>
+            <button class="chipBtn" @click="resetPnlFilters">Reset</button>
           </div>
         </div>
       </div>
@@ -977,8 +959,11 @@ async function handleSaveComposee(payload: ComposePayload) {
       <div v-if="filteredPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
 
       <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: p.id === activePnlId }">
+        <!-- PNL ROW -->
         <div class="row pnlRow">
-          <button class="disclosure" @click="togglePnl(p.id)">{{ isOpenPnl(p.id) ? "▾" : "▸" }}</button>
+          <button class="disc" @click="togglePnl(p.id)" :aria-expanded="isOpenPnl(p.id)">
+            {{ isOpenPnl(p.id) ? "▾" : "▸" }}
+          </button>
 
           <div class="main">
             <div class="line1">
@@ -988,28 +973,40 @@ async function handleSaveComposee(payload: ComposePayload) {
             </div>
 
             <div class="line2">
-              <span class="meta"><span class="k">Client :</span> <b>{{ p.client ?? "-" }}</b></span>
+              <span class="meta"><span class="k">Client:</span> <b>{{ p.client ?? "-" }}</b></span>
               <span class="dot">•</span>
-              <span class="meta"><span class="k">Modèle :</span> <b>{{ p.model ?? "-" }}</b></span>
+              <span class="meta"><span class="k">Modèle:</span> <b>{{ p.model ?? "-" }}</b></span>
               <span class="dot">•</span>
-              <span class="meta"><span class="k">Ville :</span> <b>{{ p.city ?? "-" }}</b></span>
+              <span class="meta"><span class="k">Ville:</span> <b>{{ p.city ?? "-" }}</b></span>
               <span class="dot">•</span>
-              <span class="meta"><span class="k">Créé le :</span> <b>{{ fmtDate(p.createdAt) }}</b></span>
-              <span class="idTiny">ID : {{ idShort(p.id) }}</span>
+              <span class="meta"><span class="k">Créé:</span> <b>{{ fmtDate(p.createdAt) }}</b></span>
             </div>
           </div>
 
+          <!-- ✅ actions: 1 bouton + menu -->
           <div class="actions">
-            <button class="btn btn--soft" @click="openView('pnl', p)">Visualiser</button>
-            <button class="btn btn--soft" @click="openEdit('pnl', p)">Modifier</button>
-            <button class="btn btn--ghost btn--mini" @click="deletePnl(p.id)">Supprimer</button>
+            <!-- ✅ Créer contrat : vert Holcim -->
+            <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
+              + Contrat
+            </button>
+
+            <div class="menu" data-menu>
+              <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>
+              <div v-if="menuOpen === `pnl:${p.id}`" class="menuPop">
+                <button class="menuItem" @click="openView('pnl', p)">Visualiser</button>
+                <button class="menuItem" @click="openEdit('pnl', p)">Modifier</button>
+                <div class="menuSep"></div>
+                <button class="menuItem danger" @click="deletePnl(p.id)">Supprimer</button>
+              </div>
+            </div>
           </div>
         </div>
 
+        <!-- CONTRACTS -->
         <div v-show="isOpenPnl(p.id)" class="children">
-          <div class="childrenHead">
-            <div class="muted">Contrats</div>
-            <button class="btn btn--primary btn--mini" @click="openCreateContract(p.id)">+ Nouveau Contrat</button>
+          <div class="sectionHead">
+            <div class="sectionTitle">Contrats</div>
+            <div class="sectionHint">{{ (p.contracts ?? []).length }} contrat(s)</div>
           </div>
 
           <div v-if="(p.contracts ?? []).length === 0" class="muted">Aucun contrat.</div>
@@ -1027,33 +1024,42 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <div class="line1">
                   <div class="name name--sm">Contrat</div>
                   <span class="meta">
-                    <span class="k">Réf :</span> <b>{{ c.ref ?? "-" }}</b>
+                    <span class="k">Réf:</span> <b>{{ c.ref ?? "-" }}</b>
                     <span class="dot">•</span>
-                    <span class="k">Durée :</span> <b>{{ c.dureeMois ?? 0 }}</b> mois
+                    <span class="k">Durée:</span> <b>{{ c.dureeMois ?? 0 }}</b> mois
                     <span class="dot">•</span>
-                    <span class="k">Postes :</span> <b>{{ labelFrom(POSTES_2, c.postes) }}</b>
+                    <span class="k">Postes:</span> <b>{{ labelFrom(POSTES_2, c.postes) }}</b>
                   </span>
                 </div>
 
                 <div class="line2">
-                  <span class="meta"><span class="k">Cab :</span> <b>{{ labelFrom(CHARGE_3, c.cab) }}</b></span>
+                  <span class="meta"><span class="k">Cab:</span> <b>{{ labelFrom(CHARGE_3, c.cab) }}</b></span>
                   <span class="dot">•</span>
-                  <span class="meta"><span class="k">Terrain :</span> <b>{{ labelFrom(TERRAIN_4, c.terrain) }}</b></span>
-                  <span class="idTiny">ID : {{ idShort(c.id) }}</span>
+                  <span class="meta"><span class="k">Terrain:</span> <b>{{ labelFrom(TERRAIN_4, c.terrain) }}</b></span>
                 </div>
               </div>
 
               <div class="actions">
-                <button class="btn btn--primary btn--mini" @click="openCreateVariant(c.id)">+ Nouvelle Variante</button>
-                <button class="btn btn--soft" @click="openView('contract', c)">Visualiser</button>
-                <button class="btn btn--soft" @click="openEdit('contract', c)">Modifier</button>
-                <button class="btn btn--ghost btn--mini" @click="deleteContract(c.id)">Supprimer</button>
+                <!-- ✅ Créer variante : cyan Holcim -->
+                <button class="chipBtn chipBtn--variant" @click="openCreateVariant(c.id)" title="Créer une variante">
+                  + Variante
+                </button>
+
+                <div class="menu" data-menu>
+                  <button class="chipIcon" @click="openMenu(`contract:${c.id}`)" title="Actions">⋯</button>
+                  <div v-if="menuOpen === `contract:${c.id}`" class="menuPop">
+                    <button class="menuItem" @click="openView('contract', c)">Visualiser</button>
+                    <button class="menuItem" @click="openEdit('contract', c)">Modifier</button>
+                    <div class="menuSep"></div>
+                    <button class="menuItem danger" @click="deleteContract(c.id)">Supprimer</button>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div class="variantsHead">
-              <div class="muted">Variantes</div>
-              <div class="muted">{{ (c.variants ?? []).length }} variante(s)</div>
+              <div class="sectionTitle sectionTitle--xs">Variantes</div>
+              <div class="sectionHint">{{ (c.variants ?? []).length }} variante(s)</div>
             </div>
 
             <div class="variants indent2">
@@ -1073,19 +1079,32 @@ async function handleSaveComposee(payload: ComposePayload) {
                   </div>
 
                   <div class="line2">
-                    <span class="meta"><span class="k">Description :</span> {{ v.description ?? "-" }}</span>
-                    <span class="idTiny">ID : {{ idShort(v.id) }}</span>
+                    <span class="meta">
+                      <span class="k">Description:</span>
+                      <span class="desc">{{ v.description ?? "-" }}</span>
+                    </span>
                   </div>
                 </div>
 
                 <div class="actions">
-                  <!-- ✅ Ouvrir => rend active (fix) -->
-                  <button class="btn btn--primary btn--mini" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
-                  <button class="btn btn--soft" @click="openView('variant', v)">Visualiser</button>
-                  <button class="btn btn--soft" @click="openEdit('variant', v)">Modifier</button>
-                  <button class="btn btn--ghost btn--mini" @click="deleteVariant(v.id)">Supprimer</button>
+                  <!-- ✅ Ouvrir : navy soft / gris bleuté (neutre mais distinct) -->
+                  <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">
+                    Ouvrir
+                  </button>
+
+                  <div class="menu" data-menu>
+                    <button class="chipIcon" @click="openMenu(`variant:${v.id}`)" title="Actions">⋯</button>
+                    <div v-if="menuOpen === `variant:${v.id}`" class="menuPop">
+                      <button class="menuItem" @click="openView('variant', v)">Visualiser</button>
+                      <button class="menuItem" @click="openEdit('variant', v)">Modifier</button>
+                      <div class="menuSep"></div>
+                      <button class="menuItem danger" @click="deleteVariant(v.id)">Supprimer</button>
+                    </div>
+                  </div>
                 </div>
               </div>
+
+              <div v-if="(c.variants ?? []).length === 0" class="muted indent2">Aucune variante.</div>
             </div>
           </div>
         </div>
@@ -1114,7 +1133,7 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="rowKV"><div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div></div>
               <div class="rowKV"><div class="k">Modèle</div><div class="v">{{ viewData?.model ?? "-" }}</div></div>
               <div class="rowKV"><div class="k">Créé le</div><div class="v">{{ fmtDate(viewData?.createdAt) }}</div></div>
-              <div class="rowKV"><div class="k">ID</div><div class="v">{{ viewData?.id ?? "-" }}</div></div>
+              <div class="rowKV"><div class="k">Démarrage</div><div class="v">{{ fmtDate(viewData?.startDate) }}</div></div>
             </div>
 
             <div v-else-if="viewMode === 'contract'" class="kv">
@@ -1136,25 +1155,23 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="rowKV"><div class="k">Prix dimanches/fériés</div><div class="v">{{ viewData?.sundayPrice ?? 0 }}</div></div>
               <div class="rowKV"><div class="k">Pénalité délai</div><div class="v">{{ viewData?.delayPenalty ?? 0 }}</div></div>
               <div class="rowKV"><div class="k">Location Chiller</div><div class="v">{{ viewData?.chillerRent ?? 0 }}</div></div>
-              <div class="rowKV"><div class="k">ID</div><div class="v">{{ viewData?.id ?? "-" }}</div></div>
             </div>
 
             <div v-else class="kv">
               <div class="rowKV"><div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div></div>
               <div class="rowKV"><div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div></div>
               <div class="rowKV"><div class="k">Description</div><div class="v">{{ viewData?.description ?? "-" }}</div></div>
-              <div class="rowKV"><div class="k">ID</div><div class="v">{{ viewData?.id ?? "-" }}</div></div>
             </div>
           </div>
 
           <div class="modalFoot">
-            <button class="btn btn--ghost" @click="closeView()">Fermer</button>
+            <button class="chipBtn" @click="closeView()">Fermer</button>
           </div>
         </div>
       </div>
     </Teleport>
 
-    <!-- EDIT MODAL -->
+    <!-- EDIT MODAL (inchangé fonctionnellement) -->
     <Teleport to="body">
       <div v-if="editOpen" class="modalOverlay" @click.self="closeEdit()">
         <div class="modal">
@@ -1199,10 +1216,9 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <input class="in in--disabled" v-model="draft.model" disabled />
               </div>
               <div class="f">
-  <div class="k">Date de démarrage</div>
-  <input class="in" type="date" v-model="draft.startDate" />
-</div>
-
+                <div class="k">Date de démarrage</div>
+                <input class="in" type="date" v-model="draft.startDate" />
+              </div>
               <div class="f">
                 <div class="k">Date de création</div>
                 <input class="in in--disabled" :value="fmtDate(draft.createdAt)" disabled />
@@ -1216,11 +1232,7 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <div class="formGrid sectionForm">
                   <div class="f">
                     <div class="k">Référence (auto)</div>
-                    <input
-                      class="in in--disabled"
-                      :value="draft.ref || (isCreate ? 'Générée automatiquement' : '-')"
-                      disabled
-                    />
+                    <input class="in in--disabled" :value="draft.ref || (isCreate ? 'Générée automatiquement' : '-')" disabled />
                   </div>
                   <div class="f">
                     <div class="k">Durée (mois)</div>
@@ -1238,115 +1250,39 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="sectionBox">
                 <div class="sectionTitle">Responsabilités</div>
                 <div class="formGrid sectionForm">
-                  <div class="f">
-                    <div class="k">Cab</div>
-                    <select class="in" v-model="draft.cab">
-                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Installation</div>
-                    <select class="in" v-model="draft.installation">
-                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Génie civil</div>
-                    <select class="in" v-model="draft.genieCivil">
-                      <option v-for="o in GENIE_CIVIL_4" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Transport jusqu’au chantier</div>
-                    <select class="in" v-model="draft.transport">
-                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Terrain</div>
-                    <select class="in" v-model="draft.terrain">
-                      <option v-for="o in TERRAIN_4" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Matière première</div>
-                    <select class="in" v-model="draft.matierePremiere">
-                      <option v-for="o in MATIERE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Maintenance</div>
-                    <select class="in" v-model="draft.maintenance">
-                      <option v-for="o in MAINTENANCE_4" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-
-                  <div class="f">
-                    <div class="k">Chargeuse</div>
-                    <select class="in" v-model="draft.chargeuse">
-                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
+                  <div class="f"><div class="k">Cab</div><select class="in" v-model="draft.cab"><option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Installation</div><select class="in" v-model="draft.installation"><option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Génie civil</div><select class="in" v-model="draft.genieCivil"><option v-for="o in GENIE_CIVIL_4" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Transport jusqu’au chantier</div><select class="in" v-model="draft.transport"><option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Terrain</div><select class="in" v-model="draft.terrain"><option v-for="o in TERRAIN_4" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Matière première</div><select class="in" v-model="draft.matierePremiere"><option v-for="o in MATIERE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Maintenance</div><select class="in" v-model="draft.maintenance"><option v-for="o in MAINTENANCE_4" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Chargeuse</div><select class="in" v-model="draft.chargeuse"><option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
                 </div>
               </div>
 
               <div class="sectionBox">
                 <div class="sectionTitle">Eau</div>
                 <div class="formGrid sectionForm">
-                  <div class="f">
-                    <div class="k">Branchement Eau</div>
-                    <select class="in" v-model="draft.branchementEau">
-                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-                  <div class="f">
-                    <div class="k">Consommation Eau</div>
-                    <select class="in" v-model="draft.consoEau">
-                      <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
+                  <div class="f"><div class="k">Branchement Eau</div><select class="in" v-model="draft.branchementEau"><option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Consommation Eau</div><select class="in" v-model="draft.consoEau"><option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
                 </div>
               </div>
 
               <div class="sectionBox">
                 <div class="sectionTitle">Électricité</div>
                 <div class="formGrid sectionForm">
-                  <div class="f">
-                    <div class="k">Branchement Électricité</div>
-                    <select class="in" v-model="draft.branchementElec">
-                      <option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
-                  <div class="f">
-                    <div class="k">Consommation Électricité</div>
-                    <select class="in" v-model="draft.consoElec">
-                      <option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option>
-                    </select>
-                  </div>
+                  <div class="f"><div class="k">Branchement Électricité</div><select class="in" v-model="draft.branchementElec"><option v-for="o in CHARGE_3" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
+                  <div class="f"><div class="k">Consommation Électricité</div><select class="in" v-model="draft.consoElec"><option v-for="o in CONSOMMATION_2" :key="o.value" :value="o.value">{{ o.label }}</option></select></div>
                 </div>
               </div>
 
               <div class="sectionBox">
                 <div class="sectionTitle">Paramètres financiers</div>
                 <div class="formGrid sectionForm">
-                  <div class="f">
-                    <div class="k">Prix dimanches / fériés</div>
-                    <input class="in r" type="number" step="0.01" v-model.number="draft.sundayPrice" />
-                  </div>
-                  <div class="f">
-                    <div class="k">Forfait pénalité délai</div>
-                    <input class="in r" type="number" step="0.01" v-model.number="draft.delayPenalty" />
-                  </div>
-                  <div class="f">
-                    <div class="k">Location Chiller</div>
-                    <input class="in r" type="number" step="0.01" v-model.number="draft.chillerRent" />
-                  </div>
+                  <div class="f"><div class="k">Prix dimanches / fériés</div><input class="in r" type="number" step="0.01" v-model.number="draft.sundayPrice" /></div>
+                  <div class="f"><div class="k">Forfait pénalité délai</div><input class="in r" type="number" step="0.01" v-model.number="draft.delayPenalty" /></div>
+                  <div class="f"><div class="k">Location Chiller</div><input class="in r" type="number" step="0.01" v-model.number="draft.chillerRent" /></div>
                 </div>
               </div>
             </div>
@@ -1374,8 +1310,9 @@ async function handleSaveComposee(payload: ComposePayload) {
           </div>
 
           <div class="modalFoot">
-            <button class="btn btn--ghost" :disabled="editBusy" @click="closeEdit()">Annuler</button>
-            <button class="btn btn--primary" :disabled="editBusy" @click="saveEdit()">
+            <button class="chipBtn" :disabled="editBusy" @click="closeEdit()">Annuler</button>
+            <!-- ✅ CTA principal garde le style global (navy) -->
+            <button class="chipBtn chipBtn--primary" :disabled="editBusy" @click="saveEdit()">
               {{ editBusy ? "Enregistrement…" : isCreate ? "Créer" : "Enregistrer" }}
             </button>
           </div>
@@ -1405,106 +1342,528 @@ async function handleSaveComposee(payload: ComposePayload) {
 </template>
 
 <style scoped>
-/* (identique à ton style actuel, gardé volontairement) */
-.page { padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #f6f7f9; min-height: 100%; box-sizing: border-box; }
+/* Layout page compact */
+.page {
+  --navy: #184070;
+  --cyan: #20b8e8;
 
-.header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.titleBlock h1 { margin: 0; font-size: 18px; letter-spacing: 0.2px; }
-.headerActions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  /* ✅ Holcim-inspired accents */
+  --holcim-navy: #184070;   /* bleu profond */
+  --holcim-cyan: #20b8e8;   /* cyan du logo */
+  --holcim-green: #7bbf3a;  /* vert du logo */
+  --holcim-open-bg: rgba(24, 64, 112, 0.08);
+  --holcim-open-bd: rgba(24, 64, 112, 0.20);
+  --holcim-open-tx: rgba(24, 64, 112, 0.92);
 
-.card { background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 12px; box-shadow: 0 1px 0 rgba(17,24,39,0.03); overflow: visible; }
-.card--error { border-color: #fecaca; background: #fff5f5; }
-.empty { text-align: center; color: #6b7280; }
+  --bg: #f4f6fb;
+  --card: #ffffff;
+  --border: rgba(16, 24, 40, 0.12);
+  --muted: rgba(15, 23, 42, 0.65);
 
-.list { display: flex; flex-direction: column; gap: 10px; }
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  min-height: 100%;
+  box-sizing: border-box;
+}
 
-.row { display: flex; gap: 10px; align-items: center; }
-.pnlRow { align-items: stretch; }
+/* ✅ Sous header sticky */
+.subHeader {
+  position: sticky;
+  top: var(--hd-offset, -15px); /* ⬅️ ajuste si besoin */
+  z-index: 50;
 
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.line1 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.line2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 
-.name { font-weight: 900; font-size: 13px; color: #111827; }
-.name--sm { font-size: 12.5px; font-weight: 900; }
-.name--xs { font-size: 12px; font-weight: 900; }
+  background: rgba(244, 246, 251, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 6px 8px;
+}
 
-.meta { font-size: 12px; color: #374151; }
-.k { color: #6b7280; font-weight: 600; }
-.muted { font-size: 12px; color: #6b7280; }
-.dot { color: #d1d5db; }
-.idTiny { font-size: 11px; color: #9ca3af; margin-left: 6px; }
+.subLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.title {
+  font-size: 13px;
+  font-weight: 950;
+  color: var(--navy);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
 
-.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-
-.disclosure { width: 34px; height: 34px; border: 1px solid #e6e8ee; border-radius: 10px; background: #fff; cursor: pointer; color: #374151; }
-.disclosure:hover { background: #f9fafb; }
-
-.btn { border-radius: 12px; padding: 9px 12px; font-size: 13px; border: 1px solid #e6e8ee; background: #fff; cursor: pointer; }
-.btn:hover { background: #f9fafb; }
-.btn--primary { background: #0b7a35; border-color: #0b7a35; color: #fff; }
-.btn--primary:hover { background: #096a2e; }
-.btn--ghost { background: transparent; }
-.btn--ghost:hover { background: #ffffff; }
-.btn--soft { background: #f6f7f9; }
-.btn--soft:hover { background: #eef0f4; }
-.btn--mini { padding: 6px 9px; border-radius: 10px; font-size: 12px; line-height: 16px; }
-
-.tag { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid #e6e8ee; color: #374151; background: #fafbfc; }
-.tag--on { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
-.tag--arch, .tag--off { border-color: #e5e7eb; background: #f9fafb; color: #6b7280; }
-
-.pill { font-size: 10.5px; font-weight: 900; letter-spacing: 0.2px; padding: 3px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; color: #111827; }
-.pill--green { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
-
-.pnl { background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%); }
-.pnl.activePnl { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(34,197,94,0.10); }
-
-.contract { border: 1px solid #eef0f4; border-radius: 12px; padding: 10px; background: #fcfcfd; }
-.contract.activeContract { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.10); }
-.contractRow { align-items: flex-start; }
-
-.variantRow { padding: 8px 10px; border: 1px solid #eef0f4; border-radius: 12px; background: #ffffff; }
-.variantRow.activeVariant { border-color: #bbf7d0; background: #fbfffb; }
-
-.children { margin-top: 10px; border-top: 1px dashed #e6e8ee; padding-top: 10px; display: flex; flex-direction: column; gap: 10px; }
-.childrenHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0 4px; }
-.variants { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-.variantsHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-left: 38px; margin-right: 2px; }
-.indent2 { margin-left: 38px; }
-
-.tree { width: 26px; position: relative; display: flex; align-items: center; justify-content: center; }
-.tree .branch { position: absolute; left: 50%; top: -10px; bottom: -10px; width: 2px; background: #e5e7eb; transform: translateX(-50%); }
-.tree .node { width: 10px; height: 10px; border-radius: 999px; background: #fff; border: 2px solid #d1d5db; }
-.tree--deep { width: 38px; }
-.tree--deep .branch { background: #e5e7eb; }
-
-.toolbarOneLine { padding: 6px 8px; display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow: visible; }
 .searchMini {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 6px;
-  border: 1px solid #e6e8ee; border-radius: 10px;
-  padding: 4px 8px; background: #fafbfc;
-}
-.icon { font-size: 11px; line-height: 1; color: #6b7280; }
-.input { min-width: 0; border: 0; outline: 0; background: transparent; width: 100%; font-size: 12.5px; line-height: 16px; padding: 0; }
+  min-width: 280px;
+  max-width: 460px;
+  flex: 1 1 auto;
 
-.filterWrap { position: relative; flex: 0 0 auto; overflow: visible; }
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 10px;
+}
+.sIc {
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.55);
+}
+.sIn {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.88);
+}
+
+.subRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  position: relative;
+}
+
+/* Compact buttons (chips) */
+.chipBtn {
+  border-radius: 12px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  cursor: pointer;
+  line-height: 1;
+  white-space: nowrap;
+}
+.chipBtn:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+.chipBtn--primary {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.chipBtn--primary:hover {
+  background: #14345c;
+}
+
+/* =========================================================
+   ✅ NEW: Action color variants (Holcim-inspired)
+========================================================= */
+/* +P&L (navy) */
+.chipBtn--pnl {
+  background: var(--holcim-navy);
+  border-color: var(--holcim-navy);
+  color: #fff;
+}
+.chipBtn--pnl:hover {
+  background: #14345c;
+  border-color: #14345c;
+}
+
+/* +Contrat (green) */
+.chipBtn--contract {
+  background: var(--holcim-green);
+  border-color: var(--holcim-green);
+  color: #ffffff;
+}
+.chipBtn--contract:hover {
+  background: #67a931;
+  border-color: #67a931;
+}
+
+/* +Variante (cyan) */
+.chipBtn--variant {
+  background: var(--holcim-cyan);
+  border-color: var(--holcim-cyan);
+  color: #ffffff;
+}
+.chipBtn--variant:hover {
+  background: #18a7d4;
+  border-color: #18a7d4;
+}
+
+/* Ouvrir (neutral distinct, bluish soft) */
+.chipBtn--open {
+  background: var(--holcim-open-bg);
+  border-color: var(--holcim-open-bd);
+  color: var(--holcim-open-tx);
+}
+.chipBtn--open:hover {
+  background: rgba(24, 64, 112, 0.14);
+  border-color: rgba(24, 64, 112, 0.28);
+}
+
+/* Icons */
+.chipIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  cursor: pointer;
+  font-weight: 950;
+}
+.chipIcon:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+
+/* Popover filters */
 .popover {
-  position: absolute; right: 0; top: calc(100% + 6px);
-  width: min(560px, calc(100% + 260px));
-  max-width: calc(100vw - 24px);
-  background: #fff; border: 1px solid #e6e8ee; border-radius: 12px;
-  box-shadow: 0 18px 45px rgba(0,0,0,0.12);
-  padding: 8px; z-index: 50;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(620px, calc(100vw - 24px));
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  z-index: 80;
 }
-.popGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; align-items: center; }
-.sel { min-width: 0; border: 1px solid #e6e8ee; border-radius: 10px; padding: 5px 8px; font-size: 12px; line-height: 16px; background: #fff; }
+.popGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  align-items: center;
+}
+.sel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #fff;
+}
 
+/* Cards list */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+  overflow: visible;
+}
+.card--error {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+.empty {
+  text-align: center;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Rows compact */
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.pnlRow {
+  align-items: stretch;
+}
+
+.disc {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  color: rgba(15, 23, 42, 0.7);
+  flex: 0 0 auto;
+}
+.disc:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.line1 {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.line2 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.name {
+  font-weight: 950;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.92);
+}
+.name--sm {
+  font-size: 12.5px;
+}
+.name--xs {
+  font-size: 12px;
+}
+
+.meta {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.78);
+}
+.k {
+  color: rgba(15, 23, 42, 0.55);
+  font-weight: 800;
+}
+.dot {
+  color: rgba(15, 23, 42, 0.18);
+}
+
+.actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+
+/* tags */
+.tag {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: rgba(15, 23, 42, 0.75);
+  background: rgba(15, 23, 42, 0.02);
+  font-weight: 900;
+}
+.tag--on {
+  border-color: rgba(34, 197, 94, 0.22);
+  background: rgba(34, 197, 94, 0.08);
+  color: rgba(21, 128, 61, 1);
+}
+.tag--arch,
+.tag--off {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(15, 23, 42, 0.62);
+}
+.pill {
+  font-size: 10.5px;
+  font-weight: 950;
+  letter-spacing: 0.2px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(32, 184, 232, 0.25);
+  background: rgba(32, 184, 232, 0.10);
+  color: rgba(15, 23, 42, 0.82);
+}
+.pill--green {
+  border-color: rgba(34, 197, 94, 0.25);
+  background: rgba(34, 197, 94, 0.10);
+  color: rgba(21, 128, 61, 1);
+}
+
+/* Children */
+.children {
+  margin-top: 10px;
+  border-top: 1px dashed rgba(16, 24, 40, 0.14);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px;
+}
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.78);
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+}
+.sectionTitle--xs {
+  font-size: 11px;
+}
+.sectionHint {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  font-weight: 800;
+}
+
+.pnl {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+}
+.pnl.activePnl {
+  border-color: rgba(32, 184, 232, 0.35);
+  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.12);
+}
+
+.contract {
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.78);
+}
+.contract.activeContract {
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.10);
+}
+.contractRow {
+  align-items: flex-start;
+}
+
+.variantsHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-left: 38px;
+  margin-right: 2px;
+}
+
+.variants {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.indent2 {
+  margin-left: 38px;
+}
+
+.variantRow {
+  padding: 8px 10px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+}
+.variantRow.activeVariant {
+  border-color: rgba(34, 197, 94, 0.22);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.desc {
+  display: inline-block;
+  max-width: 680px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tree */
+.tree {
+  width: 26px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tree .branch {
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  bottom: -10px;
+  width: 2px;
+  background: rgba(15, 23, 42, 0.12);
+  transform: translateX(-50%);
+}
+.tree .node {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid rgba(15, 23, 42, 0.25);
+}
+.tree--deep {
+  width: 38px;
+}
+
+/* Menu kebab */
+.menu {
+  position: relative;
+}
+.menuPop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 170px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 100;
+}
+.menuItem {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.86);
+}
+.menuItem:hover {
+  background: rgba(32, 184, 232, 0.10);
+}
+.menuSep {
+  height: 1px;
+  background: rgba(16, 24, 40, 0.10);
+  margin: 6px 0;
+}
+.menuItem.danger {
+  color: rgba(185, 28, 28, 0.98);
+}
+.menuItem.danger:hover {
+  background: rgba(220, 38, 38, 0.10);
+}
+
+/* Modal (inchangé visuellement, compact) */
 .modalOverlay {
-  position: fixed; inset: 0;
+  position: fixed;
+  inset: 0;
   background: rgba(17, 24, 39, 0.45);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 18px;
   z-index: 9999;
 }
@@ -1512,48 +1871,167 @@ async function handleSaveComposee(payload: ComposePayload) {
   width: min(760px, 100%);
   max-height: calc(100vh - 36px);
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(16, 24, 40, 0.10);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
-  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
 }
-.modalHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 14px; background: #fafafa; border-bottom: 1px solid #eef2f7; }
-.modalTitle { display: flex; flex-direction: column; gap: 3px; }
-.modalSub { color: #9ca3af; font-size: 11px; }
-.xBtn { border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; width: 34px; height: 34px; cursor: pointer; }
-.xBtn:hover { background: #f9fafb; }
-.modalBody { padding: 14px; overflow: auto; flex: 1 1 auto; }
-.modalFoot { padding: 12px 14px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #eef2f7; background: #fcfcfd; }
+.modalHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.03);
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.modalTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.modalSub {
+  color: rgba(15, 23, 42, 0.45);
+  font-size: 11px;
+  font-weight: 800;
+}
+.xBtn {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: #fff;
+  border-radius: 12px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+.xBtn:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+.modalBody {
+  padding: 14px;
+  overflow: auto;
+  flex: 1 1 auto;
+}
+.modalFoot {
+  padding: 12px 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(15, 23, 42, 0.02);
+}
 
-.kv { display: flex; flex-direction: column; gap: 12px; }
-.rowKV { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: start; }
-.rowKV .k { font-size: 12px; color: #6b7280; font-weight: 700; }
-.rowKV .v { font-size: 12.5px; color: #111827; }
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rowKV {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.rowKV .k {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  font-weight: 900;
+}
+.rowKV .v {
+  font-size: 12.5px;
+  color: rgba(15, 23, 42, 0.92);
+  font-weight: 800;
+}
 
-.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.f { display: flex; flex-direction: column; gap: 6px; }
-.f--full { grid-column: 1 / -1; }
-.in { border: 1px solid #e5e7eb; border-radius: 12px; padding: 9px 10px; font-size: 13px; outline: none; background: #fff; }
-.in:focus { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99,102,241,0.10); }
-.in--disabled { background: #f9fafb; color: #6b7280; }
-.r { text-align: right; }
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.f {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.f--full {
+  grid-column: 1 / -1;
+}
+.in {
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 12px;
+  padding: 9px 10px;
+  font-size: 13px;
+  outline: none;
+  background: #fff;
+}
+.in:focus {
+  border-color: rgba(32, 184, 232, 0.45);
+  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.14);
+}
+.in--disabled {
+  background: rgba(15, 23, 42, 0.04);
+  color: rgba(15, 23, 42, 0.55);
+}
+.r {
+  text-align: right;
+}
 
-.alert { border: 1px solid #fecaca; background: #fff5f5; color: #991b1b; border-radius: 12px; padding: 10px; margin-bottom: 12px; }
+.alert {
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #991b1b;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 12px;
+  font-weight: 900;
+}
 
-.stack { display: flex; flex-direction: column; gap: 12px; }
-.sectionBox { border: 1px solid #eef0f4; border-radius: 14px; background: #fcfcfd; padding: 10px; }
-.sectionTitle { font-size: 12px; font-weight: 900; color: #111827; margin-bottom: 8px; }
-.sectionGrid { display: grid; grid-template-columns: 1fr; gap: 8px; }
-.sectionForm { margin-top: 2px; }
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sectionBox {
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.02);
+  padding: 10px;
+}
+.sectionForm {
+  margin-top: 2px;
+}
+.muted {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  font-weight: 800;
+}
 
+/* Responsive */
 @media (max-width: 900px) {
-  .actions { justify-content: flex-start; }
-  .rowKV { grid-template-columns: 140px 1fr; }
-  .formGrid { grid-template-columns: 1fr; }
-  .toolbarOneLine { flex-wrap: wrap; }
-  .popover { right: auto; left: 0; }
-  .popGrid { grid-template-columns: 1fr; }
-  .variantsHead { margin-left: 0; }
+  .subHeader {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .searchMini {
+    min-width: 0;
+    width: 100%;
+  }
+  .popGrid {
+    grid-template-columns: 1fr;
+  }
+  .rowKV {
+    grid-template-columns: 140px 1fr;
+  }
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+  .variantsHead {
+    margin-left: 0;
+  }
+  .indent2 {
+    margin-left: 0;
+  }
 }
 </style>

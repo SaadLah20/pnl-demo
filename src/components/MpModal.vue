@@ -1,7 +1,13 @@
 <!-- src/components/MpModal.vue -->
 <script setup lang="ts">
-import { computed, reactive, watch } from "vue";
-import { XMarkIcon, CheckIcon, ExclamationTriangleIcon } from "@heroicons/vue/24/outline";
+import { computed, reactive, ref, watch, nextTick } from "vue";
+import {
+  XMarkIcon,
+  CheckIcon,
+  ExclamationTriangleIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+} from "@heroicons/vue/24/outline";
 
 type MpDraft = {
   categorie: string;
@@ -47,10 +53,14 @@ const local = reactive<MpDraft>({
   comment: props.initial.comment ?? "",
 });
 
+const showMore = ref(false);
+const labelEl = ref<HTMLInputElement | null>(null);
+
 watch(
   () => props.open,
-  (isOpen) => {
+  async (isOpen) => {
     if (!isOpen) return;
+
     local.categorie = props.initial.categorie;
     local.label = props.initial.label;
     local.unite = props.initial.unite;
@@ -59,9 +69,20 @@ watch(
     local.city = props.initial.city;
     local.region = props.initial.region;
     local.comment = props.initial.comment ?? "";
+
+    // replier par défaut si optionnels vides
+    showMore.value = Boolean(trim(local.fournisseur) || trim(local.comment ?? ""));
+
+    await nextTick();
+    labelEl.value?.focus?.();
+    labelEl.value?.select?.();
   },
   { immediate: true }
 );
+
+function trim(s: any) {
+  return String(s ?? "").trim();
+}
 
 function close() {
   emit("close");
@@ -85,10 +106,9 @@ const modalTitle = computed(() => {
   return props.mode === "create" ? "Nouvelle MP" : "Modifier MP";
 });
 
-const unitHelp = computed(() => "Seule l’unité « tonne » est active (les autres arrivent bientôt).");
+const unitHelp = computed(() => "Unité de référence du prix (ex: DH/T).");
 
 function blockNonNumericKeys(e: KeyboardEvent) {
-  // bloque e/E/+/- (souvent acceptés en type=number)
   const k = e.key;
   if (k === "e" || k === "E" || k === "+" || k === "-") e.preventDefault();
 }
@@ -98,6 +118,42 @@ function fmtDh2(v: any) {
   const x = Number.isFinite(n) ? n : 0;
   return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
 }
+
+const canSubmit = computed(() => {
+  if (props.busy) return false;
+  if (!trim(local.label)) return false;
+  if (!trim(local.categorie)) return false;
+  if (!trim(local.unite)) return false;
+  if (Number(local.prix ?? 0) <= 0) return false;
+  if (!trim(local.city)) return false;
+  if (!trim(local.region)) return false;
+  return true;
+});
+
+function onKeydown(e: KeyboardEvent) {
+  if (!props.open) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    close();
+    return;
+  }
+  // Enter = save (sauf si focus dans select)
+  if (e.key === "Enter") {
+    const t = e.target as HTMLElement | null;
+    const tag = (t?.tagName ?? "").toLowerCase();
+    if (tag === "select") return;
+    e.preventDefault();
+    if (canSubmit.value) submit();
+  }
+}
+
+watch(
+  () => props.open,
+  (v) => {
+    if (v) window.addEventListener("keydown", onKeydown);
+    else window.removeEventListener("keydown", onKeydown);
+  }
+);
 </script>
 
 <template>
@@ -107,7 +163,7 @@ function fmtDh2(v: any) {
         <div class="hdr">
           <div class="hdr__t">
             <div class="ttl">{{ modalTitle }}</div>
-            <div class="sub">Champs obligatoires * (sauf fournisseur & commentaire)</div>
+            <div class="sub">Champs obligatoires * — Enter = enregistrer — Esc = fermer</div>
           </div>
           <button class="x" type="button" @click="close" aria-label="Fermer">
             <XMarkIcon class="ic" />
@@ -119,7 +175,7 @@ function fmtDh2(v: any) {
           <span>{{ error }}</span>
         </div>
 
-        <!-- Grid compact : 3 colonnes desktop, 1 colonne mobile -->
+        <!-- Grid compact -->
         <div class="grid">
           <label class="field">
             <span class="lab">Catégorie *</span>
@@ -152,13 +208,13 @@ function fmtDh2(v: any) {
               @keydown="blockNonNumericKeys"
             />
             <div class="hint">
-              Obligatoire &gt; 0 — affichage : <b class="mono">{{ fmtDh2(local.prix) }} DH</b>
+              Obligatoire &gt; 0 — <b class="mono">{{ fmtDh2(local.prix) }} DH</b>
             </div>
           </label>
 
           <label class="field span3">
             <span class="lab">Label *</span>
-            <input v-model="local.label" class="in" placeholder="Ex: Ciment CPJ 45" required />
+            <input ref="labelEl" v-model="local.label" class="in" placeholder="Ex: Ciment CPJ 45" required />
           </label>
 
           <label class="field">
@@ -177,20 +233,31 @@ function fmtDh2(v: any) {
             </select>
           </label>
 
-          <label class="field">
-            <span class="lab">Fournisseur</span>
-            <input v-model="local.fournisseur" class="in" placeholder="Optionnel" />
-          </label>
+          <!-- Options secondaires repliables -->
+          <div class="more span3">
+            <button class="moreBtn" type="button" @click="showMore = !showMore">
+              <span>Options (fournisseur / commentaire)</span>
+              <component :is="showMore ? ChevronUpIcon : ChevronDownIcon" class="moreIc" />
+            </button>
 
-          <label class="field span3">
-            <span class="lab">Commentaire</span>
-            <input v-model="local.comment" class="in" placeholder="Optionnel (max 200)" />
-          </label>
+            <div v-if="showMore" class="moreGrid">
+              <label class="field">
+                <span class="lab">Fournisseur</span>
+                <input v-model="local.fournisseur" class="in" placeholder="Optionnel" />
+              </label>
+
+              <label class="field span2">
+                <span class="lab">Commentaire</span>
+                <input v-model="local.comment" class="in" placeholder="Optionnel (max 200)" />
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="ftr">
-          <button class="btn ghost" type="button" @click="close">Annuler</button>
-          <button class="btn primary" type="button" @click="submit" :disabled="busy">
+          <button class="btn ghost" type="button" @click="close" :disabled="busy">Annuler</button>
+
+          <button class="btn primary" type="button" @click="submit" :disabled="!canSubmit">
             <CheckIcon class="btnic" />
             <span>{{ busy ? "Enregistrement..." : "Enregistrer" }}</span>
           </button>
@@ -201,7 +268,7 @@ function fmtDh2(v: any) {
 </template>
 
 <style scoped>
-.ovl {
+.ovl{
   position: fixed;
   inset: 0;
   background: rgba(2, 6, 23, 0.55);
@@ -211,37 +278,34 @@ function fmtDh2(v: any) {
   padding: 16px;
   z-index: 100000;
 }
-
-.dlg {
+.dlg{
   width: min(860px, 96vw);
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 18px;
   overflow: hidden;
 }
-
-.hdr {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.hdr{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
   padding: 12px 14px 10px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.1);
 }
-.ttl { font-size: 14px; font-weight: 950; color: #0f172a; }
-.sub { font-size: 11px; font-weight: 800; color: rgba(15, 23, 42, 0.55); margin-top: 2px; }
-
-.x {
+.ttl{ font-size: 14px; font-weight: 950; color: #0f172a; }
+.sub{ font-size: 11px; font-weight: 800; color: rgba(15, 23, 42, 0.55); margin-top: 2px; }
+.x{
   width: 34px; height: 34px; border-radius: 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
 }
-.ic { width: 18px; height: 18px; color: rgba(15, 23, 42, 0.75); }
-.x:hover { background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.ic{ width: 18px; height: 18px; color: rgba(15, 23, 42, 0.75); }
+.x:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
 
-.err {
+.err{
   margin: 10px 14px 0;
   padding: 10px 12px;
   border-radius: 14px;
@@ -254,19 +318,19 @@ function fmtDh2(v: any) {
   gap: 8px;
   align-items: flex-start;
 }
-.err__ic { width: 18px; height: 18px; flex: 0 0 auto; margin-top: 1px; }
+.err__ic{ width: 18px; height: 18px; flex: 0 0 auto; margin-top: 1px; }
 
-.grid {
+.grid{
   padding: 12px 14px 8px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.lab { font-size: 11px; font-weight: 950; color: rgba(15, 23, 42, 0.72); }
+.field{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+.lab{ font-size:11px; font-weight:950; color: rgba(15, 23, 42, 0.72); }
 
-.in {
+.in{
   height: 36px;
   border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -277,23 +341,51 @@ function fmtDh2(v: any) {
   color: #0f172a;
   outline: none;
 }
-.in:focus {
+.in:focus{
   border-color: rgba(2, 132, 199, 0.35);
   box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.10);
 }
 
-.numIn {
+/* champ clé: prix (différenciation visuelle) */
+.numIn{
   background: rgba(2, 132, 199, 0.06);
   border-color: rgba(2, 132, 199, 0.18);
   font-variant-numeric: tabular-nums;
 }
 
-.hint { font-size: 10px; font-weight: 850; color: rgba(15, 23, 42, 0.55); }
-.mono { font-variant-numeric: tabular-nums; }
+.hint{ font-size:10px; font-weight:850; color: rgba(15, 23, 42, 0.55); }
+.mono{ font-variant-numeric: tabular-nums; }
 
-.span3 { grid-column: span 3; }
+.span3{ grid-column: span 3; }
+.span2{ grid-column: span 2; }
 
-.ftr {
+/* Options repliables */
+.more{ padding-top: 2px; }
+.moreBtn{
+  width: 100%;
+  height: 36px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.04);
+  font-weight: 950;
+  font-size: 12px;
+  color: #0f172a;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 0 12px;
+  cursor:pointer;
+}
+.moreBtn:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.moreIc{ width:18px; height:18px; }
+.moreGrid{
+  margin-top: 10px;
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ftr{
   padding: 10px 14px 14px;
   display: flex;
   justify-content: flex-end;
@@ -301,8 +393,7 @@ function fmtDh2(v: any) {
   border-top: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
 }
-
-.btn {
+.btn{
   height: 36px;
   padding: 0 14px;
   border-radius: 14px;
@@ -315,14 +406,15 @@ function fmtDh2(v: any) {
   gap: 8px;
   cursor: pointer;
 }
-.btn:hover { background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
-.btn.primary { background: rgba(24, 64, 112, 0.92); border-color: rgba(24, 64, 112, 0.6); color: #fff; }
-.btn.primary:hover { background: rgba(24, 64, 112, 1); }
-.btn.ghost { background: rgba(255, 255, 255, 0.8); }
-.btnic { width: 16px; height: 16px; }
+.btn:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.btn.primary{ background: rgba(24, 64, 112, 0.92); border-color: rgba(24, 64, 112, 0.6); color: #fff; }
+.btn.primary:hover{ background: rgba(24, 64, 112, 1); }
+.btn.ghost{ background: rgba(255, 255, 255, 0.8); }
+.btnic{ width: 16px; height: 16px; }
 
-@media (max-width: 760px) {
-  .grid { grid-template-columns: 1fr; }
-  .span3 { grid-column: auto; }
+@media (max-width: 760px){
+  .grid{ grid-template-columns: 1fr; }
+  .span3, .span2{ grid-column: auto; }
+  .moreGrid{ grid-template-columns: 1fr; }
 }
 </style>

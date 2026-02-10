@@ -1,10 +1,10 @@
 <!-- ✅ src/pages/FormulesCataloguePage.vue (FICHIER COMPLET) -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 import {
-  PlusCircleIcon,
+  PlusIcon,
   ArrowPathIcon,
   PencilSquareIcon,
   TrashIcon,
@@ -14,6 +14,7 @@ import {
   ArrowsRightLeftIcon,
   XMarkIcon,
   FunnelIcon,
+  InformationCircleIcon,
 } from "@heroicons/vue/24/outline";
 
 import FormuleModal from "@/components/FormuleModal.vue";
@@ -42,7 +43,7 @@ const busy = reactive({
 });
 
 /* =========================
-   TOAST / POPUP (user errors)
+   TOAST (light)
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref<string>("");
@@ -62,14 +63,10 @@ const formules = computed<any[]>(() => store.formulesCatalogue ?? []);
 const mpOptions = computed<any[]>(() => store.mpCatalogue ?? []);
 
 /* =========================
-   FILTERS
+   FILTERS (popover)
 ========================= */
 const q = ref("");
-
 const filtersOpen = ref(false);
-function toggleFilters() {
-  filtersOpen.value = !filtersOpen.value;
-}
 
 const fRes = ref<string>("");
 const fCity = ref<string>("");
@@ -82,10 +79,7 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: any, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
 function liters(v: number) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(toNum(v));
@@ -98,47 +92,38 @@ function normKey(v: any) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-/* =========================
-   ✅ CMP (live in row)
-   - même logique que FormulesPage: Σ((kg/m³ ÷ 1000) × DH/t)
-   - fallback sur row.items tant que le draft n’est pas initialisé
-========================= */
-function cmpFromItems(items: ItemDraft[]): number {
-  const cleaned = normalizeItems(items);
-  if (!cleaned.length) return 0;
+const activeFiltersCount = computed(() => {
+  let c = 0;
+  if (q.value.trim()) c++;
+  if (fRes.value) c++;
+  if (fCity.value) c++;
+  if (fRegion.value) c++;
+  if (fCimentMin.value != null) c++;
+  if (fCimentMax.value != null) c++;
+  return c;
+});
 
-  let total = 0;
-  for (const it of cleaned) {
-    const mp = mpById(String(it.mpId ?? ""));
-    const prixT = toNum((mp as any)?.prix ?? 0);
-    const qtyKg = toNum(it.qty ?? 0);
-    total += (qtyKg / 1000) * prixT;
-  }
-  return total;
+function resetFilters() {
+  q.value = "";
+  fRes.value = "";
+  fCity.value = "";
+  fRegion.value = "";
+  fCimentMin.value = null;
+  fCimentMax.value = null;
+  filtersOpen.value = false;
 }
 
-function getCmpRow(row: any): number {
-  const id = String(row?.id ?? "");
-
-  // draft si déjà initialisé (après ouverture / édition)
-  const draft = draftsById[id];
-  if (Array.isArray(draft) && draft.length) return cmpFromItems(draft);
-
-  // fallback sur les items “persistés” (catalogue)
-  const raw = (row?.items ?? []) as Array<{ mpId: string; qty: number }>;
-  const items: ItemDraft[] = raw.map((it) => ({
-    mpId: String((it as any)?.mpId ?? ""),
-    qty: Number((it as any)?.qty ?? 0),
-  }));
-  return cmpFromItems(items);
+/* close filters on outside click */
+function closeFiltersOnOutside(e: MouseEvent) {
+  const t = e.target as HTMLElement | null;
+  if (!t) return;
+  if (t.closest?.(".filtersPop") || t.closest?.(".filtersBtn")) return;
+  filtersOpen.value = false;
 }
-
-function fmtCmp(v: number) {
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(toNum(v));
-}
+watch(filtersOpen, (v) => {
+  if (v) window.addEventListener("mousedown", closeFiltersOnOutside);
+  else window.removeEventListener("mousedown", closeFiltersOnOutside);
+});
 
 /* Options (unique values) */
 const resistanceOptions = computed<string[]>(() => {
@@ -186,7 +171,6 @@ function getDraft(formuleId: string): ItemDraft[] {
   if (!draftsById[formuleId]) draftsById[formuleId] = [];
   return draftsById[formuleId];
 }
-
 function loadDraftFromRow(row: any) {
   const id = String(row?.id ?? "");
   const items = (row?.items ?? []) as Array<{ mpId: string; qty: number }>;
@@ -239,7 +223,6 @@ function normalizeItems(items: ItemDraft[] = []): ItemDraft[] {
   }
   return [...map.entries()].map(([mpId, qty]) => ({ mpId, qty }));
 }
-
 function isCimentMp(mpId: string): boolean {
   const mp = mpById(mpId);
   return catRank(mp?.categorie) === 0;
@@ -249,8 +232,6 @@ function countCiment(items: ItemDraft[] = []): number {
   for (const it of items) if (it?.mpId && isCimentMp(String(it.mpId))) c++;
   return c;
 }
-
-/* ✅ NEW: forbid duplicate MP (same mpId) */
 function countMp(items: ItemDraft[] = [], mpId: string): number {
   const id = String(mpId ?? "");
   if (!id) return 0;
@@ -285,18 +266,49 @@ function onChangeMp(formuleId: string, idx: number, newMpId: string) {
 
   row.mpId = nextMpId;
 
-  // ✅ Interdit: même MP 2 fois
   if (nextMpId && countMp(d, nextMpId) > 1) {
     row.mpId = prevMpId;
     showToast("Interdit : une formule ne peut pas contenir 2 fois la même MP.");
     return;
   }
-
-  // ✅ Interdit: 2 ciments
   if (countCiment(d) > 1) {
     row.mpId = prevMpId;
     showToast("Interdit : une formule ne peut pas contenir 2 MP de catégorie CIMENT.");
   }
+}
+
+/* =========================
+   ✅ CMP (live in row)
+========================= */
+function cmpFromItems(items: ItemDraft[]): number {
+  const cleaned = normalizeItems(items);
+  if (!cleaned.length) return 0;
+
+  let total = 0;
+  for (const it of cleaned) {
+    const mp = mpById(String(it.mpId ?? ""));
+    const prixT = toNum((mp as any)?.prix ?? 0);
+    const qtyKg = toNum(it.qty ?? 0);
+    total += (qtyKg / 1000) * prixT;
+  }
+  return total;
+}
+
+function getCmpRow(row: any): number {
+  const id = String(row?.id ?? "");
+  const draft = draftsById[id];
+  if (Array.isArray(draft) && draft.length) return cmpFromItems(draft);
+
+  const raw = (row?.items ?? []) as Array<{ mpId: string; qty: number }>;
+  const items: ItemDraft[] = raw.map((it) => ({
+    mpId: String((it as any)?.mpId ?? ""),
+    qty: Number((it as any)?.qty ?? 0),
+  }));
+  return cmpFromItems(items);
+}
+
+function fmtCmp(v: number) {
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(toNum(v));
 }
 
 /* =========================
@@ -306,13 +318,7 @@ function getRhoForMp(mp: any): number | null {
   const cat = normKey(mp?.categorie);
   if (cat === "ciment") return 3.1;
 
-  if (
-    cat === "granulats" ||
-    cat === "granulat" ||
-    cat === "granulas" ||
-    cat === "granula" ||
-    cat.includes("granul")
-  )
+  if (cat === "granulats" || cat === "granulat" || cat === "granulas" || cat === "granula" || cat.includes("granul"))
     return 2.65;
 
   if (cat === "adjuvant") return 1.1;
@@ -330,10 +336,7 @@ function compositionStatsFor(formuleId: string) {
     const rho = getRhoForMp(mp);
 
     if (!rho) {
-      missing.push({
-        mpId: String(it.mpId),
-        label: `${mp?.categorie ?? "—"} — ${mp?.label ?? "—"}`,
-      });
+      missing.push({ mpId: String(it.mpId), label: `${mp?.categorie ?? "—"} — ${mp?.label ?? "—"}` });
       continue;
     }
 
@@ -358,9 +361,7 @@ function compositionStatsFor(formuleId: string) {
 
 function volumeLine(formuleId: string): string {
   const s = compositionStatsFor(formuleId);
-  if (s.isLow) {
-    return `⚠️ Volume ${liters(s.vTotal)} L < cible ${s.target} L (déficit ${liters(s.deficitPct)}%).`;
-  }
+  if (s.isLow) return `⚠️ Volume ${liters(s.vTotal)} L < cible ${s.target} L (déficit ${liters(s.deficitPct)}%).`;
   return `✅ Volume OK (±3%) — ${liters(s.vTotal)} L.`;
 }
 
@@ -370,24 +371,24 @@ function volumeLine(formuleId: string): string {
 const filtered = computed(() => {
   const s = q.value.trim().toLowerCase();
 
-  return (formules.value ?? []).filter((f) => {
-    if (s) {
-      const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""} ${
-        f.comment ?? ""
-      }`.toLowerCase();
-      if (!blob.includes(s)) return false;
-    }
+  return (formules.value ?? [])
+    .filter((f) => {
+      if (s) {
+        const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""} ${f.comment ?? ""}`.toLowerCase();
+        if (!blob.includes(s)) return false;
+      }
 
-    if (fRes.value && String(f?.resistance ?? "") !== fRes.value) return false;
-    if (fCity.value && String(f?.city ?? "") !== fCity.value) return false;
-    if (fRegion.value && String(f?.region ?? "") !== fRegion.value) return false;
+      if (fRes.value && String(f?.resistance ?? "") !== fRes.value) return false;
+      if (fCity.value && String(f?.city ?? "") !== fCity.value) return false;
+      if (fRegion.value && String(f?.region ?? "") !== fRegion.value) return false;
 
-    const cQty = cimentQtyFromRow(f);
-    if (fCimentMin.value != null && cQty < fCimentMin.value) return false;
-    if (fCimentMax.value != null && cQty > fCimentMax.value) return false;
+      const cQty = cimentQtyFromRow(f);
+      if (fCimentMin.value != null && cQty < fCimentMin.value) return false;
+      if (fCimentMax.value != null && cQty > fCimentMax.value) return false;
 
-    return true;
-  });
+      return true;
+    })
+    .sort((a, b) => String(a?.label ?? "").localeCompare(String(b?.label ?? ""), "fr", { sensitivity: "base" }));
 });
 
 /* =========================
@@ -398,13 +399,7 @@ const mode = ref<"create" | "edit">("create");
 const activeEditId = ref<string | null>(null);
 
 const modalError = ref<string | null>(null);
-const formDraft = ref<FormuleDraft>({
-  label: "",
-  resistance: "",
-  city: "",
-  region: "",
-  comment: "",
-});
+const formDraft = ref<FormuleDraft>({ label: "", resistance: "", city: "", region: "", comment: "" });
 
 function openCreate() {
   mode.value = "create";
@@ -413,7 +408,6 @@ function openCreate() {
   formDraft.value = { label: "", resistance: "", city: "", region: "", comment: "" };
   showFormModal.value = true;
 }
-
 function openEdit(row: any) {
   mode.value = "edit";
   activeEditId.value = String(row?.id ?? "");
@@ -427,13 +421,12 @@ function openEdit(row: any) {
   };
   showFormModal.value = true;
 }
-
 function closeFormModal() {
   showFormModal.value = false;
 }
 
 /* =========================
-   DELETE
+   DELETE (nice confirm)
 ========================= */
 const showDeleteModal = ref(false);
 const deleteId = ref<string | null>(null);
@@ -470,12 +463,12 @@ async function confirmDelete() {
    Replace MP (by same category)
 ========================= */
 const replaceOpen = ref(false);
-const replaceCtx = reactive<{
-  formuleId: string;
-  idx: number;
-  oldMpId: string;
-  category: string;
-}>({ formuleId: "", idx: -1, oldMpId: "", category: "" });
+const replaceCtx = reactive<{ formuleId: string; idx: number; oldMpId: string; category: string }>({
+  formuleId: "",
+  idx: -1,
+  oldMpId: "",
+  category: "",
+});
 
 const replaceOptions = computed(() => {
   if (!replaceCtx.formuleId || replaceCtx.idx < 0) return [];
@@ -514,7 +507,6 @@ function closeReplace() {
   replaceOpen.value = false;
   selectedReplaceMpId.value = "";
 }
-
 function confirmReplace() {
   const formuleId = replaceCtx.formuleId;
   const idx = replaceCtx.idx;
@@ -532,19 +524,17 @@ function confirmReplace() {
 function addItem(formuleId: string) {
   const d = getDraft(formuleId);
 
-  // ✅ used mpIds (forbid duplicates)
   const used = new Set<string>();
   for (const it of d) {
     const id = String(it?.mpId ?? "").trim();
     if (id) used.add(id);
   }
 
-  // ✅ pick first available mp not already used, and respecting ciment constraint
   const pick = (mpSorted.value ?? []).find((mp: any) => {
     const id = String(mp?.id ?? "");
     if (!id) return false;
-    if (used.has(id)) return false; // forbid duplicates
-    if (catRank(mp?.categorie) === 0 && countCiment(d) >= 1) return false; // keep ciment rule
+    if (used.has(id)) return false;
+    if (catRank(mp?.categorie) === 0 && countCiment(d) >= 1) return false;
     return true;
   });
 
@@ -553,7 +543,6 @@ function addItem(formuleId: string) {
     return;
   }
 
-  // ✅ add at top
   d.unshift({ mpId: String(pick.id), qty: 0 });
 }
 
@@ -664,14 +653,13 @@ async function saveItems(formuleId: string, row: any) {
   try {
     busy.saveItems = true;
 
-    // ⚠️ this fails for you with "Cannot PUT /formules-catalogue/:id/items"
     await store.updateFormuleCatalogueItems(String(formuleId), cleaned);
 
     patchEverywhereAfterFormuleUpdate(String(formuleId), cleaned);
+    showToast("Composition enregistrée ✅");
   } catch (e: any) {
     const msg = e?.message ?? String(e);
 
-    // ✅ clearer diagnosis for this specific backend/proxy issue
     if (msg.includes("Cannot PUT /formules-catalogue/") && msg.includes("/items")) {
       showToast(
         "Erreur API : la route PUT /formules-catalogue/:id/items n’est pas atteignable (proxy/baseURL).\n" +
@@ -687,90 +675,105 @@ async function saveItems(formuleId: string, row: any) {
 
 watch([q, fRes, fCity, fRegion, fCimentMin, fCimentMax], () => (error.value = null));
 
-onMounted(async () => {
-  await reload();
-});
+onMounted(reload);
 </script>
 
 <template>
   <div class="page">
-    <!-- Header -->
-    <div class="head">
-      <div class="hTitle">
-        Catalogue formules <span class="sep">•</span>
-        <span class="hRes">Résultats : <b>{{ filtered.length }}</b></span>
+    <!-- SUB HEADER sticky (under HeaderDashboard) -->
+    <div class="subhdr">
+      <div class="subhdrTop">
+        <div class="ttl">
+          Catalogue formules
+          <span class="sep">•</span>
+          <span class="muted">Résultats</span>
+          <b class="n">{{ filtered.length }}</b>
+          <span v-if="activeFiltersCount" class="pill">{{ activeFiltersCount }}</span>
+        </div>
+
+        <div class="actions">
+          <button class="icon filtersBtn" type="button" :class="{ on: filtersOpen }" @click="filtersOpen = !filtersOpen" title="Filtres">
+            <FunnelIcon class="ic" />
+            <span v-if="activeFiltersCount" class="dot"></span>
+          </button>
+
+          <button class="icon" type="button" @click="reload" :disabled="busy.reload || loading" title="Recharger">
+            <ArrowPathIcon class="ic" />
+          </button>
+
+          <button class="primary" type="button" @click="openCreate" :disabled="busy.create || busy.update" title="Nouvelle formule">
+            <PlusIcon class="ic" />
+            <span>Formule</span>
+          </button>
+        </div>
       </div>
 
-      <div class="hSearch">
-        <input class="hInput" v-model="q" placeholder="Rechercher (label, résistance, ville…)" />
+      <div class="subhdrBottom">
+        <input class="search" v-model="q" placeholder="Rechercher… (label, résistance, ville, région, commentaire)" />
       </div>
 
-      <!-- filter toggle next to search -->
-      <button
-        class="btn ghost"
-        type="button"
-        @click="toggleFilters"
-        :title="filtersOpen ? 'Masquer filtres' : 'Afficher filtres'"
-      >
-        <FunnelIcon class="btnic" />
-        <span class="hideSm">Filtres</span>
-      </button>
+      <!-- Filters popover -->
+      <div v-if="filtersOpen" class="filtersPop" role="dialog" aria-label="Filtres">
+        <div class="filtersHead">
+          <div class="fttl">
+            <FunnelIcon class="fic" />
+            <span>Filtres</span>
+          </div>
+          <button class="x" type="button" @click="filtersOpen = false" aria-label="Fermer">
+            <XMarkIcon class="xic" />
+          </button>
+        </div>
 
-      <div class="hRight">
-        <button class="btn ghost" @click="reload" :disabled="busy.reload || loading" title="Recharger">
-          <ArrowPathIcon class="btnic" />
-        </button>
-        <button class="btn primary" @click="openCreate" :disabled="busy.create || busy.update">
-          <PlusCircleIcon class="btnic" />
-          <span>Nouvelle</span>
-        </button>
-      </div>
-    </div>
+        <div class="filtersGrid">
+          <label class="f">
+            <span class="l">Résistance</span>
+            <select class="in" v-model="fRes">
+              <option value="">Toutes</option>
+              <option v-for="r in resistanceOptions" :key="r" :value="r">{{ r }}</option>
+            </select>
+          </label>
 
-    <!-- Filters: ✅ one single line, Min/Max side by side -->
-    <div v-if="filtersOpen" class="filters">
-      <div class="f">
-        <div class="fl">Résistance</div>
-        <select class="fin" v-model="fRes">
-          <option value="">Toutes</option>
-          <option v-for="r in resistanceOptions" :key="r" :value="r">{{ r }}</option>
-        </select>
-      </div>
+          <label class="f">
+            <span class="l">Ville</span>
+            <select class="in" v-model="fCity">
+              <option value="">Toutes</option>
+              <option v-for="c in cityOptions" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </label>
 
-      <div class="f">
-        <div class="fl">Ville</div>
-        <select class="fin" v-model="fCity">
-          <option value="">Toutes</option>
-          <option v-for="c in cityOptions" :key="c" :value="c">{{ c }}</option>
-        </select>
-      </div>
+          <label class="f">
+            <span class="l">Région</span>
+            <select class="in" v-model="fRegion">
+              <option value="">Toutes</option>
+              <option v-for="r in regionOptions" :key="r" :value="r">{{ r }}</option>
+            </select>
+          </label>
 
-      <div class="f">
-        <div class="fl">Région</div>
-        <select class="fin" v-model="fRegion">
-          <option value="">Toutes</option>
-          <option v-for="r in regionOptions" :key="r" :value="r">{{ r }}</option>
-        </select>
-      </div>
+          <div class="f span3">
+            <span class="l">Dosage ciment (kg/m³)</span>
+            <div class="range">
+              <input class="in num" type="number" min="0" step="1" v-model.number="fCimentMin" placeholder="Min" />
+              <span class="dash">—</span>
+              <input class="in num" type="number" min="0" step="1" v-model.number="fCimentMax" placeholder="Max" />
+              <button class="btnSm" type="button" @click="(fCimentMin = null), (fCimentMax = null)">Reset</button>
+            </div>
+          </div>
+        </div>
 
-      <div class="f fC">
-        <div class="fl">Dosage ciment (kg/m³)</div>
-        <div class="range">
-          <input class="fin rIn" type="number" min="0" step="1" v-model.number="fCimentMin" placeholder="Min" />
-          <span class="dash">—</span>
-          <input class="fin rIn" type="number" min="0" step="1" v-model.number="fCimentMax" placeholder="Max" />
-          <button class="btnSm" type="button" @click="(fCimentMin = null), (fCimentMax = null)">Reset</button>
+        <div class="filtersFoot">
+          <button class="btnSm" type="button" @click="resetFilters" :disabled="activeFiltersCount === 0">Réinitialiser</button>
+          <button class="btnSm pri" type="button" @click="filtersOpen = false">OK</button>
         </div>
       </div>
     </div>
 
-    <div v-if="error" class="alert error">
+    <div v-if="error" class="alert err">
       <ExclamationTriangleIcon class="aic" />
       <div><b>Erreur :</b> {{ error }}</div>
     </div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <!-- cards -->
+    <!-- Cards list -->
     <div class="cards">
       <div v-for="f in filtered" :key="f.id" class="card">
         <button class="rowHead" type="button" @click="toggle(String(f.id)); ensureDraft(f)">
@@ -780,40 +783,63 @@ onMounted(async () => {
               <ChevronRightIcon v-else class="chIc" />
             </span>
 
-            <span class="name">{{ f.label || "—" }}</span>
-            <span class="chip">{{ f.resistance || "—" }}</span>
-            <span class="dot">•</span>
-            <span class="sub">{{ f.city || "—" }}</span>
-            <span class="dot">•</span>
-            <span class="sub">{{ f.region || "—" }}</span>
+            <div class="main">
+              <div class="line1">
+                <span class="name">{{ f.label || "—" }}</span>
+                <span class="chip">{{ f.resistance || "—" }}</span>
+
+                <span v-if="f.comment && String(f.comment).trim()" class="tipWrap" @click.stop>
+                  <button class="tipBtn" type="button" aria-label="Commentaire">
+                    <InformationCircleIcon class="tipIc" />
+                  </button>
+                  <span class="tip" role="tooltip">{{ f.comment }}</span>
+                </span>
+              </div>
+
+              <div class="line2">
+                <span class="sub">{{ f.city || "—" }}</span>
+                <span class="dot">•</span>
+                <span class="sub">{{ f.region || "—" }}</span>
+              </div>
+            </div>
           </div>
 
-          <div class="right">
-            <div class="miniKpi" v-if="((draftsById as any)[String(f.id)]?.length ?? 0) || ((f as any)?.items?.length ?? 0)">
-              <span class="kLbl">Ciment</span>
-              <span class="kVal ciment">{{ n(((draftsById as any)[String(f.id)]?.length ?? 0) ? cimentQty(getDraft(String(f.id))) : cimentQtyFromRow(f), 0) }}</span>
-              <span class="kUnit">kg/m³</span>
+          <div class="right" @click.stop>
+            <div class="kpis" v-if="((draftsById as any)[String(f.id)]?.length ?? 0) || ((f as any)?.items?.length ?? 0)">
+              <span class="kpi">
+                <span class="kLbl">Ciment</span>
+                <span class="kVal ciment">
+                  {{
+                    n(
+                      ((draftsById as any)[String(f.id)]?.length ?? 0)
+                        ? cimentQty(getDraft(String(f.id)))
+                        : cimentQtyFromRow(f),
+                      0
+                    )
+                  }}
+                </span>
+                <span class="kUnit">kg/m³</span>
+              </span>
+
+              <span class="kpi">
+                <span class="kLbl">CMP</span>
+                <span class="kVal">{{ fmtCmp(getCmpRow(f)) }}</span>
+                <span class="kUnit">DH/m³</span>
+              </span>
             </div>
 
-            <div class="miniKpi" v-if="((draftsById as any)[String(f.id)]?.length ?? 0) || ((f as any)?.items?.length ?? 0)">
-              <span class="kLbl">CMP</span>
-              <span class="kVal">{{ fmtCmp(getCmpRow(f)) }}</span>
-              <span class="kUnit">DH/m³</span>
-            </div>
-
-            <div class="actions" @click.stop>
-              <button class="iconBtn" title="Modifier" @click="openEdit(f)">
-                <PencilSquareIcon class="actIc" />
+            <div class="acts">
+              <button class="iBtn" title="Modifier" @click="openEdit(f)">
+                <PencilSquareIcon class="aic2" />
               </button>
-              <button class="iconBtn danger" title="Supprimer" @click="askDelete(f)">
-                <TrashIcon class="actIc" />
+              <button class="iBtn danger" title="Supprimer" @click="askDelete(f)">
+                <TrashIcon class="aic2" />
               </button>
             </div>
           </div>
         </button>
 
         <div v-if="isOpen(String(f.id))" class="body">
-          <!-- Missing rho banner (kept) -->
           <div v-if="compositionStatsFor(String(f.id)).missing.length" class="banner warn">
             MP sans ρ :
             <span v-for="m in compositionStatsFor(String(f.id)).missing" :key="m.mpId" class="miniTag">
@@ -821,37 +847,30 @@ onMounted(async () => {
             </span>
           </div>
 
-          <!-- ✅ ONLY ONE LINE (banner message + buttons on the right) -->
-          <div
-            class="volRow"
-            :class="{ low: compositionStatsFor(String(f.id)).isLow, ok: compositionStatsFor(String(f.id)).isOk }"
-          >
-            <div class="volMsg">
-              {{ volumeLine(String(f.id)) }}
-            </div>
+          <div class="volRow" :class="{ low: compositionStatsFor(String(f.id)).isLow, ok: compositionStatsFor(String(f.id)).isOk }">
+            <div class="volMsg">{{ volumeLine(String(f.id)) }}</div>
 
             <div class="volBtns">
               <button class="btnSm" type="button" @click="addItem(String(f.id))">➕ MP</button>
-              <button class="btnSm primary" type="button" @click="saveItems(String(f.id), f)" :disabled="busy.saveItems">
-                {{ busy.saveItems ? "Enregistrement..." : "Enregistrer composition" }}
+              <button class="btnSm pri" type="button" @click="saveItems(String(f.id), f)" :disabled="busy.saveItems">
+                {{ busy.saveItems ? "Enregistrement..." : "Enregistrer" }}
               </button>
             </div>
           </div>
 
-          <!-- composition box -->
           <div class="compBox">
             <div class="tableWrap">
-              <table class="table compTable">
+              <table class="table">
                 <colgroup>
-                  <col />
-                  <col style="width: 120px" />
-                  <col style="width: 34px" />
-                  <col style="width: 34px" />
+                  <col class="cMp" />
+                  <col class="cQty" />
+                  <col class="cAct" />
+                  <col class="cAct" />
                 </colgroup>
 
                 <thead>
                   <tr>
-                    <th>MP ({{ f.label || "—" }})</th>
+                    <th>MP</th>
                     <th class="r">kg/m³</th>
                     <th></th>
                     <th></th>
@@ -862,7 +881,7 @@ onMounted(async () => {
                   <tr v-for="(it, idx) in getDraft(String(f.id))" :key="idx">
                     <td class="cellMp">
                       <select
-                        class="in mpSel mpFont"
+                        class="inSel mpFont"
                         :value="it.mpId"
                         @change="onChangeMp(String(f.id), idx, String(($event.target as HTMLSelectElement).value))"
                       >
@@ -872,19 +891,19 @@ onMounted(async () => {
                       </select>
                     </td>
 
-                    <td class="cellQty r">
-                      <input class="in qty r" type="number" step="0.01" v-model.number="it.qty" />
+                    <td class="r">
+                      <input class="inNum" type="number" step="0.01" v-model.number="it.qty" />
                     </td>
 
-                    <td class="cellAct r">
-                      <button class="iconBtn sm" type="button" title="Remplacer MP" @click="openReplace(String(f.id), idx)">
-                        <ArrowsRightLeftIcon class="actIc sm" />
+                    <td class="r">
+                      <button class="iBtn sm" type="button" title="Remplacer" @click="openReplace(String(f.id), idx)">
+                        <ArrowsRightLeftIcon class="aic2 sm" />
                       </button>
                     </td>
 
-                    <td class="cellAct r">
-                      <button class="iconBtn danger sm" type="button" title="Supprimer" @click="removeItem(String(f.id), idx)">
-                        <TrashIcon class="actIc sm" />
+                    <td class="r">
+                      <button class="iBtn danger sm" type="button" title="Supprimer" @click="removeItem(String(f.id), idx)">
+                        <TrashIcon class="aic2 sm" />
                       </button>
                     </td>
                   </tr>
@@ -897,13 +916,13 @@ onMounted(async () => {
             </div>
 
             <div class="note">
-              ⚠️ Interdit : <b>2 MP de catégorie CIMENT</b> et <b>2 fois la même MP</b> dans une même formule.
+              ⚠️ Interdit : <b>2 MP CIMENT</b> et <b>2 fois la même MP</b>.
             </div>
           </div>
         </div>
       </div>
 
-      <div v-if="filtered.length === 0" class="panelEmpty">Aucune formule.</div>
+      <div v-if="filtered.length === 0" class="emptyPanel">Aucune formule.</div>
     </div>
 
     <!-- Create/Edit modal -->
@@ -917,14 +936,14 @@ onMounted(async () => {
       @save="saveForm"
     />
 
-    <!-- Toast popup -->
+    <!-- Toast -->
     <teleport to="body">
       <div v-if="toastOpen" class="toastOvl" @mousedown.self="closeToast" role="dialog" aria-modal="true">
         <div class="toastDlg">
           <div class="toastHead">
-            <div class="toastTitle">Erreur</div>
-            <button class="x" type="button" @click="closeToast" aria-label="Fermer">
-              <XMarkIcon class="xIc" />
+            <div class="toastTitle">Info</div>
+            <button class="x2" type="button" @click="closeToast" aria-label="Fermer">
+              <XMarkIcon class="xic2" />
             </button>
           </div>
           <div class="toastBody">
@@ -932,7 +951,7 @@ onMounted(async () => {
             <div class="tMsg">{{ toastMsg }}</div>
           </div>
           <div class="toastFoot">
-            <button class="btnSm primary" type="button" @click="closeToast">OK</button>
+            <button class="btnSm pri" type="button" @click="closeToast">OK</button>
           </div>
         </div>
       </div>
@@ -944,16 +963,16 @@ onMounted(async () => {
         <div class="dlg">
           <div class="hdr">
             <div class="hdr__t">
-              <div class="ttl">Remplacer MP</div>
-              <div class="sub">Catégorie: <b>{{ replaceCtx.category }}</b></div>
+              <div class="ttl2">Remplacer MP</div>
+              <div class="sub2">Catégorie : <b>{{ replaceCtx.category }}</b></div>
             </div>
-            <button class="x" type="button" @click="closeReplace" aria-label="Fermer">✕</button>
+            <button class="x2" type="button" @click="closeReplace" aria-label="Fermer">✕</button>
           </div>
 
-          <div class="grid">
-            <label class="field span2">
+          <div class="dlgBody">
+            <label class="field">
               <span class="lab">Choisir une MP</span>
-              <select v-model="selectedReplaceMpId" class="inSel">
+              <select v-model="selectedReplaceMpId" class="inSelBig">
                 <option v-for="mp in replaceOptions" :key="mp.id" :value="String(mp.id)">
                   {{ mp.categorie }} — {{ mp.label }}
                 </option>
@@ -962,9 +981,9 @@ onMounted(async () => {
             </label>
           </div>
 
-          <div class="ftr">
-            <button class="btn ghost" type="button" @click="closeReplace">Annuler</button>
-            <button class="btn primary" type="button" @click="confirmReplace">Remplacer</button>
+          <div class="dlgFoot">
+            <button class="btnSm" type="button" @click="closeReplace">Annuler</button>
+            <button class="btnSm pri" type="button" @click="confirmReplace">Remplacer</button>
           </div>
         </div>
       </div>
@@ -973,25 +992,23 @@ onMounted(async () => {
     <!-- Delete confirm modal -->
     <teleport to="body">
       <div v-if="showDeleteModal" class="ovl" @mousedown.self="closeDeleteModal" role="dialog" aria-modal="true">
-        <div class="dlg" style="width: min(560px, 96vw);">
+        <div class="dlg small">
           <div class="hdr">
             <div class="hdr__t">
-              <div class="ttl">Supprimer formule</div>
-              <div class="sub">Action irréversible</div>
+              <div class="ttl2">Supprimer formule</div>
+              <div class="sub2">Action irréversible</div>
             </div>
-            <button class="x" type="button" @click="closeDeleteModal" aria-label="Fermer">✕</button>
+            <button class="x2" type="button" @click="closeDeleteModal" aria-label="Fermer">✕</button>
           </div>
 
-          <div class="delBox">
-            Tu es sûr de vouloir supprimer : <b>{{ deleteLabel || "—" }}</b> ?
-            <div class="muted" style="margin-top: 6px;">
-              La composition sera supprimée aussi. Si la formule est utilisée dans une variante, la suppression sera refusée.
-            </div>
+          <div class="dangerBox">
+            Supprimer : <b>{{ deleteLabel || "—" }}</b> ?
+            <div class="muted2">La composition sera supprimée aussi.</div>
           </div>
 
-          <div class="ftr">
-            <button class="btn ghost" type="button" @click="closeDeleteModal" :disabled="busy.remove">Annuler</button>
-            <button class="btn primary" type="button" @click="confirmDelete" :disabled="busy.remove">
+          <div class="dlgFoot">
+            <button class="btnSm" type="button" @click="closeDeleteModal" :disabled="busy.remove">Annuler</button>
+            <button class="btnSm danger" type="button" @click="confirmDelete" :disabled="busy.remove">
               {{ busy.remove ? "Suppression..." : "Supprimer" }}
             </button>
           </div>
@@ -1002,620 +1019,458 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-}
+.page{ padding: 12px; display:flex; flex-direction:column; gap:10px; }
 
-/* header */
-.head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 55%);
-  border: 1px solid rgba(16, 24, 40, 0.12);
+/* sticky subheader under HeaderDashboard */
+.subhdr{
+  position: sticky;
+  top: var(--hdrdash-h, -15px);
+  z-index: 50;
+  background: rgba(248,250,252,0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(16,24,40,0.10);
   border-radius: 16px;
-  padding: 8px 10px;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
-}
-.hTitle {
-  font-size: 13px;
-  font-weight: 950;
-  color: #0f172a;
-  white-space: nowrap;
-}
-.sep {
-  margin: 0 6px;
-  color: rgba(15, 23, 42, 0.35);
-}
-.hRes {
-  color: rgba(15, 23, 42, 0.75);
-}
-.hSearch {
-  flex: 1 1 520px;
-  min-width: 220px;
-}
-.hInput {
-  width: 100%;
-  height: 34px;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.95);
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 850;
-  outline: none;
-}
-.hInput:focus {
-  border-color: rgba(32, 184, 232, 0.35);
-  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.12);
-}
-.hRight {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.hideSm {
-  display: inline;
-}
-@media (max-width: 980px) {
-  .hideSm {
-    display: none;
-  }
-}
-
-/* filters: ✅ one line */
-.filters {
-  display: grid;
-  grid-template-columns: 170px 170px 170px 1fr;
-  gap: 10px;
-  align-items: end;
   padding: 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.85);
 }
-.f {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+.subhdrTop{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.subhdrBottom{ margin-top: 8px; }
+
+.ttl{ font-size: 13px; font-weight: 950; color:#0f172a; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.sep{ color: rgba(15,23,42,0.35); }
+.muted{ color: rgba(15,23,42,0.55); font-weight:850; }
+.n{ font-weight: 950; }
+.pill{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:22px; height:22px; padding:0 8px;
+  border-radius:999px;
+  border:1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  font-size:12px; font-weight:950;
 }
-.fl {
-  font-size: 11px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.7);
-}
-.fin {
-  height: 34px;
+
+.search{
+  width:100%;
+  height: 36px;
   border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.96);
-  padding: 0 10px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  padding: 0 12px;
   font-size: 12px;
   font-weight: 850;
-  color: rgba(15, 23, 42, 1);
-  outline: none;
-  min-width: 0;
+  color:#0f172a;
+  outline:none;
 }
-.fin:focus {
-  border-color: rgba(32, 184, 232, 0.35);
-  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.12);
-}
-.fC {
-  min-width: 0;
-}
-.range {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap; /* ✅ never stack Min/Max */
-}
-.rIn {
-  width: 82px; /* ✅ reduced width */
-}
-.dash {
-  color: rgba(107, 114, 128, 1);
-  font-weight: 900;
+.search:focus{
+  border-color: rgba(2,132,199,0.35);
+  box-shadow: 0 0 0 4px rgba(2,132,199,0.10);
 }
 
-/* alert */
-.alert {
-  border: 1px solid rgba(16, 24, 40, 0.12);
+/* actions compact */
+.actions{ display:flex; align-items:center; gap:8px; }
+.icon{
+  width: 38px; height: 36px;
   border-radius: 14px;
-  padding: 10px 12px;
-  background: #fff;
-  color: #111827;
-  font-size: 13px;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.9);
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  position: relative;
 }
-.alert.error {
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.08);
+.icon:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.icon.on{ background: rgba(2,132,199,0.10); border-color: rgba(2,132,199,0.22); }
+.ic{ width:18px; height:18px; color: rgba(15,23,42,0.78); }
+.dot{
+  position:absolute;
+  top: 7px; right: 7px;
+  width: 8px; height: 8px;
+  border-radius:999px;
+  background: #ef4444;
+  border: 2px solid rgba(248,250,252,0.92);
 }
-.aic {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  flex: 0 0 auto;
-}
-
-/* buttons */
-.btn {
-  height: 34px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.04);
+.primary{
+  height: 36px;
   border-radius: 14px;
-  padding: 0 12px;
-  font-weight: 950;
+  border: 1px solid rgba(24,64,112,0.65);
+  background: rgba(24,64,112,0.92);
+  color:#fff;
+  font-weight:950;
   font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  white-space: nowrap;
+  padding: 0 12px;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
 }
-.btn:hover {
-  background: rgba(32, 184, 232, 0.12);
-  border-color: rgba(32, 184, 232, 0.18);
-}
-.btn.primary {
-  background: rgba(24, 64, 112, 0.92);
-  border-color: rgba(24, 64, 112, 0.6);
-  color: #fff;
-}
-.btn.primary:hover {
-  background: rgba(24, 64, 112, 1);
-}
-.btn.ghost {
-  background: rgba(255, 255, 255, 0.75);
-  padding: 0 10px;
-}
-.btnic {
-  width: 16px;
-  height: 16px;
-}
+.primary:hover{ background: rgba(24,64,112,1); }
+.primary .ic{ color:#fff; }
 
-.btnSm {
-  height: 30px; /* ✅ tighter */
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.04);
-  border-radius: 12px;
-  padding: 0 10px;
-  font-weight: 950;
-  font-size: 11.5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  white-space: nowrap;
+/* filters popover */
+.filtersPop{
+  position:absolute;
+  right: 10px;
+  top: calc(100% + 10px);
+  width: min(560px, 94vw);
+  background:#fff;
+  border: 1px solid rgba(16,24,40,0.14);
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 18px 40px rgba(2,6,23,0.18);
 }
-.btnSm:hover {
-  background: rgba(32, 184, 232, 0.12);
-  border-color: rgba(32, 184, 232, 0.18);
+.filtersHead{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(16,24,40,0.08);
 }
-.btnSm.primary {
-  background: rgba(24, 64, 112, 0.92);
-  border-color: rgba(24, 64, 112, 0.6);
-  color: #fff;
-}
-.btnSm.primary:hover {
-  background: rgba(24, 64, 112, 1);
-}
+.fttl{ display:flex; align-items:center; gap:8px; font-weight:950; font-size:12px; color:#0f172a; }
+.fic{ width:18px; height:18px; }
+.x{ width: 34px; height:34px; border-radius:12px; border:1px solid rgba(16,24,40,0.12); background: rgba(15,23,42,0.04); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.x:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.xic{ width:18px; height:18px; }
 
-.iconBtn {
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
+.filtersGrid{ padding-top: 10px; display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; }
+.f{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+.l{ font-size:11px; font-weight:900; color: rgba(15,23,42,0.62); }
+.in{
+  height: 36px;
+  border-radius: 14px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 850;
+  color:#0f172a;
+  outline:none;
 }
-.iconBtn:hover {
-  background: rgba(32, 184, 232, 0.08);
-  border-color: rgba(32, 184, 232, 0.18);
+.in:focus{ border-color: rgba(2,132,199,0.35); box-shadow: 0 0 0 4px rgba(2,132,199,0.10); }
+.span3{ grid-column: span 3; }
+
+.range{ display:flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+.num{ width: 96px; }
+.dash{ font-weight: 950; color: rgba(107,114,128,1); }
+
+.filtersFoot{ display:flex; justify-content:flex-end; gap:8px; padding-top: 10px; }
+
+/* alerts */
+.alert{
+  border:1px solid rgba(16,24,40,0.12);
+  border-radius:14px;
+  padding:10px 12px;
+  background:#fff;
+  color:#111827;
+  font-size:13px;
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
 }
-.iconBtn.danger {
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.08);
-}
-.iconBtn.sm {
-  width: 28px; /* ✅ smaller */
-  height: 28px;
-  border-radius: 10px;
-}
-.actIc {
-  width: 18px;
-  height: 18px;
-  color: rgba(15, 23, 42, 0.85);
-}
-.actIc.sm {
-  width: 15px;
-  height: 15px;
-}
+.alert.err{ border-color:#ef4444; background:#fff5f5; }
+.aic{ width:18px; height:18px; margin-top: 1px; flex:0 0 auto; }
 
 /* cards */
-.cards {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.card {
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  border-radius: 16px;
-  overflow: hidden;
-  background: #fff;
-}
+.cards{ display:flex; flex-direction:column; gap:8px; }
+.card{ border:1px solid rgba(16,24,40,0.12); border-radius: 16px; background:#fff; overflow:hidden; }
 
-/* row header */
-.rowHead {
-  width: 100%;
-  border: 0;
-  background: #fff;
-  cursor: pointer;
+.rowHead{
+  width:100%;
+  border:0;
+  background:#fff;
+  cursor:pointer;
   padding: 10px 12px;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  align-items: center;
-  text-align: left;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  text-align:left;
 }
-.rowHead:hover {
-  background: rgba(15, 23, 42, 0.03);
-}
-.left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-.chev {
-  width: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  color: rgba(107, 114, 128, 1);
-}
-.chIc {
-  width: 18px;
-  height: 18px;
-}
-.name {
-  font-weight: 950;
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 520px;
-}
-.chip {
+.rowHead:hover{ background: rgba(15,23,42,0.03); }
+
+.left{ display:flex; align-items:flex-start; gap:10px; min-width:0; flex:1 1 auto; overflow:hidden; }
+.chev{ width:18px; display:inline-flex; align-items:center; justify-content:center; color: rgba(107,114,128,1); flex:0 0 auto; margin-top: 2px; }
+.chIc{ width:18px; height:18px; }
+
+.main{ min-width:0; flex:1 1 auto; overflow:hidden; }
+.line1{ display:flex; align-items:center; gap:8px; min-width:0; }
+.name{ font-weight:950; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.chip{
   font-size: 10.5px;
   padding: 3px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  color: rgba(55, 65, 81, 1);
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.03);
   font-weight: 900;
-  flex: 0 0 auto;
+  flex:0 0 auto;
 }
-.dot {
-  opacity: 0.5;
-  flex: 0 0 auto;
-}
-.sub {
-  font-size: 11px;
-  color: rgba(107, 114, 128, 1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 220px;
-}
+.line2{ margin-top: 2px; display:flex; align-items:center; gap:8px; min-width:0; }
+.sub{ font-size:11px; color: rgba(107,114,128,1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dot2{ opacity: 0.55; }
 
-/* right */
-.right {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 0 0 auto;
-}
-.actions {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-}
-.miniKpi {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+.right{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+.kpis{ display:flex; gap:8px; align-items:center; }
+.kpi{
+  display:inline-flex;
+  align-items:baseline;
+  gap:6px;
   padding: 6px 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
+  border: 1px solid rgba(16,24,40,0.12);
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.03);
+  background: rgba(15,23,42,0.03);
 }
-.kLbl {
-  font-size: 10.5px;
-  font-weight: 950;
-  color: rgba(107, 114, 128, 1);
-}
-.kVal {
-  font-size: 12.5px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 1);
-}
-.kVal.ciment {
-  color: rgba(180, 83, 9, 1);
-  background: rgba(245, 158, 11, 0.14);
+.kLbl{ font-size: 10.5px; font-weight: 950; color: rgba(107,114,128,1); }
+.kVal{ font-size: 12.5px; font-weight: 950; color: rgba(15,23,42,1); }
+.kVal.ciment{
+  color: rgba(180,83,9,1);
+  background: rgba(245,158,11,0.14);
   border-radius: 999px;
   padding: 1px 8px;
 }
-.kUnit {
-  font-size: 10.5px;
-  font-weight: 950;
-  color: rgba(107, 114, 128, 1);
+.kUnit{ font-size:10.5px; font-weight:950; color: rgba(107,114,128,1); }
+.acts{ display:flex; gap:6px; align-items:center; }
+
+.iBtn{
+  width:34px; height:34px;
+  border-radius:12px;
+  border:1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer;
 }
+.iBtn:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.iBtn.danger{ border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); color: rgba(185,28,28,1); }
+.iBtn.sm{ width:28px; height:28px; border-radius:10px; }
+.aic2{ width:18px; height:18px; }
+.aic2.sm{ width:15px; height:15px; }
+
+/* tooltip comment */
+.tipWrap{ position: relative; display:inline-flex; align-items:center; z-index: 5; }
+.tipBtn{
+  width: 26px; height: 26px;
+  border-radius: 10px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor: default;
+}
+.tipIc{ width: 16px; height: 16px; color: rgba(15,23,42,0.55); }
+.tip{
+  position:absolute;
+  left: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 220px;
+  max-width: 360px;
+  background: rgba(17,24,39,0.95);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+  transform: translateY(-50%) translateX(-4px);
+  z-index: 9999;
+}
+.tipWrap:hover .tip{ opacity:1; transform: translateY(-50%) translateX(0px); }
 
 /* body */
-.body {
-  border-top: 1px solid rgba(16, 24, 40, 0.1);
-  padding: 10px 12px 12px;
-}
-
-/* compact banners */
-.banner {
-  font-size: 11.5px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  border-radius: 12px;
+.body{ border-top: 1px solid rgba(16,24,40,0.10); padding: 10px 12px 12px; }
+.banner{
+  font-size:11.5px;
+  border:1px solid rgba(16,24,40,0.12);
+  border-radius:12px;
   padding: 7px 10px;
   margin-bottom: 8px;
 }
-.banner.warn {
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.1);
-}
-.miniTag {
-  display: inline-flex;
+.banner.warn{ border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.10); }
+.miniTag{
+  display:inline-flex;
   padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: #fff;
+  border-radius:999px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
   font-size: 11px;
   margin-left: 6px;
 }
 
-/* ✅ volume row + buttons aligned right */
-.volRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+/* volume row */
+.volRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
   padding: 8px 10px;
   border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.1);
+  border: 1px solid rgba(16,24,40,0.10);
   margin-bottom: 10px;
 }
-.volRow.ok {
-  background: rgba(236, 253, 245, 0.75);
-  border-color: rgba(0, 122, 51, 0.28);
-  color: rgba(6, 95, 70, 1);
-}
-.volRow.low {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.28);
-  color: rgba(127, 29, 29, 0.95);
-}
-.volMsg {
-  font-size: 12px;
+.volRow.ok{ background: rgba(236,253,245,0.75); border-color: rgba(0,122,51,0.28); color: rgba(6,95,70,1); }
+.volRow.low{ background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.28); color: rgba(127,29,29,0.95); }
+.volMsg{ font-size: 12px; font-weight: 950; }
+.volBtns{ display:inline-flex; gap:8px; align-items:center; flex-wrap:nowrap; }
+
+/* compact buttons */
+.btnSm{
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  padding: 0 10px;
   font-weight: 950;
+  font-size: 11.5px;
+  cursor:pointer;
+  white-space:nowrap;
 }
-.volBtns {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: nowrap;
-}
+.btnSm:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.btnSm.pri{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.65); color:#fff; }
+.btnSm.pri:hover{ background: rgba(24,64,112,1); }
+.btnSm.danger{ background:#ef4444; border-color:#ef4444; color:#fff; }
+.btnSm.danger:hover{ filter: brightness(0.95); }
 
-/* composition box */
-.compBox {
+/* comp box */
+.compBox{
   border-radius: 16px;
-  border: 1px solid rgba(24, 64, 112, 0.14);
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.55) 0%, rgba(255, 255, 255, 0.92) 45%);
-  padding: 8px; /* ✅ tighter */
+  border: 1px solid rgba(24,64,112,0.14);
+  background: linear-gradient(180deg, rgba(239,246,255,0.55) 0%, rgba(255,255,255,0.92) 45%);
+  padding: 8px;
 }
-
-/* table: ✅ very compact */
-.tableWrap {
-  overflow-x: hidden;
-}
-.table {
-  width: 100%;
+.tableWrap{ overflow: hidden; } /* ✅ no horizontal scroll */
+.table{
+  width:100%;
   border-collapse: collapse;
-  font-size: 11.5px; /* ✅ smaller */
-  table-layout: fixed;
+  table-layout: fixed; /* ✅ */
+  font-size: 11.5px;
 }
-.table th,
-.table td {
-  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
-  padding: 5px 6px; /* ✅ smaller vertical padding */
+.table th, .table td{
+  border-bottom: 1px solid rgba(16,24,40,0.10);
+  padding: 5px 6px;
   vertical-align: middle;
 }
-.table th {
-  background: rgba(24, 64, 112, 0.05);
-  color: rgba(55, 65, 81, 1);
+.table th{
+  background: rgba(24,64,112,0.05);
+  color: rgba(55,65,81,1);
   font-size: 10.8px;
   font-weight: 950;
 }
-.r {
-  text-align: right;
-}
-.in {
+.r{ text-align:right; }
+
+/* col widths sum <= 100% */
+.cMp{ width: 70%; }
+.cQty{ width: 18%; }
+.cAct{ width: 6%; }
+
+.inSel{
   width: 100%;
-  height: 28px; /* ✅ smaller input height */
+  height: 28px;
   border-radius: 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.96);
-  padding: 0 8px; /* ✅ smaller */
-  font-size: 11.5px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  padding: 0 8px;
+  font-size: 11px;
   font-weight: 850;
-  color: rgba(15, 23, 42, 1);
-  outline: none;
+  color:#0f172a;
+  outline:none;
 }
-.in:focus {
-  border-color: rgba(32, 184, 232, 0.35);
-  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.12);
-}
-.mpSel {
-  min-width: 0;
-}
-.qty {
-  font-variant-numeric: tabular-nums;
+.inSel:focus{ border-color: rgba(2,132,199,0.35); box-shadow: 0 0 0 3px rgba(2,132,199,0.10); }
+
+.inNum{
+  width: 100%;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(2,132,199,0.18);
+  background: rgba(2,132,199,0.06); /* important input */
+  padding: 0 8px;
+  font-size: 11.5px;
   font-weight: 950;
+  font-variant-numeric: tabular-nums;
+  color:#0f172a;
+  outline:none;
+  text-align:right;
 }
-.cellAct {
-  width: 34px;
-}
-.emptyRow {
-  color: rgba(107, 114, 128, 1);
-  padding: 10px;
-}
+.inNum:focus{ border-color: rgba(2,132,199,0.35); box-shadow: 0 0 0 3px rgba(2,132,199,0.10); }
 
-/* smaller MP font in composition */
-.mpFont {
-  font-size: 10.8px;
-  font-weight: 800;
-  letter-spacing: -0.1px;
-}
+.mpFont{ letter-spacing: -0.1px; }
+.emptyRow{ color: rgba(107,114,128,1); padding: 10px; text-align:center; }
 
-/* note */
-.note {
+.note{
   margin-top: 8px;
-  background: rgba(15, 23, 42, 0.03);
-  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: rgba(15,23,42,0.03);
+  border: 1px solid rgba(16,24,40,0.10);
   border-radius: 12px;
   padding: 8px 10px;
   font-size: 11.5px;
-  color: rgba(107, 114, 128, 1);
+  color: rgba(107,114,128,1);
 }
 
-/* empty */
-.panelEmpty {
-  border: 1px dashed rgba(16, 24, 40, 0.18);
-  background: rgba(15, 23, 42, 0.03);
+.emptyPanel{
+  border: 1px dashed rgba(16,24,40,0.18);
+  background: rgba(15,23,42,0.03);
   border-radius: 14px;
   padding: 12px;
-  color: rgba(107, 114, 128, 1);
+  color: rgba(107,114,128,1);
   font-size: 12px;
 }
 
-/* overlays + toast (unchanged family) */
-.ovl {
+/* overlays / dialogs minimal */
+.ovl{
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: rgba(2,6,23,0.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
   padding: 16px;
-  z-index: 99999;
+  z-index: 100000;
 }
-.dlg {
+.dlg{
   width: min(820px, 96vw);
-  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 40%);
-  border: 1px solid rgba(16, 24, 40, 0.14);
+  background: #fff;
+  border: 1px solid rgba(16,24,40,0.14);
   border-radius: 18px;
-  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.35);
-  overflow: hidden;
+  overflow:hidden;
+  box-shadow: 0 26px 80px rgba(15,23,42,0.35);
 }
-.hdr {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 14px 10px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
-}
-.ttl {
-  font-size: 14px;
-  font-weight: 950;
-  color: #0f172a;
-}
-.sub {
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-  margin-top: 2px;
-}
-.x {
-  width: 34px;
-  height: 34px;
+.dlg.small{ width: min(560px, 96vw); }
+.hdr{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding: 12px 14px 10px; border-bottom: 1px solid rgba(16,24,40,0.10); }
+.ttl2{ font-size: 14px; font-weight: 950; color:#0f172a; }
+.sub2{ font-size: 11px; font-weight: 800; color: rgba(15,23,42,0.55); margin-top: 2px; }
+.x2{
+  width: 34px; height: 34px;
   border-radius: 12px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.04);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center;
 }
-.x:hover {
-  background: rgba(32, 184, 232, 0.12);
-  border-color: rgba(32, 184, 232, 0.18);
-}
-.grid {
-  padding: 12px 14px 6px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.lab {
-  font-size: 11px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.7);
-}
-.inSel {
+.x2:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.xic2{ width:18px; height:18px; }
+
+.dlgBody{ padding: 12px 14px 6px; }
+.field{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+.lab{ font-size: 11px; font-weight: 950; color: rgba(15,23,42,0.70); }
+.inSelBig{
   height: 38px;
   border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
   padding: 0 12px;
   font-size: 12px;
   font-weight: 850;
-  color: #0f172a;
-  outline: none;
+  color:#0f172a;
+  outline:none;
 }
-.inSel:focus {
-  border-color: rgba(32, 184, 232, 0.35);
-  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.12);
-}
-.span2 {
-  grid-column: span 2;
-}
-.ftr {
+.inSelBig:focus{ border-color: rgba(2,132,199,0.35); box-shadow: 0 0 0 4px rgba(2,132,199,0.10); }
+.hint{ font-size: 10px; font-weight: 850; color: rgba(15,23,42,0.55); }
+
+.dlgFoot{
   padding: 10px 14px 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  border-top: 1px solid rgba(16, 24, 40, 0.1);
-  background: rgba(255, 255, 255, 0.72);
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  border-top: 1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
 }
-.delBox {
+.dangerBox{
   margin: 10px 14px 0;
   padding: 10px 12px;
   border-radius: 14px;
@@ -1625,91 +1480,38 @@ onMounted(async () => {
   font-weight: 850;
   font-size: 12px;
 }
-.muted {
-  color: rgba(107, 114, 128, 1);
-  font-weight: 800;
-}
+.muted2{ margin-top: 6px; color: rgba(107,114,128,1); font-weight: 800; }
 
 /* toast */
-.toastOvl {
+.toastOvl{
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: rgba(2,6,23,0.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
   padding: 16px;
   z-index: 100000;
 }
-.toastDlg {
+.toastDlg{
   width: min(520px, 96vw);
-  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 40%);
-  border: 1px solid rgba(16, 24, 40, 0.14);
+  background:#fff;
+  border: 1px solid rgba(16,24,40,0.14);
   border-radius: 18px;
-  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.35);
-  overflow: hidden;
+  overflow:hidden;
+  box-shadow: 0 26px 80px rgba(15,23,42,0.35);
 }
-.toastHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
-}
-.toastTitle {
-  font-size: 13px;
-  font-weight: 950;
-  color: #0f172a;
-}
-.xIc {
-  width: 18px;
-  height: 18px;
-  color: rgba(15, 23, 42, 0.8);
-}
-.toastBody {
-  padding: 12px 14px;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-.tIc {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: rgba(239, 68, 68, 1);
-}
-.tMsg {
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(127, 29, 29, 0.95);
-}
-.toastFoot {
-  padding: 12px 14px 14px;
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid rgba(16, 24, 40, 0.1);
-  background: rgba(255, 255, 255, 0.72);
-}
+.toastHead{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding: 12px 14px; border-bottom: 1px solid rgba(16,24,40,0.10); }
+.toastTitle{ font-size: 13px; font-weight: 950; color:#0f172a; }
+.toastBody{ padding: 12px 14px; display:flex; gap:10px; align-items:flex-start; }
+.tIc{ width:18px; height:18px; flex:0 0 auto; margin-top: 2px; color:#ef4444; }
+.tMsg{ font-size: 12px; font-weight: 900; color: rgba(127,29,29,0.95); white-space: pre-line; }
+.toastFoot{ padding: 12px 14px 14px; display:flex; justify-content:flex-end; border-top: 1px solid rgba(16,24,40,0.10); background: rgba(15,23,42,0.02); }
 
-/* responsive */
-@media (max-width: 980px) {
-  .sub {
-    display: none;
-  }
-  .name {
-    max-width: 280px;
-  }
-  .miniKpi {
-    display: none;
-  }
-  /* filters collapse on mobile */
-  .filters {
-    grid-template-columns: 1fr;
-  }
-  .range {
-    justify-content: space-between;
-  }
+@media (max-width: 980px){
+  .filtersGrid{ grid-template-columns: 1fr; }
+  .span3{ grid-column:auto; }
+  .kpis{ display:none; } /* compact mobile */
+  .filtersPop{ right: 10px; left: 10px; width: auto; }
 }
 </style>

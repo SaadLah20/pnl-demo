@@ -8,6 +8,10 @@ import {
   InformationCircleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  FunnelIcon,
+  ArrowPathIcon,
+  PlusIcon,
+  XMarkIcon,
 } from "@heroicons/vue/24/outline";
 
 import MpModal from "@/components/MpModal.vue";
@@ -44,7 +48,6 @@ const UNITS_OPTIONS = computed<UnitOption[]>(() =>
   UNITS.map((u) => ({
     value: u,
     label: u,
-    // disabled: u !== "T",
   }))
 );
 
@@ -91,7 +94,7 @@ function validateDraft(d: MpDraft): string | null {
 }
 
 /* =========================
-   FILTERS
+   FILTERS (compact popover)
 ========================= */
 const showFilters = ref(false);
 const filters = reactive({ categorie: "", city: "", region: "" });
@@ -118,6 +121,7 @@ function resetFilters() {
   filters.categorie = "";
   filters.city = "";
   filters.region = "";
+  showFilters.value = false;
 }
 
 const activeFiltersCount = computed(() => {
@@ -134,7 +138,8 @@ const filtered = computed<any[]>(() => {
 
   const list = rows.value.filter((r) => {
     if (s) {
-      const blob = `${r.categorie ?? ""} ${r.label ?? ""} ${r.unite ?? ""} ${r.prix ?? ""} ${r.fournisseur ?? ""} ${r.city ?? ""} ${r.region ?? ""} ${r.comment ?? ""}`.toLowerCase();
+      const blob =
+        `${r.categorie ?? ""} ${r.label ?? ""} ${r.unite ?? ""} ${r.prix ?? ""} ${r.fournisseur ?? ""} ${r.city ?? ""} ${r.region ?? ""} ${r.comment ?? ""}`.toLowerCase();
       if (!blob.includes(s)) return false;
     }
     if (filters.categorie && norm(r.categorie) !== filters.categorie) return false;
@@ -143,7 +148,6 @@ const filtered = computed<any[]>(() => {
     return true;
   });
 
-  // ✅ TRI: Label A→Z (accent-insensitive)
   list.sort((a, b) =>
     String(a?.label ?? "").localeCompare(String(b?.label ?? ""), "fr", { sensitivity: "base" })
   );
@@ -151,11 +155,10 @@ const filtered = computed<any[]>(() => {
   return list;
 });
 
-
 /* =========================
    PAGINATION
 ========================= */
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 12;
 const page = ref(1);
 
 const total = computed(() => filtered.value.length);
@@ -176,7 +179,7 @@ watch(totalPages, (tp) => {
 
 function goToPage(p: number) {
   page.value = Math.min(Math.max(1, p), totalPages.value);
-  nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  // pas de scroll forcé : page compacte, UX stable
 }
 
 /* =========================
@@ -249,7 +252,7 @@ function closeMpModal() {
 }
 
 /* =========================
-   DELETE MODAL (teleport)
+   DELETE MODAL
 ========================= */
 const confirmDelete = reactive({
   open: false,
@@ -359,76 +362,119 @@ async function confirmRemove() {
   }
 }
 
+function closeFiltersOnOutside(e: MouseEvent) {
+  const t = e.target as HTMLElement | null;
+  if (!t) return;
+  if (t.closest?.(".filtersPop") || t.closest?.(".filtersBtn")) return;
+  showFilters.value = false;
+}
+
+watch(showFilters, (v) => {
+  if (v) window.addEventListener("mousedown", closeFiltersOnOutside);
+  else window.removeEventListener("mousedown", closeFiltersOnOutside);
+});
+
 onMounted(reload);
 </script>
 
 <template>
   <div class="page">
-    <!-- TOP -->
-    <div class="top">
-      <div class="tleft">
-        <div class="title">Répertoire MP</div>
-        <div class="subline">
-          <span class="muted">Résultats :</span> <b>{{ filtered.length }}</b>
-          <span v-if="activeFiltersCount" class="badge">{{ activeFiltersCount }}</span>
+    <!-- SUB HEADER (sticky under HeaderDashboard) -->
+    <div class="subhdr">
+      <div class="subhdr__left">
+        <div class="ttlRow">
+          <div class="ttl">Répertoire MP</div>
+          <div class="kpi">
+            <span class="muted">Résultats</span>
+            <b class="n">{{ filtered.length }}</b>
+            <span v-if="activeFiltersCount" class="pill">{{ activeFiltersCount }}</span>
+          </div>
+        </div>
+
+        <div class="searchRow">
+          <input
+            class="searchIn"
+            v-model="q"
+            placeholder="Rechercher… (catégorie, label, fournisseur, ville, commentaire)"
+          />
+
+          <div class="toolbar">
+            <button
+              class="icon filtersBtn"
+              type="button"
+              :class="{ on: showFilters }"
+              @click="showFilters = !showFilters"
+              title="Filtres"
+              aria-label="Filtres"
+            >
+              <FunnelIcon class="ic" />
+              <span v-if="activeFiltersCount" class="dot" />
+            </button>
+
+            <button class="icon" type="button" @click="reload" :disabled="busy.reload || loading" title="Recharger">
+              <ArrowPathIcon class="ic" />
+            </button>
+
+            <button class="primary" type="button" @click="openCreate" :disabled="busy.save" title="Nouvelle MP">
+              <PlusIcon class="ic" />
+              <span>MP</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div class="tright">
-        <div class="search">
-          <input class="input" v-model="q" placeholder="Rechercher (catégorie, label, fournisseur, ville…)" />
-        </div>
-
-        <button class="btn" @click="reload" :disabled="busy.reload || loading" title="Recharger">🔄</button>
-        <button class="btn primary" @click="openCreate" :disabled="busy.save">➕ Nouvelle</button>
-      </div>
-    </div>
-
-    <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
-    <div v-if="loading" class="alert">Chargement…</div>
-
-    <!-- FILTERS -->
-    <div class="card filtersCard">
-      <div class="filtersTop">
-        <div class="filtersLeft">
-          <button class="btn" @click="showFilters = !showFilters">
-            {{ showFilters ? "▲" : "▼" }} Filtres
+      <!-- Filters popover (compact) -->
+      <div v-if="showFilters" class="filtersPop" role="dialog" aria-label="Filtres">
+        <div class="filtersTop">
+          <div class="fttl">
+            <FunnelIcon class="fic" />
+            <span>Filtres</span>
+          </div>
+          <button class="x" type="button" @click="showFilters = false" aria-label="Fermer">
+            <XMarkIcon class="xic" />
           </button>
-          <button class="btn" @click="resetFilters" :disabled="activeFiltersCount === 0">Réinitialiser</button>
         </div>
-      </div>
 
-      <div v-if="showFilters" class="filtersBody">
         <div class="filtersGrid">
-          <div class="f">
-            <div class="l">Catégorie</div>
-            <select class="input" v-model="filters.categorie">
+          <label class="f">
+            <span class="l">Catégorie</span>
+            <select class="in" v-model="filters.categorie">
               <option value="">Toutes</option>
               <option v-for="c in options.categories" :key="c" :value="c">{{ c }}</option>
             </select>
-          </div>
+          </label>
 
-          <div class="f">
-            <div class="l">Ville</div>
-            <select class="input" v-model="filters.city">
+          <label class="f">
+            <span class="l">Ville</span>
+            <select class="in" v-model="filters.city">
               <option value="">Toutes</option>
               <option v-for="c in options.cities" :key="c" :value="c">{{ c }}</option>
             </select>
-          </div>
+          </label>
 
-          <div class="f">
-            <div class="l">Région</div>
-            <select class="input" v-model="filters.region">
+          <label class="f">
+            <span class="l">Région</span>
+            <select class="in" v-model="filters.region">
               <option value="">Toutes</option>
               <option v-for="r in options.regions" :key="r" :value="r">{{ r }}</option>
             </select>
-          </div>
+          </label>
+        </div>
+
+        <div class="filtersActions">
+          <button class="btn" type="button" @click="resetFilters" :disabled="activeFiltersCount === 0">
+            Réinitialiser
+          </button>
+          <button class="btn pri" type="button" @click="showFilters = false">OK</button>
         </div>
       </div>
     </div>
 
+    <div v-if="error" class="alert err"><b>Erreur :</b> {{ error }}</div>
+    <div v-if="loading" class="alert">Chargement…</div>
+
     <!-- TABLE (no horizontal scroll) -->
-    <div class="card cardTable">
+    <div class="card">
       <div class="tableWrap">
         <table class="table">
           <colgroup>
@@ -452,22 +498,22 @@ onMounted(reload);
           <tbody>
             <tr v-for="r in paged" :key="r.id">
               <td class="ell">
-                <span class="catPill">{{ r.categorie }}</span>
+                <span class="cat">{{ r.categorie }}</span>
               </td>
 
               <td class="cellMain">
                 <div class="mainLine">
                   <b class="ell">{{ r.label }}</b>
 
-                  <span v-if="r.comment && String(r.comment).trim()" class="cmtWrap">
-                    <button class="cmtBtn" type="button" aria-label="Commentaire">
-                      <InformationCircleIcon class="cmtIc" />
+                  <span v-if="r.comment && String(r.comment).trim()" class="tipWrap">
+                    <button class="tipBtn" type="button" aria-label="Commentaire">
+                      <InformationCircleIcon class="tipIc" />
                     </button>
-                    <span class="cmtTip" role="tooltip">{{ r.comment }}</span>
+                    <span class="tip" role="tooltip">{{ r.comment }}</span>
                   </span>
                 </div>
 
-                <div v-if="r.fournisseur && String(r.fournisseur).trim()" class="subText ell">
+                <div v-if="r.fournisseur && String(r.fournisseur).trim()" class="sub ell">
                   Fournisseur : <b>{{ r.fournisseur }}</b>
                 </div>
               </td>
@@ -476,31 +522,31 @@ onMounted(reload);
                 <div class="mainLine">
                   <span class="ell"><b>{{ r.city || "—" }}</b></span>
                 </div>
-                <div class="subText ell">{{ r.region || "—" }}</div>
+                <div class="sub ell">{{ r.region || "—" }}</div>
               </td>
 
               <td class="right">
-                <span class="priceBadge">
+                <span class="price">
                   <span class="mono">{{ money2(r.prix) }}</span>
                   <span class="dh">DH</span>
-                  <span class="unitTag">/ {{ r.unite }}</span>
+                  <span class="u">/ {{ r.unite }}</span>
                 </span>
               </td>
 
               <td class="right">
-                <div class="rowActions">
-                  <button class="iconBtn" aria-label="Modifier" @click="openEdit(r)">
-                    <PencilSquareIcon class="actIc" />
+                <div class="acts">
+                  <button class="iBtn" aria-label="Modifier" @click="openEdit(r)" title="Modifier">
+                    <PencilSquareIcon class="aic" />
                   </button>
-                  <button class="iconBtn danger" aria-label="Supprimer" @click="askDelete(r)">
-                    <TrashIcon class="actIc" />
+                  <button class="iBtn danger" aria-label="Supprimer" @click="askDelete(r)" title="Supprimer">
+                    <TrashIcon class="aic" />
                   </button>
                 </div>
               </td>
             </tr>
 
             <tr v-if="filtered.length === 0">
-              <td colspan="5" class="emptyRow">Aucune MP.</td>
+              <td colspan="5" class="empty">Aucune MP.</td>
             </tr>
           </tbody>
         </table>
@@ -547,13 +593,13 @@ onMounted(reload);
           </div>
 
           <div class="bodyDel">
-            <div class="muted">Tu vas supprimer définitivement :</div>
+            <div class="muted">Suppression définitive :</div>
             <div class="dangerLine">• <b>{{ confirmDelete.label || confirmDelete.id }}</b></div>
           </div>
 
           <div class="ftrDel">
-            <button class="btn" @click="closeDelete" :disabled="busy.remove">Annuler</button>
-            <button class="btn dangerBtn" @click="confirmRemove" :disabled="busy.remove">
+            <button class="btn2" @click="closeDelete" :disabled="busy.remove">Annuler</button>
+            <button class="btn2 dangerBtn" @click="confirmRemove" :disabled="busy.remove">
               {{ busy.remove ? "Suppression..." : "Supprimer" }}
             </button>
           </div>
@@ -564,83 +610,214 @@ onMounted(reload);
 </template>
 
 <style scoped>
-.page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
+/* Page: compact */
+.page { padding: 12px; display:flex; flex-direction:column; gap:10px; }
 
-.top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.tleft { display:flex; flex-direction:column; gap:4px; }
-.title { font-size:18px; font-weight:900; color:#111827; }
-.subline { display:flex; align-items:center; gap:8px; }
-.tright { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.search { min-width: 280px; flex: 1; }
+/* Sticky sub-header under HeaderDashboard
+   -> ajuste top si ton HeaderDashboard a une autre hauteur.
+   -> idéal: HeaderDashboard définit --hdrdash-h au root. */
+.subhdr{
+  position: sticky;
+  top: var(--hdrdash-h, -15px);
+  z-index: 50;
+  background: rgba(248,250,252,0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(16,24,40,0.10);
+  border-radius: 16px;
+  padding: 10px 10px;
+}
+.subhdr__left{ display:flex; flex-direction:column; gap:8px; }
 
-.alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
-.alert.error { border-color:#ef4444; background:#fff5f5; }
-
-.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
-.cardTable { overflow: visible; }
-
-.btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; }
-.btn:hover { background:#f9fafb; }
-.btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
-.btn.primary:hover { background: rgba(24,64,112,1); }
-
-.input { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:12px; font-size:13px; background:#fff; }
-.right { text-align:right; }
-.muted { color:#6b7280; font-size:12px; }
-
-/* Filters */
-.filtersCard { padding: 10px 12px; }
-.filtersTop { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
-.filtersLeft { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.filtersBody { margin-top:10px; border-top:1px solid #e5e7eb; padding-top:10px; }
-.filtersGrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
-@media (max-width: 980px) { .filtersGrid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 620px) { .filtersGrid { grid-template-columns: 1fr; } }
-.f { display:flex; flex-direction:column; gap:6px; }
-.f .l { font-size:11px; color:#6b7280; font-weight:800; }
-
-.badge{
+.ttlRow{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.ttl{ font-size:16px; font-weight:950; color:#0f172a; }
+.kpi{ display:flex; align-items:center; gap:8px; font-size:12px; }
+.muted{ color: rgba(15,23,42,0.55); font-weight:800; }
+.n{ font-weight:950; color:#0f172a; }
+.pill{
   display:inline-flex; align-items:center; justify-content:center;
   min-width:22px; height:22px; padding:0 8px;
-  border-radius:999px; border:1px solid #e5e7eb; background:#fafafa;
-  font-size:12px; font-weight:900; color:#111827;
+  border-radius:999px; border:1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  font-weight:950; font-size:12px; color:#0f172a;
 }
 
-/* TABLE — NO horizontal scroll by design */
-.tableWrap { overflow: visible; }
-.table {
+.searchRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.searchIn{
+  flex:1;
+  min-width: 260px;
+  height: 36px;
+  border-radius: 14px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 850;
+  color:#0f172a;
+}
+.searchIn:focus{
+  outline:none;
+  border-color: rgba(2,132,199,0.35);
+  box-shadow: 0 0 0 4px rgba(2,132,199,0.10);
+}
+
+.toolbar{ display:flex; gap:8px; align-items:center; }
+
+.icon{
+  width: 38px; height: 36px;
+  border-radius: 14px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.9);
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  position: relative;
+}
+.icon:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.icon.on{ background: rgba(2,132,199,0.10); border-color: rgba(2,132,199,0.22); }
+.ic{ width:18px; height:18px; color: rgba(15,23,42,0.78); }
+.dot{
+  position:absolute;
+  top: 7px; right: 7px;
+  width: 8px; height: 8px;
+  border-radius:999px;
+  background: #ef4444;
+  border: 2px solid rgba(248,250,252,0.92);
+}
+
+.primary{
+  height: 36px;
+  border-radius: 14px;
+  border: 1px solid rgba(24,64,112,0.65);
+  background: rgba(24,64,112,0.92);
+  color:#fff;
+  font-weight:950;
+  font-size: 12px;
+  padding: 0 12px;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+}
+.primary:hover{ background: rgba(24,64,112,1); }
+.primary .ic{ color:#fff; }
+
+/* Filters popover */
+.filtersPop{
+  position: absolute;
+  margin-top: 10px;
+  right: 14px;
+  width: min(520px, 92vw);
+  background:#fff;
+  border: 1px solid rgba(16,24,40,0.14);
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 18px 40px rgba(2,6,23,0.18);
+}
+.filtersTop{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding: 2px 2px 8px;
+  border-bottom: 1px solid rgba(16,24,40,0.08);
+}
+.fttl{ display:flex; align-items:center; gap:8px; font-weight:950; color:#0f172a; font-size:12px; }
+.fic{ width:18px; height:18px; }
+.x{
+  width: 34px; height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.x:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.xic{ width:18px; height:18px; }
+
+.filtersGrid{ display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; padding-top:10px; }
+.f{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+.l{ font-size:11px; font-weight:900; color: rgba(15,23,42,0.62); }
+.in{
+  height: 36px;
+  border-radius: 14px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 850;
+  color:#0f172a;
+}
+.in:focus{
+  outline:none;
+  border-color: rgba(2,132,199,0.35);
+  box-shadow: 0 0 0 4px rgba(2,132,199,0.10);
+}
+
+.filtersActions{
+  display:flex; justify-content:flex-end; gap:8px;
+  padding-top: 10px;
+}
+.btn{
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  padding: 0 12px;
+  font-weight: 950;
+  font-size: 12px;
+  cursor:pointer;
+}
+.btn:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.btn.pri{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.65); color:#fff; }
+.btn.pri:hover{ background: rgba(24,64,112,1); }
+
+.alert{
+  border:1px solid rgba(16,24,40,0.12);
+  border-radius:14px;
+  padding:10px 12px;
+  background:#fff;
+  color:#111827;
+  font-size:13px;
+}
+.alert.err{ border-color:#ef4444; background:#fff5f5; }
+
+/* Card + table (no horizontal scroll) */
+.card{ background:#fff; border:1px solid rgba(16,24,40,0.10); border-radius:16px; padding:10px 12px; }
+.tableWrap{ overflow: visible; }
+.table{
   width:100%;
   border-collapse:collapse;
   font-size:12px;
   table-layout: fixed;
 }
-.table th, .table td {
-  border-bottom:1px solid #e5e7eb;
-  padding: 7px 8px;          /* compact */
+.table th, .table td{
+  border-bottom:1px solid rgba(16,24,40,0.10);
+  padding: 7px 8px;
   text-align:left;
   vertical-align: middle;
 }
-.table th {
+.table th{
   font-size:11px;
-  color:#6b7280;
-  background:#fafafa;
+  color: rgba(15,23,42,0.60);
+  background: rgba(15,23,42,0.03);
   white-space: nowrap;
+  font-weight: 950;
 }
-.emptyRow { color:#6b7280; padding:10px; }
+.right{ text-align:right; }
+.ell{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.empty{ color:#6b7280; padding:10px; text-align:center; }
 
-.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Columns sum <= 100% */
+.cCat{ width: 14%; }
+.cLabel{ width: 42%; }
+.cLoc{ width: 18%; }
+.cPrice{ width: 16%; }
+.cActions{ width: 10%; }
 
-/* Columns (sum <= 100%) */
-.cCat { width: 14%; }
-.cLabel { width: 40%; }
-.cLoc { width: 20%; }
-.cPrice { width: 16%; }
-.cActions { width: 10%; }
-
-/* Category pill */
-.catPill{
-  display:inline-flex;
-  align-items:center;
+/* Category */
+.cat{
+  display:inline-flex; align-items:center;
   height: 26px;
   padding: 0 10px;
   border-radius: 999px;
@@ -648,27 +825,28 @@ onMounted(reload);
   background: rgba(15,23,42,0.03);
   font-weight: 950;
   font-size: 11px;
-  color:#111827;
+  color:#0f172a;
   max-width: 100%;
+  box-sizing: border-box;
 }
 
-/* Main cell */
-.cellMain { overflow: visible; }
-.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
-.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
+/* Main cells */
+.cellMain{ overflow: visible; }
+.mainLine{ display:flex; align-items:center; gap:8px; min-width:0; }
+.sub{ margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.60); }
 
-/* Tooltip comment */
-.cmtWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; }
-.cmtBtn{
+/* Tooltip */
+.tipWrap{ position: relative; display:inline-flex; align-items:center; z-index: 5; }
+.tipBtn{
   width: 26px; height: 26px;
   border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(16,24,40,0.12);
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
 }
-.cmtIc{ width: 16px; height: 16px; color:#6b7280; }
-.cmtTip{
+.tipIc{ width: 16px; height: 16px; color: rgba(15,23,42,0.55); }
+.tip{
   position:absolute;
   left: 34px;
   top: 50%;
@@ -688,13 +866,13 @@ onMounted(reload);
   transform: translateY(-50%) translateX(-4px);
   z-index: 9999;
 }
-.cmtWrap:hover .cmtTip{
+.tipWrap:hover .tip{
   opacity: 1;
   transform: translateY(-50%) translateX(0px);
 }
 
-/* Price badge (numeric highlighted) */
-.priceBadge{
+/* Price highlight (important numeric field) */
+.price{
   display:inline-flex;
   align-items:center;
   justify-content:flex-end;
@@ -710,9 +888,9 @@ onMounted(reload);
   max-width: 100%;
   box-sizing: border-box;
 }
-.mono { font-variant-numeric: tabular-nums; }
-.priceBadge .dh{ font-size:11px; font-weight:900; opacity:0.9; }
-.unitTag{
+.mono{ font-variant-numeric: tabular-nums; }
+.dh{ font-size:11px; font-weight:900; opacity:0.9; }
+.u{
   font-size: 11px;
   font-weight: 950;
   color: rgba(15,23,42,0.65);
@@ -722,10 +900,10 @@ onMounted(reload);
   border-radius: 999px;
 }
 
-/* Actions */
-.rowActions { display:flex; gap:6px; justify-content:flex-end; }
-.iconBtn{
-  border:1px solid #e5e7eb;
+/* actions compact */
+.acts{ display:flex; gap:6px; justify-content:flex-end; }
+.iBtn{
+  border:1px solid rgba(16,24,40,0.12);
   background:#fff;
   border-radius:12px;
   width:34px;
@@ -735,9 +913,9 @@ onMounted(reload);
   align-items:center;
   justify-content:center;
 }
-.iconBtn:hover{ background:#f9fafb; }
-.iconBtn.danger{ border-color:#ef4444; color:#b91c1c; }
-.actIc{ width:18px; height:18px; }
+.iBtn:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
+.iBtn.danger{ border-color:#ef4444; color:#b91c1c; }
+.aic{ width:18px; height:18px; }
 
 /* pager */
 .pager{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:10px; }
@@ -766,7 +944,7 @@ onMounted(reload);
   font-size:12px;
   cursor:pointer;
 }
-.pnum.on{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
+.pnum.on{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.65); color:#fff; }
 
 /* DELETE MODAL */
 .ovlDel{
@@ -812,15 +990,31 @@ onMounted(reload);
   border-top: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
 }
+.btn2{
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.04);
+  font-weight: 950;
+  font-size: 12px;
+  cursor:pointer;
+}
+.btn2:hover{ background: rgba(2,132,199,0.08); border-color: rgba(2,132,199,0.18); }
 .dangerBtn { border-color:#ef4444; background:#ef4444; color:#fff; }
 .dangerBtn:hover { filter: brightness(0.95); }
 
+@media (max-width: 980px){
+  .filtersGrid{ grid-template-columns: 1fr; }
+}
 @media (max-width: 720px) {
   .cCat { width: 18%; }
-  .cLabel { width: 42%; }
+  .cLabel { width: 46%; }
   .cLoc { width: 0%; }
-  th:nth-child(3), td:nth-child(3) { display:none; } /* localisation off mobile */
-  .cPrice { width: 26%; }
-  .cActions { width: 14%; }
+  th:nth-child(3), td:nth-child(3) { display:none; }
+  .cPrice { width: 24%; }
+  .cActions { width: 12%; }
+
+  .filtersPop{ right: 10px; left: 10px; width: auto; }
 }
 </style>

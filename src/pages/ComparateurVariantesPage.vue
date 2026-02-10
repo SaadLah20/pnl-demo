@@ -43,6 +43,7 @@ onMounted(async () => {
    TYPES
 ========================= */
 type VariantPack = { variant: any; contract: any; pnl: any };
+
 type Metric = {
   key: string;
   label: string;
@@ -51,6 +52,19 @@ type Metric = {
   better?: "higher" | "lower";
   get: (k: any, pack: VariantPack) => number | null;
   format: (v: number | null) => string;
+};
+
+type TableCell = {
+  value: number | null;
+  text: string;
+  cls: string;
+  deltaText: string;
+  deltaCls: string;
+};
+
+type TableRow = {
+  metric: Metric;
+  cells: TableCell[];
 };
 
 /* =========================
@@ -63,7 +77,7 @@ const ui = reactive({
 
   // compact panels
   showSelection: true,
-  showSummary: true, // ✅ Résumé pliable
+  showSummary: true,
 
   // quick tools
   q: "",
@@ -128,18 +142,23 @@ function seedSelection() {
     selectedIds.value = ids.slice(0, 2);
   }
 }
+
 function toggleSelect(id: string) {
   const sid = String(id);
   const idx = selectedIds.value.indexOf(sid);
 
+  // remove
   if (idx >= 0) {
     if (selectedIds.value.length <= 1) return;
     selectedIds.value.splice(idx, 1);
     return;
   }
+
+  // add
   if (selectedIds.value.length >= ui.capMax) return;
   selectedIds.value.push(sid);
 }
+
 function clearSelection() {
   seedSelection();
 }
@@ -165,6 +184,7 @@ watch(
     selectedIds.value = selectedIds.value.filter((id) => ids.has(String(id)));
     if (selectedIds.value.length === 0) seedSelection();
 
+    // ensure >=2 when possible
     if (selectedIds.value.length === 1) {
       const other =
         allVariants.value.map((x) => String(x.variant.id)).find((id) => id !== selectedIds.value[0]) ?? null;
@@ -193,6 +213,7 @@ const baselineId = computed(() => {
   }
   return selectedIds.value[0] ? String(selectedIds.value[0]) : null;
 });
+
 const baselinePack = computed<VariantPack | null>(() => {
   const bid = baselineId.value;
   if (!bid) return null;
@@ -352,6 +373,17 @@ const metrics = computed(() => {
   return allMetrics.value.filter((m) => m.group === ui.metricGroup);
 });
 
+/* =========================
+   ✅ SAFE METRIC VALUE (never undefined)
+========================= */
+function getMetricValue(m: Metric, pack: VariantPack): number | null {
+  const k = kpisById.value.get(String(pack.variant.id));
+  const out = m.get(k, pack);
+  if (out == null) return null; // null or undefined => null
+  const x = Number(out);
+  return Number.isFinite(x) ? x : null;
+}
+
 function bestWorstClass(metric: Metric, value: number | null, valuesAll: Array<number | null>) {
   if (value == null) return "";
   const vals = valuesAll.filter((x) => x != null) as number[];
@@ -365,32 +397,49 @@ function bestWorstClass(metric: Metric, value: number | null, valuesAll: Array<n
   return "";
 }
 
-function getMetricValue(m: Metric, pack: VariantPack) {
-  return m.get(kpisById.value.get(String(pack.variant.id)), pack);
-}
-function getDeltaText(m: Metric, pack: VariantPack) {
+/* =========================
+   TABLE ROWS (typed)
+========================= */
+const tableRows = computed<TableRow[]>(() => {
+  const packs = selectedPacks.value;
   const bid = baselineId.value;
   const bp = baselinePack.value;
-  if (!bid || !bp) return "—";
-  if (String(pack.variant.id) === String(bid)) return "—";
-  const val = n(getMetricValue(m, pack));
-  const base = n(getMetricValue(m, bp));
-  const dp = deltaPct(val, base);
-  return dp == null ? "—" : fmtPct(dp, 1);
-}
-function getDeltaClass(m: Metric, pack: VariantPack) {
-  const bid = baselineId.value;
-  const bp = baselinePack.value;
-  if (!bid || !bp) return "muted";
-  if (String(pack.variant.id) === String(bid)) return "muted";
-  const dp = deltaPct(n(getMetricValue(m, pack)), n(getMetricValue(m, bp)));
-  return deltaBadgeClass(dp);
-}
+
+  return metrics.value.map((m) => {
+    const values: Array<number | null> = packs.map((p) => getMetricValue(m, p));
+    const baseVal: number | null = bid && bp ? getMetricValue(m, bp) : null;
+
+    const cells: TableCell[] = packs.map((pack, idx) => {
+      const val: number | null = values[idx] ?? null;
+      const cls = bestWorstClass(m, val, values);
+
+      let deltaText = "—";
+      let deltaCls = "muted";
+
+      if (ui.showDelta && bid && bp && String(pack.variant.id) !== String(bid)) {
+        if (val != null && baseVal != null) {
+          const dp = deltaPct(val, baseVal);
+          deltaText = dp == null ? "—" : fmtPct(dp, 1);
+          deltaCls = deltaBadgeClass(dp);
+        }
+      }
+
+      return {
+        value: val,
+        text: m.format(val),
+        cls,
+        deltaText,
+        deltaCls,
+      };
+    });
+
+    return { metric: m, cells };
+  });
+});
 
 /* =========================
    ✅ VARIANTE OPTIMALE (compromis PV bas + EBIT haut)
    Score = z(EBIT total) - z(PV moyen / m3)
-   -> maximiser le score
 ========================= */
 function safeZ(x: number, mean: number, sd: number) {
   if (!Number.isFinite(x) || !Number.isFinite(mean) || !Number.isFinite(sd) || sd <= 0) return 0;
@@ -420,7 +469,7 @@ const optimal = computed(() => {
   const scored = rows.map((r) => {
     const zPv = safeZ(r.pv, pvMean, pvSd);
     const zEbit = safeZ(r.ebit, ebitMean, ebitSd);
-    const score = zEbit - zPv; // ✅ compromis: ebit ↑ et pv ↓
+    const score = zEbit - zPv; // compromis: ebit ↑ et pv ↓
     return { ...r, score, zPv, zEbit };
   });
 
@@ -428,9 +477,10 @@ const optimal = computed(() => {
   const best = scored[0] ?? null;
   if (!best) return null;
 
-  // “explication” compacte
-  const pvRank = [...scored].sort((a, b) => a.pv - b.pv).findIndex((x) => x.pack.variant.id === best.pack.variant.id) + 1;
-  const ebitRank = [...scored].sort((a, b) => b.ebit - a.ebit).findIndex((x) => x.pack.variant.id === best.pack.variant.id) + 1;
+  const pvRank =
+    [...scored].sort((a, b) => a.pv - b.pv).findIndex((x) => x.pack.variant.id === best.pack.variant.id) + 1;
+  const ebitRank =
+    [...scored].sort((a, b) => b.ebit - a.ebit).findIndex((x) => x.pack.variant.id === best.pack.variant.id) + 1;
 
   return {
     pack: best.pack,
@@ -454,7 +504,9 @@ const optimal = computed(() => {
           <div class="h">Comparateur</div>
           <div class="sub muted">
             {{ selectedPacks.length }} variante(s) • Base:
-            <b v-if="baselineId">{{ vTitle(allVariants.find((x) => String(x.variant.id) === String(baselineId))?.variant) }}</b>
+            <b v-if="baselineId">
+              {{ vTitle(allVariants.find((x) => String(x.variant.id) === String(baselineId))?.variant) }}
+            </b>
             <span v-else>—</span>
           </div>
         </div>
@@ -501,9 +553,7 @@ const optimal = computed(() => {
           <div class="card-title">Variante optimale (compromis PV bas + EBIT haut)</div>
           <span class="pill pill-blue">Auto</span>
         </div>
-        <div class="muted">
-          score = z(EBIT) - z(PV)
-        </div>
+        <div class="muted">score = z(EBIT) - z(PV)</div>
       </div>
 
       <div class="opt-body">
@@ -567,7 +617,6 @@ const optimal = computed(() => {
               <button v-if="ui.q" class="s-clear" @click="ui.q = ''" title="Effacer">×</button>
             </div>
 
-            <!-- ✅ bouton résumé = toggle -->
             <button class="btn ghost" @click="ui.showSummary = !ui.showSummary" title="Afficher/masquer résumé">
               <AdjustmentsHorizontalIcon class="btn-ico" />
               Résumé
@@ -602,7 +651,7 @@ const optimal = computed(() => {
         </div>
       </div>
 
-      <!-- ✅ Résumé PLIABLE (header cliquable) -->
+      <!-- Résumé (pliable) -->
       <div v-if="selectedPacks.length" class="card">
         <div class="card-head small" @click="ui.showSummary = !ui.showSummary" role="button" tabindex="0">
           <div class="ch-left">
@@ -641,9 +690,7 @@ const optimal = computed(() => {
               </div>
             </div>
 
-            <div class="s-foot muted">
-              {{ pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(pack.contract) }}
-            </div>
+            <div class="s-foot muted">{{ pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(pack.contract) }}</div>
           </div>
         </div>
       </div>
@@ -673,39 +720,26 @@ const optimal = computed(() => {
                   <span class="th-name">{{ vTitle(pack.variant) }}</span>
                   <span v-if="String(pack.variant.id) === String(baselineId ?? '')" class="tag tag-base">Base</span>
                 </div>
-                <div class="th-sub muted">
-                  {{ pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(pack.contract) }}
-                </div>
+                <div class="th-sub muted">{{ pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(pack.contract) }}</div>
               </th>
             </tr>
           </thead>
 
           <tbody>
-            <tr v-for="m in metrics" :key="m.key">
+            <tr v-for="row in tableRows" :key="row.metric.key">
               <td class="td-kpi">
                 <div class="kpi-label">
-                  <div class="kpi-main">{{ m.label }}</div>
-                  <div v-if="m.unitHint" class="kpi-unit muted">{{ m.unitHint }}</div>
+                  <div class="kpi-main">{{ row.metric.label }}</div>
+                  <div v-if="row.metric.unitHint" class="kpi-unit muted">{{ row.metric.unitHint }}</div>
                 </div>
               </td>
 
-              <td v-for="pack in selectedPacks" :key="String(pack.variant.id) + m.key" class="td-val">
-                <div
-                  class="val-box"
-                  :class="bestWorstClass(m, getMetricValue(m, pack), selectedPacks.map((p) => getMetricValue(m, p)))"
-                >
-                  <div class="val-main">
-                    {{ m.format(getMetricValue(m, pack)) }}
-                  </div>
+              <td v-for="(cell, i) in row.cells" :key="String(i) + row.metric.key" class="td-val">
+                <div class="val-box" :class="cell.cls">
+                  <div class="val-main">{{ cell.text }}</div>
 
-                  <div v-if="ui.showDelta && baselineId && baselinePack" class="val-sub">
-                    <span
-                      v-if="String(pack.variant.id) !== String(baselineId)"
-                      :class="['delta', getDeltaClass(m, pack)]"
-                    >
-                      {{ getDeltaText(m, pack) }}
-                    </span>
-                    <span v-else class="muted">Δ —</span>
+                  <div v-if="ui.showDelta" class="val-sub">
+                    <span :class="['delta', cell.deltaCls]">{{ cell.deltaText }}</span>
                   </div>
                 </div>
               </td>
@@ -713,9 +747,7 @@ const optimal = computed(() => {
           </tbody>
         </table>
 
-        <div class="table-foot muted">
-          Astuce: “Essentiel” = lecture rapide. “Avancé” = détails (moins de scroll).
-        </div>
+        <div class="table-foot muted">Astuce: “Essentiel” = lecture rapide. “Avancé” = détails (moins de scroll).</div>
       </div>
     </div>
   </div>
@@ -735,8 +767,13 @@ const optimal = computed(() => {
   --bg: #ffffff;
   --soft: #f8fafc;
 }
-.muted { color: var(--muted); }
-.dot { color: #cbd5e1; margin: 0 6px; }
+.muted {
+  color: var(--muted);
+}
+.dot {
+  color: #cbd5e1;
+  margin: 0 6px;
+}
 
 .card {
   background: var(--bg);
@@ -755,15 +792,26 @@ const optimal = computed(() => {
   border-bottom: 1px solid #eef2f7;
   user-select: none;
 }
-.card-head.small { padding: 8px 12px; }
+.card-head.small {
+  padding: 8px 12px;
+}
 
 .card-title {
   font-weight: 900;
   color: var(--txt);
   font-size: 13px;
 }
-.ch-left { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.chev { width: 16px; height: 16px; color: #334155; }
+.ch-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chev {
+  width: 16px;
+  height: 16px;
+  color: #334155;
+}
 
 /* =========================
    TOP BAR (less height)
@@ -785,9 +833,21 @@ const optimal = computed(() => {
   gap: 10px;
   min-width: 240px;
 }
-.ico { width: 18px; height: 18px; color: #334155; }
-.ttext .h { font-weight: 950; color: var(--txt); font-size: 14px; line-height: 1.1; }
-.ttext .sub { font-size: 12px; margin-top: 2px; }
+.ico {
+  width: 18px;
+  height: 18px;
+  color: #334155;
+}
+.ttext .h {
+  font-weight: 950;
+  color: var(--txt);
+  font-size: 14px;
+  line-height: 1.1;
+}
+.ttext .sub {
+  font-size: 12px;
+  margin-top: 2px;
+}
 
 .tools {
   display: flex;
@@ -809,9 +869,17 @@ const optimal = computed(() => {
   font-weight: 800;
   cursor: pointer;
 }
-.btn.ghost { background: var(--soft); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-ico { width: 16px; height: 16px; }
+.btn.ghost {
+  background: var(--soft);
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.btn-ico {
+  width: 16px;
+  height: 16px;
+}
 
 .toggle {
   display: inline-flex;
@@ -824,7 +892,9 @@ const optimal = computed(() => {
   border-radius: 10px;
   padding: 7px 10px;
 }
-.toggle input { transform: translateY(1px); }
+.toggle input {
+  transform: translateY(1px);
+}
 
 .select {
   border: 1px solid var(--b);
@@ -847,31 +917,81 @@ const optimal = computed(() => {
   border: 1px solid;
   background: #fff;
 }
-.alert-ico { width: 18px; height: 18px; margin-top: 1px; }
-.alert-text { font-size: 12.5px; color: var(--txt); font-weight: 800; }
-.alert-err { border-color: #fecaca; background: #fef2f2; }
-.alert-err .alert-ico { color: #dc2626; }
-.alert-info { border-color: #bfdbfe; background: #eff6ff; }
-.alert-info .alert-ico { color: #2563eb; }
-.spin { animation: spin 0.9s linear infinite; }
-@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+.alert-ico {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+.alert-text {
+  font-size: 12.5px;
+  color: var(--txt);
+  font-weight: 800;
+}
+.alert-err {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.alert-err .alert-ico {
+  color: #dc2626;
+}
+.alert-info {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.alert-info .alert-ico {
+  color: #2563eb;
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  from {
+    transform: rotate(0);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 /* =========================
    OPT CARD
 ========================= */
-.opt-card { border-color: #bfdbfe; }
-.spark { width: 16px; height: 16px; color: #2563eb; }
-.opt-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
-.opt-main { display: flex; flex-direction: column; gap: 2px; }
-.opt-name { font-weight: 950; color: var(--txt); font-size: 14px; }
-.opt-sub { font-size: 12px; }
+.opt-card {
+  border-color: #bfdbfe;
+}
+.spark {
+  width: 16px;
+  height: 16px;
+  color: #2563eb;
+}
+.opt-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.opt-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.opt-name {
+  font-weight: 950;
+  color: var(--txt);
+  font-size: 14px;
+}
+.opt-sub {
+  font-size: 12px;
+}
 .opt-kpis {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 @media (max-width: 980px) {
-  .opt-kpis { grid-template-columns: 1fr; }
+  .opt-kpis {
+    grid-template-columns: 1fr;
+  }
 }
 .okpi {
   border: 1px solid #eef2f7;
@@ -879,11 +999,28 @@ const optimal = computed(() => {
   border-radius: 12px;
   padding: 8px;
 }
-.okpi .k { font-size: 10.5px; color: var(--muted); font-weight: 900; margin-bottom: 3px; }
-.okpi .v { font-size: 12.5px; color: var(--txt); font-weight: 950; }
-.okpi .r { font-size: 11px; margin-top: 2px; }
-.okpi.score { border-color: #93c5fd; background: #eff6ff; }
-.opt-note { font-size: 12px; }
+.okpi .k {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-weight: 900;
+  margin-bottom: 3px;
+}
+.okpi .v {
+  font-size: 12.5px;
+  color: var(--txt);
+  font-weight: 950;
+}
+.okpi .r {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.okpi.score {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+.opt-note {
+  font-size: 12px;
+}
 
 /* =========================
    PANELS
@@ -913,10 +1050,22 @@ const optimal = computed(() => {
   color: var(--txt);
   font-weight: 800;
 }
-.chip-x { display: inline-flex; border: 0; background: transparent; padding: 0; cursor: pointer; }
-.chip-x-ico { width: 14px; height: 14px; color: var(--muted); }
+.chip-x {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.chip-x-ico {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
 
-.card-body { padding: 10px 12px; }
+.card-body {
+  padding: 10px 12px;
+}
 
 /* search row */
 .search {
@@ -937,9 +1086,27 @@ const optimal = computed(() => {
   min-width: 260px;
   flex: 1;
 }
-.s-ico { width: 16px; height: 16px; color: var(--muted); }
-.s-in { border: 0; outline: none; font-size: 12.5px; width: 100%; color: var(--txt); }
-.s-clear { border: 0; background: transparent; cursor: pointer; font-size: 18px; line-height: 1; color: var(--muted); padding: 0 4px; }
+.s-ico {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+.s-in {
+  border: 0;
+  outline: none;
+  font-size: 12.5px;
+  width: 100%;
+  color: var(--txt);
+}
+.s-clear {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 0 4px;
+}
 
 /* internal scroll => less page scroll */
 .selector-scroll {
@@ -951,7 +1118,9 @@ const optimal = computed(() => {
   padding-right: 4px;
 }
 @media (max-width: 980px) {
-  .selector-scroll { grid-template-columns: 1fr; }
+  .selector-scroll {
+    grid-template-columns: 1fr;
+  }
 }
 
 .select-item {
@@ -963,15 +1132,40 @@ const optimal = computed(() => {
   cursor: pointer;
   transition: transform 0.04s ease, border-color 0.12s ease, background 0.12s ease;
 }
-.select-item:hover { transform: translateY(-1px); border-color: #cbd5e1; }
-.select-item.on { border-color: #2563eb; background: #eff6ff; }
-.select-item.active { box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18); }
-.select-item.locked { opacity: 0.6; }
-.select-item:disabled { cursor: not-allowed; }
+.select-item:hover {
+  transform: translateY(-1px);
+  border-color: #cbd5e1;
+}
+.select-item.on {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.select-item.active {
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
+}
+.select-item.locked {
+  opacity: 0.6;
+}
+.select-item:disabled {
+  cursor: not-allowed;
+}
 
-.si-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.si-name { font-weight: 950; color: var(--txt); font-size: 12.5px; }
-.si-ok { width: 18px; height: 18px; color: #2563eb; }
+.si-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.si-name {
+  font-weight: 950;
+  color: var(--txt);
+  font-size: 12.5px;
+}
+.si-ok {
+  width: 18px;
+  height: 18px;
+  color: #2563eb;
+}
 .si-meta {
   margin-top: 5px;
   font-size: 11.5px;
@@ -998,13 +1192,44 @@ const optimal = computed(() => {
   padding: 10px;
   flex: 0 0 auto;
 }
-.s-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.s-title { font-weight: 950; color: var(--txt); font-size: 13px; }
-.s-grid { margin-top: 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.kv { border: 1px solid #eef2f7; background: #fff; border-radius: 10px; padding: 8px; }
-.k { font-size: 10.5px; color: var(--muted); font-weight: 900; margin-bottom: 3px; }
-.v { font-size: 12px; color: var(--txt); font-weight: 950; }
-.s-foot { margin-top: 8px; font-size: 11.5px; }
+.s-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.s-title {
+  font-weight: 950;
+  color: var(--txt);
+  font-size: 13px;
+}
+.s-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.kv {
+  border: 1px solid #eef2f7;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px;
+}
+.k {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-weight: 900;
+  margin-bottom: 3px;
+}
+.v {
+  font-size: 12px;
+  color: var(--txt);
+  font-weight: 950;
+}
+.s-foot {
+  margin-top: 8px;
+  font-size: 11.5px;
+}
 
 /* pills + tags */
 .pill {
@@ -1017,10 +1242,26 @@ const optimal = computed(() => {
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.pill-green { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
-.pill-red { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
-.pill-blue { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-.pill-gray { background: #f8fafc; color: #334155; border-color: var(--b); }
+.pill-green {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+.pill-red {
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+.pill-blue {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+.pill-gray {
+  background: #f8fafc;
+  color: #334155;
+  border-color: var(--b);
+}
 
 .tag {
   display: inline-flex;
@@ -1033,13 +1274,21 @@ const optimal = computed(() => {
   background: #fff;
   color: var(--txt);
 }
-.tag-base { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+.tag-base {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
 
 /* =========================
    TABLE
 ========================= */
-.table-card { overflow: visible; } /* ✅ sticky works */
-.table-wrap { padding: 10px 12px 12px; }
+.table-card {
+  overflow: visible;
+}
+.table-wrap {
+  padding: 10px 12px 12px;
+}
 
 .cmp-table {
   width: 100%;
@@ -1050,7 +1299,7 @@ const optimal = computed(() => {
   color: var(--txt);
 }
 
-/* ✅ Sticky header collé au HeaderDashboard (ton réglage OK) */
+/* ✅ Sticky header */
 .cmp-table thead th {
   position: sticky;
   top: -14px;
@@ -1069,18 +1318,47 @@ const optimal = computed(() => {
   padding: 9px 10px;
   font-weight: 950;
 }
-.th-var { text-align: left; padding: 9px 10px; }
-.th-var-title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.th-name { font-weight: 950; }
-.th-sub { margin-top: 2px; font-size: 11px; }
+.th-var {
+  text-align: left;
+  padding: 9px 10px;
+}
+.th-var-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.th-name {
+  font-weight: 950;
+}
+.th-sub {
+  margin-top: 2px;
+  font-size: 11px;
+}
 
-tbody tr td { border-bottom: 1px solid #f1f5f9; }
-.td-kpi { padding: 9px 10px; vertical-align: middle; }
-.td-val { padding: 7px 10px; vertical-align: middle; }
+tbody tr td {
+  border-bottom: 1px solid #f1f5f9;
+}
+.td-kpi {
+  padding: 9px 10px;
+  vertical-align: middle;
+}
+.td-val {
+  padding: 7px 10px;
+  vertical-align: middle;
+}
 
-.kpi-label { display: flex; flex-direction: column; gap: 2px; }
-.kpi-main { font-weight: 950; }
-.kpi-unit { font-size: 11px; }
+.kpi-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kpi-main {
+  font-weight: 950;
+}
+.kpi-unit {
+  font-size: 11px;
+}
 
 .val-box {
   border: 1px solid #eef2f7;
@@ -1093,16 +1371,38 @@ tbody tr td { border-bottom: 1px solid #f1f5f9; }
   min-height: 42px;
   justify-content: center;
 }
-.val-main { font-weight: 950; font-size: 12.5px; }
-.val-sub { font-size: 11px; }
+.val-main {
+  font-weight: 950;
+  font-size: 12.5px;
+}
+.val-sub {
+  font-size: 11px;
+}
 
-.delta { font-weight: 950; }
-.delta.pos { color: #166534; }
-.delta.neg { color: #991b1b; }
-.delta.muted { color: var(--muted); }
+.delta {
+  font-weight: 950;
+}
+.delta.pos {
+  color: #166534;
+}
+.delta.neg {
+  color: #991b1b;
+}
+.delta.muted {
+  color: var(--muted);
+}
 
-.best { border-color: #86efac; background: #f0fdf4; }
-.worst { border-color: #fecaca; background: #fef2f2; }
+.best {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+.worst {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
 
-.table-foot { margin-top: 8px; font-size: 12px; }
+.table-foot {
+  margin-top: 8px;
+  font-size: 12px;
+}
 </style>
