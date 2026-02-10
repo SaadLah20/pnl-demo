@@ -4,11 +4,14 @@ import cors from "cors";
 import { prisma } from "./db";
 import { getPnls } from "./pnl.repo";
 import { Prisma } from "@prisma/client";
+import { registerDevisRoutes } from "./devis.routes";
+
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+registerDevisRoutes(app);
 
 // Root
 app.get("/", (_req: Request, res: Response) => {

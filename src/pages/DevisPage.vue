@@ -4,7 +4,12 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } 
 import { usePnlStore } from "@/stores/pnl.store";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
-import { InformationCircleIcon, ArrowPathIcon, CheckBadgeIcon } from "@heroicons/vue/24/outline";
+import {
+  InformationCircleIcon,
+  ArrowPathIcon,
+  CheckBadgeIcon,
+  ArrowDownTrayIcon,
+} from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
 
@@ -12,7 +17,7 @@ type Tab = "SURCHARGES" | "CONTENU";
 const activeTab = ref<Tab>("SURCHARGES");
 
 const loading = ref(false);
-const busy = reactive({ reload: false, save: false, apply: false });
+const busy = reactive({ reload: false, save: false, apply: false, export: false });
 const error = ref<string | null>(null);
 
 function n(x: any): number {
@@ -198,11 +203,6 @@ function normalizeChargeSide(v: any): "CLIENT" | "LHM" | null {
   return null;
 }
 
-/**
- * Règle demandée:
- * - Phrase groupée "Transport et installation ... centrale" si les 3 éléments sont à la même charge
- * - Sinon split en 3 phrases et répartir selon (contract.transport / contract.installation / contract.cab)
- */
 function buildCentralTransportInstallItems() {
   const c = contract.value ?? {};
 
@@ -218,7 +218,6 @@ function buildCentralTransportInstallItems() {
   const pInstall: LineItem = { label: "Installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;" };
   const pCab: LineItem = { label: "Mise à disposition d’une centrale à béton de capacité de malaxeur de 2m3;" };
 
-  // si les 3 côtés sont explicitement identiques
   if (sideTransport && sideInstall && sideCab && sideTransport === sideInstall && sideInstall === sideCab) {
     return {
       lhm: sideTransport === "LHM" ? [groupPhrase] : [],
@@ -227,7 +226,6 @@ function buildCentralTransportInstallItems() {
     };
   }
 
-  // sinon: distribution fine (fallback = LHM si null)
   const lhm: LineItem[] = [];
   const client: LineItem[] = [];
 
@@ -245,11 +243,7 @@ function buildCentralTransportInstallItems() {
 }
 
 function buildStandardCharges() {
-  const c = contract.value ?? {};
-
-  // Articles "fournisseur" (LHM) par défaut (SANS la phrase groupée transport+installation+centrale)
   const lhmStandard: LineItem[] = [
-    // transport/install/cab => gérés par buildCentralTransportInstallItems()
     { label: "Travaux de génie civil de la centrale à béton et ses annexes (bassins de décantation, casiers, clôture…)" },
     { label: "Fourniture des matières premières nécessaires à la fabrication des bétons ;" },
     { label: "Consommation d’électricité pour les besoins des centrales à béton ;" },
@@ -275,80 +269,8 @@ function buildStandardCharges() {
     { label: "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP." },
   ];
 
-  // inject transport/install/cab distribution
   const central = buildCentralTransportInstallItems();
-  let lhm = [...central.lhm, ...lhmStandard];
-  let client = [...clientStandard, ...central.client];
-
-  // Switch logic: terrain, genieCivil, matierePremiere, maintenance, chargeuse, branchements, conso
-  const switches: Array<{
-    field: string;
-    clientItemMatch: (it: LineItem) => boolean;
-    lhmItemMatch: (it: LineItem) => boolean;
-  }> = [
-    {
-      field: "terrain",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("mise à disposition d’un terrain"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("mise à disposition d’un terrain"),
-    },
-    {
-      field: "genieCivil",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("travaux de génie civil"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("travaux de génie civil"),
-    },
-    {
-      field: "matierePremiere",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("fourniture des matières premières"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("fourniture des matières premières"),
-    },
-    {
-      field: "maintenance",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("maintenance"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("maintenance"),
-    },
-    {
-      field: "chargeuse",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("mise à disposition d’une chargeuse"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("mise à disposition d’une chargeuse"),
-    },
-    {
-      field: "branchementEau",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("branchement en eau"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("branchement en eau"),
-    },
-    {
-      field: "consoEau",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("consommation d’eau"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("consommation d’eau"),
-    },
-    {
-      field: "branchementElec",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("electricité") && it.label.toLowerCase().includes("branchement"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("electricité") && it.label.toLowerCase().includes("branchement"),
-    },
-    {
-      field: "consoElec",
-      clientItemMatch: (it) => it.label.toLowerCase().includes("consommation d’électricité"),
-      lhmItemMatch: (it) => it.label.toLowerCase().includes("consommation d’électricité"),
-    },
-  ];
-
-  for (const sw of switches) {
-    const side = normalizeChargeSide((c as any)?.[sw.field]);
-    if (!side) continue;
-
-    if (side === "CLIENT") {
-      const moved = lhm.filter(sw.lhmItemMatch);
-      lhm = lhm.filter((it) => !sw.lhmItemMatch(it));
-      for (const it of moved) if (!client.some((x) => x.label === it.label)) client.push(it);
-    } else {
-      const moved = client.filter(sw.clientItemMatch);
-      client = client.filter((it) => !sw.clientItemMatch(it));
-      for (const it of moved) if (!lhm.some((x) => x.label === it.label)) lhm.push(it);
-    }
-  }
-
-  return { lhm, client };
+  return { lhm: [...central.lhm, ...lhmStandard], client: [...clientStandard, ...central.client] };
 }
 
 function buildDefaultPrixComplementaires(): PriceExtra[] {
@@ -357,7 +279,6 @@ function buildDefaultPrixComplementaires(): PriceExtra[] {
     { label: "Ouverture de centrale en dehors des horaires de travail (Poste de nuit, Jour férié & Dimanche)", unit: "DH HT / poste", value: n((c as any)?.sundayPrice) || 5000 },
     { label: "Mise à disposition de la centrale à béton et son personnel d’exploitation au-delà de la durée contractuelle", unit: "DH HT / mois", value: 150000 },
   ];
-
   const chillerRent = n((c as any)?.chillerRent);
   if (chillerRent > 0) {
     extras.push({
@@ -367,7 +288,6 @@ function buildDefaultPrixComplementaires(): PriceExtra[] {
       value: chillerRent,
     });
   }
-
   const delayPenalty = n((c as any)?.delayPenalty);
   if (delayPenalty > 0) {
     extras.push({
@@ -376,7 +296,6 @@ function buildDefaultPrixComplementaires(): PriceExtra[] {
       value: delayPenalty,
     });
   }
-
   return extras;
 }
 
@@ -394,24 +313,19 @@ function loadPersistedAll() {
     } catch {}
   }
 
-  // content
   const vDevis = v?.devis ?? null;
-
   const persistedMeta = safeParseJson((vDevis as any)?.meta, {});
   const persistedRappel = safeParseJson((vDevis as any)?.rappel, {});
   const persistedSignature = safeParseJson((vDevis as any)?.signature, {});
 
   const { lhm, client } = buildStandardCharges();
 
-  // ✅ titreProjet = pnl.title (pas model/type)
   const pnlTitle = String(pnl.value?.title ?? "").trim();
-
   content.meta.ville = String(persistedMeta?.ville ?? pnl.value?.city ?? "");
   content.meta.date = String(persistedMeta?.date ?? todayISO());
   content.meta.client = String(persistedMeta?.client ?? pnl.value?.client ?? "");
   content.meta.titreProjet = String(persistedMeta?.titreProjet ?? pnlTitle);
 
-  // ✅ intro: utilise le TITRE PnL
   content.intro =
     typeof (vDevis as any)?.intro === "string" && String((vDevis as any).intro).trim().length
       ? String((vDevis as any).intro)
@@ -419,17 +333,19 @@ function loadPersistedAll() {
 
   content.rappel.quantiteM3 = n(persistedRappel?.quantiteM3) || quantiteProjetM3.value;
   content.rappel.dureeMois = n(persistedRappel?.dureeMois) || dureeMois.value;
-
   content.rappel.demarrage = String(persistedRappel?.demarrage ?? formatDateFr(pnl.value?.startDate) ?? "");
   content.rappel.lieu = String(persistedRappel?.lieu ?? pnl.value?.city ?? "");
 
-  content.chargeFournisseur = normalizeLineItems((vDevis as any)?.chargeFournisseur, lhm);
-  content.chargeClient = normalizeLineItems((vDevis as any)?.chargeClient, client);
-
-  content.prixComplementaires = normalizePriceExtras((vDevis as any)?.prixComplementaires, buildDefaultPrixComplementaires());
+  content.chargeFournisseur = normalizeLineItems(safeParseJson((vDevis as any)?.chargeFournisseur, null), lhm);
+  content.chargeClient = normalizeLineItems(safeParseJson((vDevis as any)?.chargeClient, null), client);
+  content.prixComplementaires = normalizePriceExtras(
+    safeParseJson((vDevis as any)?.prixComplementaires, null),
+    buildDefaultPrixComplementaires()
+  );
 
   const q = content.rappel.quantiteM3;
   const d = content.rappel.dureeMois;
+
   content.dureeQuantiteTexte =
     typeof (vDevis as any)?.dureeQuantiteTexte === "string" && String((vDevis as any).dureeQuantiteTexte).trim().length
       ? String((vDevis as any).dureeQuantiteTexte)
@@ -440,7 +356,6 @@ function loadPersistedAll() {
       ? String((vDevis as any).validiteTexte)
       : "Offre valable pour une durée d’un mois à partir de sa date d’envoi.";
 
-  // ✅ signature defaults demandé
   content.signature.nom = String(persistedSignature?.nom ?? "Saad LAHLIMI");
   content.signature.poste = String(persistedSignature?.poste ?? "Commercial P&L");
   content.signature.telephone = String(persistedSignature?.telephone ?? "+212701888888");
@@ -571,15 +486,15 @@ async function saveDevis() {
     await (store as any).saveDevis(String(v.id), {
       surcharges: { ...draft.surcharges },
 
-      meta: JSON.stringify({ ...content.meta }),
+      meta: { ...content.meta },
       intro: String(content.intro ?? ""),
-      rappel: JSON.stringify({ ...content.rappel }),
-      chargeFournisseur: JSON.stringify(content.chargeFournisseur ?? []),
-      chargeClient: JSON.stringify(content.chargeClient ?? []),
-      prixComplementaires: JSON.stringify(content.prixComplementaires ?? []),
+      rappel: { ...content.rappel },
+      chargeFournisseur: content.chargeFournisseur ?? [],
+      chargeClient: content.chargeClient ?? [],
+      prixComplementaires: content.prixComplementaires ?? [],
       dureeQuantiteTexte: String(content.dureeQuantiteTexte ?? ""),
       validiteTexte: String(content.validiteTexte ?? ""),
-      signature: JSON.stringify({ ...content.signature }),
+      signature: { ...content.signature },
     });
 
     await (store as any).loadPnls();
@@ -587,6 +502,21 @@ async function saveDevis() {
     error.value = e?.message ?? String(e);
   } finally {
     busy.save = false;
+  }
+}
+
+async function exportWord() {
+  const v = variant.value;
+  if (!v?.id) return;
+
+  busy.export = true;
+  error.value = null;
+  try {
+    await (store as any).exportDevisWord(String(v.id));
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    busy.export = false;
   }
 }
 
@@ -661,6 +591,11 @@ function removeExtra(idx: number) {
 
         <button class="btn" @click="applyToDashboard" :disabled="busy.apply" v-if="activeTab === 'SURCHARGES'">
           Appliquer au dashboard
+        </button>
+
+        <button class="btn" @click="exportWord" :disabled="busy.export || !variant?.id" title="Exporter en Word">
+          <ArrowDownTrayIcon class="actIc" />
+          {{ busy.export ? "Export..." : "Exporter Word" }}
         </button>
 
         <button class="btn primary" @click="saveDevis" :disabled="busy.save || !variant?.id">

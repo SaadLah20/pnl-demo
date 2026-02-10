@@ -1,20 +1,23 @@
-<!-- ✅ src/pages/ComparateurVariantesPage.vue (FICHIER COMPLET / VERSION COMPACTE + Résumé pliable + Variante optimale) -->
+<!-- ✅ src/pages/ComparateurVariantesPage.vue (FICHIER COMPLET)
+     Refonte: +compact, +lisible, cohérent avec tes autres pages (même “family” UI)
+     ✅ Réintègre "Variante optimale"
+     ✅ Fix débordement EBIT: aucune valeur ne déborde (ellipsis + min-width:0 partout)
+     ✅ MOMD = KPI POSITIF => better: "higher"
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
-// Heroicons
 import {
   ArrowsRightLeftIcon,
   ArrowPathIcon,
-  CheckCircleIcon,
   ExclamationTriangleIcon,
-  XMarkIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   MagnifyingGlassIcon,
-  AdjustmentsHorizontalIcon,
+  CheckCircleIcon,
+  XMarkIcon,
   SparklesIcon,
 } from "@heroicons/vue/24/outline";
 
@@ -29,7 +32,6 @@ onMounted(async () => {
   try {
     loading.value = true;
     error.value = null;
-
     if ((store as any).pnls?.length === 0) await (store as any).loadPnls();
     seedSelection();
   } catch (e: any) {
@@ -49,43 +51,25 @@ type Metric = {
   label: string;
   unitHint?: string;
   group: "Essentiel" | "Avancé";
-  better?: "higher" | "lower";
+  better: "higher" | "lower";
   get: (k: any, pack: VariantPack) => number | null;
   format: (v: number | null) => string;
 };
 
-type TableCell = {
-  value: number | null;
-  text: string;
-  cls: string;
-  deltaText: string;
-  deltaCls: string;
-};
-
-type TableRow = {
-  metric: Metric;
-  cells: TableCell[];
-};
-
 /* =========================
-   UI (compact + less scroll)
+   UI
 ========================= */
 const ui = reactive({
   capMax: 4,
   showDelta: true,
   baselineMode: "first" as "first" | "active",
-
-  // compact panels
-  showSelection: true,
-  showSummary: true,
-
-  // quick tools
-  q: "",
   metricGroup: "Essentiel" as "Essentiel" | "Avancé" | "Tout",
+  q: "",
+  showSelection: true,
 });
 
 /* =========================
-   DATA / SOURCE
+   DATA / HELPERS
 ========================= */
 const activePnl = computed(() => (store as any).activePnl ?? null);
 const activeVariantId = computed(() => (store as any).activeVariantId ?? null);
@@ -147,19 +131,16 @@ function toggleSelect(id: string) {
   const sid = String(id);
   const idx = selectedIds.value.indexOf(sid);
 
-  // remove
   if (idx >= 0) {
     if (selectedIds.value.length <= 1) return;
     selectedIds.value.splice(idx, 1);
     return;
   }
-
-  // add
   if (selectedIds.value.length >= ui.capMax) return;
   selectedIds.value.push(sid);
 }
 
-function clearSelection() {
+function resetSelection() {
   seedSelection();
 }
 
@@ -184,7 +165,6 @@ watch(
     selectedIds.value = selectedIds.value.filter((id) => ids.has(String(id)));
     if (selectedIds.value.length === 0) seedSelection();
 
-    // ensure >=2 when possible
     if (selectedIds.value.length === 1) {
       const other =
         allVariants.value.map((x) => String(x.variant.id)).find((id) => id !== selectedIds.value[0]) ?? null;
@@ -213,23 +193,11 @@ const baselineId = computed(() => {
   }
   return selectedIds.value[0] ? String(selectedIds.value[0]) : null;
 });
-
 const baselinePack = computed<VariantPack | null>(() => {
   const bid = baselineId.value;
   if (!bid) return null;
   return selectedPacks.value.find((x) => String(x.variant.id) === String(bid)) ?? null;
 });
-
-function deltaPct(val: number, base: number) {
-  if (!Number.isFinite(val) || !Number.isFinite(base) || base === 0) return null;
-  return ((val - base) / Math.abs(base)) * 100;
-}
-function deltaBadgeClass(dp: number | null) {
-  if (dp == null) return "muted";
-  if (dp > 0.0001) return "pos";
-  if (dp < -0.0001) return "neg";
-  return "muted";
-}
 
 function statusPillClass(status: string) {
   const s = String(status ?? "").toUpperCase();
@@ -239,8 +207,19 @@ function statusPillClass(status: string) {
   return "pill pill-gray";
 }
 
+function deltaPct(val: number, base: number) {
+  if (!Number.isFinite(val) || !Number.isFinite(base) || base === 0) return null;
+  return ((val - base) / Math.abs(base)) * 100;
+}
+function deltaClass(dp: number | null) {
+  if (dp == null) return "muted";
+  if (dp > 0.0001) return "pos";
+  if (dp < -0.0001) return "neg";
+  return "muted";
+}
+
 /* =========================
-   METRICS
+   METRICS (✅ MOMD positif)
 ========================= */
 const allMetrics = computed<Metric[]>(() => [
   // Essentiel
@@ -249,9 +228,9 @@ const allMetrics = computed<Metric[]>(() => [
     label: "PV moyen",
     unitHint: "MAD/m³",
     group: "Essentiel",
-    better: "higher",
-    get: (k) => n(k?.prixMoyenM3),
-    format: (v) => fmtMoney(v ?? 0, 2),
+    better: "lower",
+    get: (k) => (k?.prixMoyenM3 == null ? null : n(k?.prixMoyenM3)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 2)),
   },
   {
     key: "caTotal",
@@ -259,29 +238,17 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "MAD",
     group: "Essentiel",
     better: "higher",
-    get: (k) => n(k?.caTotal),
-    format: (v) => fmtMoney(v ?? 0, 0),
-  },
-  {
-    key: "caMensuel",
-    label: "CA / mois",
-    unitHint: "MAD/mois",
-    group: "Essentiel",
-    better: "higher",
-    get: (k, p) => {
-      const d = n(p.contract?.dureeMois ?? 0);
-      return d > 0 ? n(k?.caTotal) / d : 0;
-    },
-    format: (v) => fmtMoney(v ?? 0, 0),
+    get: (k) => (k?.caTotal == null ? null : n(k?.caTotal)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 0)),
   },
   {
     key: "momdMoyenM3",
     label: "MOMD",
     unitHint: "MAD/m³",
     group: "Essentiel",
-    better: "lower",
-    get: (k) => n(k?.momdMoyenM3),
-    format: (v) => fmtMoney(v ?? 0, 2),
+    better: "higher", // ✅ important
+    get: (k) => (k?.momdMoyenM3 == null ? null : n(k?.momdMoyenM3)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 2)),
   },
   {
     key: "coutMpMoyenM3",
@@ -289,8 +256,8 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "MAD/m³",
     group: "Essentiel",
     better: "lower",
-    get: (k) => n(k?.coutMpMoyenM3),
-    format: (v) => fmtMoney(v ?? 0, 2),
+    get: (k) => (k?.coutMpMoyenM3 == null ? null : n(k?.coutMpMoyenM3)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 2)),
   },
   {
     key: "ebitTotal",
@@ -298,8 +265,8 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "MAD",
     group: "Essentiel",
     better: "higher",
-    get: (k) => n(k?.ebitTotal),
-    format: (v) => fmtMoney(v ?? 0, 0),
+    get: (k) => (k?.ebitTotal == null ? null : n(k?.ebitTotal)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 0)),
   },
   {
     key: "ebitPct",
@@ -307,19 +274,19 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "%",
     group: "Essentiel",
     better: "higher",
-    get: (k) => n(k?.ebitPct),
-    format: (v) => fmtPct(v ?? 0, 1),
+    get: (k) => (k?.ebitPct == null ? null : n(k?.ebitPct)),
+    format: (v) => (v == null ? "—" : fmtPct(v, 1)),
   },
 
-  // Avancé
+  // Avancé (compact)
   {
     key: "volumeTotalM3",
     label: "Volume total",
     unitHint: "m³",
     group: "Avancé",
     better: "higher",
-    get: (k) => n(k?.volumeTotalM3),
-    format: (v) => fmtNumber(v ?? 0, 1),
+    get: (k) => (k?.volumeTotalM3 == null ? null : n(k?.volumeTotalM3)),
+    format: (v) => (v == null ? "—" : fmtNumber(v, 1)),
   },
   {
     key: "transportMoyenM3",
@@ -327,17 +294,8 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "MAD/m³",
     group: "Avancé",
     better: "lower",
-    get: (k) => n(k?.transportMoyenM3),
-    format: (v) => fmtMoney(v ?? 0, 2),
-  },
-  {
-    key: "margeBrutePct",
-    label: "Marge brute",
-    unitHint: "%",
-    group: "Avancé",
-    better: "higher",
-    get: (k) => (k?.margeBrutePct == null ? null : n(k?.margeBrutePct)),
-    format: (v) => (v == null ? "—" : fmtPct(v, 1)),
+    get: (k) => (k?.transportMoyenM3 == null ? null : n(k?.transportMoyenM3)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 2)),
   },
   {
     key: "ebitdaTotal",
@@ -345,8 +303,8 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "MAD",
     group: "Avancé",
     better: "higher",
-    get: (k) => n(k?.ebitdaTotal),
-    format: (v) => fmtMoney(v ?? 0, 0),
+    get: (k) => (k?.ebitdaTotal == null ? null : n(k?.ebitdaTotal)),
+    format: (v) => (v == null ? "—" : fmtMoney(v, 0)),
   },
   {
     key: "fraisGenerauxPct",
@@ -354,17 +312,8 @@ const allMetrics = computed<Metric[]>(() => [
     unitHint: "% CA",
     group: "Avancé",
     better: "lower",
-    get: (k) => n(k?.fraisGenerauxPct),
-    format: (v) => fmtPct(v ?? 0, 1),
-  },
-  {
-    key: "amortissementMensuel",
-    label: "Amortissement",
-    unitHint: "MAD/mois",
-    group: "Avancé",
-    better: "lower",
-    get: (k) => n(k?.amortissementMensuel),
-    format: (v) => fmtMoney(v ?? 0, 0),
+    get: (k) => (k?.fraisGenerauxPct == null ? null : n(k?.fraisGenerauxPct)),
+    format: (v) => (v == null ? "—" : fmtPct(v, 1)),
   },
 ]);
 
@@ -373,73 +322,46 @@ const metrics = computed(() => {
   return allMetrics.value.filter((m) => m.group === ui.metricGroup);
 });
 
-/* =========================
-   ✅ SAFE METRIC VALUE (never undefined)
-========================= */
 function getMetricValue(m: Metric, pack: VariantPack): number | null {
   const k = kpisById.value.get(String(pack.variant.id));
   const out = m.get(k, pack);
-  if (out == null) return null; // null or undefined => null
+  if (out == null) return null;
   const x = Number(out);
   return Number.isFinite(x) ? x : null;
 }
 
-function bestWorstClass(metric: Metric, value: number | null, valuesAll: Array<number | null>) {
-  if (value == null) return "";
+function bestWorstTag(m: Metric, v: number | null, valuesAll: Array<number | null>) {
+  if (v == null) return "";
   const vals = valuesAll.filter((x) => x != null) as number[];
-  if (!vals.length) return "";
+  if (!vals.length || vals.length === 1) return "";
   const min = Math.min(...vals);
   const max = Math.max(...vals);
-  const isBest = metric.better === "lower" ? value === min : value === max;
-  const isWorst = metric.better === "lower" ? value === max : value === min;
-  if (isBest && vals.length > 1) return "best";
-  if (isWorst && vals.length > 1) return "worst";
+
+  const isBest = m.better === "lower" ? v === min : v === max;
+  const isWorst = m.better === "lower" ? v === max : v === min;
+
+  if (isBest) return "best";
+  if (isWorst) return "worst";
   return "";
 }
 
-/* =========================
-   TABLE ROWS (typed)
-========================= */
-const tableRows = computed<TableRow[]>(() => {
-  const packs = selectedPacks.value;
+function deltaFor(m: Metric, pack: VariantPack): { text: string; cls: string } {
   const bid = baselineId.value;
   const bp = baselinePack.value;
+  if (!ui.showDelta || !bid || !bp) return { text: "—", cls: "muted" };
+  if (String(pack.variant.id) === String(bid)) return { text: "—", cls: "muted" };
 
-  return metrics.value.map((m) => {
-    const values: Array<number | null> = packs.map((p) => getMetricValue(m, p));
-    const baseVal: number | null = bid && bp ? getMetricValue(m, bp) : null;
+  const val = getMetricValue(m, pack);
+  const base = getMetricValue(m, bp);
+  if (val == null || base == null) return { text: "—", cls: "muted" };
 
-    const cells: TableCell[] = packs.map((pack, idx) => {
-      const val: number | null = values[idx] ?? null;
-      const cls = bestWorstClass(m, val, values);
-
-      let deltaText = "—";
-      let deltaCls = "muted";
-
-      if (ui.showDelta && bid && bp && String(pack.variant.id) !== String(bid)) {
-        if (val != null && baseVal != null) {
-          const dp = deltaPct(val, baseVal);
-          deltaText = dp == null ? "—" : fmtPct(dp, 1);
-          deltaCls = deltaBadgeClass(dp);
-        }
-      }
-
-      return {
-        value: val,
-        text: m.format(val),
-        cls,
-        deltaText,
-        deltaCls,
-      };
-    });
-
-    return { metric: m, cells };
-  });
-});
+  const dp = deltaPct(val, base);
+  return { text: dp == null ? "—" : fmtPct(dp, 1), cls: deltaClass(dp) };
+}
 
 /* =========================
-   ✅ VARIANTE OPTIMALE (compromis PV bas + EBIT haut)
-   Score = z(EBIT total) - z(PV moyen / m3)
+   VARIANTE OPTIMALE (compromis PV bas + EBIT haut)
+   score = z(EBIT) - z(PV)
 ========================= */
 function safeZ(x: number, mean: number, sd: number) {
   if (!Number.isFinite(x) || !Number.isFinite(mean) || !Number.isFinite(sd) || sd <= 0) return 0;
@@ -448,12 +370,12 @@ function safeZ(x: number, mean: number, sd: number) {
 
 const optimal = computed(() => {
   const packs = selectedPacks.value;
-  if (!packs.length) return null;
+  if (packs.length < 2) return null;
 
   const rows = packs.map((p) => {
     const k = kpisById.value.get(String(p.variant.id));
-    const pv = n(k?.prixMoyenM3); // plus bas = mieux (client)
-    const ebit = n(k?.ebitTotal); // plus haut = mieux (nous)
+    const pv = n(k?.prixMoyenM3); // bas = mieux
+    const ebit = n(k?.ebitTotal); // haut = mieux
     return { pack: p, pv, ebit };
   });
 
@@ -469,18 +391,20 @@ const optimal = computed(() => {
   const scored = rows.map((r) => {
     const zPv = safeZ(r.pv, pvMean, pvSd);
     const zEbit = safeZ(r.ebit, ebitMean, ebitSd);
-    const score = zEbit - zPv; // compromis: ebit ↑ et pv ↓
-    return { ...r, score, zPv, zEbit };
+    const score = zEbit - zPv;
+    return { ...r, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
-  const best = scored[0] ?? null;
+  const best = scored[0];
   if (!best) return null;
 
   const pvRank =
-    [...scored].sort((a, b) => a.pv - b.pv).findIndex((x) => x.pack.variant.id === best.pack.variant.id) + 1;
+    [...scored].sort((a, b) => a.pv - b.pv).findIndex((x) => String(x.pack.variant.id) === String(best.pack.variant.id)) +
+    1;
   const ebitRank =
-    [...scored].sort((a, b) => b.ebit - a.ebit).findIndex((x) => x.pack.variant.id === best.pack.variant.id) + 1;
+    [...scored].sort((a, b) => b.ebit - a.ebit).findIndex((x) => String(x.pack.variant.id) === String(best.pack.variant.id)) +
+    1;
 
   return {
     pack: best.pack,
@@ -492,30 +416,47 @@ const optimal = computed(() => {
     count: scored.length,
   };
 });
+
+/* =========================
+   SCORE CARDS (super compact)
+========================= */
+const cards = computed(() => {
+  return selectedPacks.value.map((p) => {
+    const k = kpisById.value.get(String(p.variant.id));
+    return {
+      pack: p,
+      status: String(k?.status ?? "—"),
+      pv: k?.prixMoyenM3 == null ? null : n(k?.prixMoyenM3),
+      momd: k?.momdMoyenM3 == null ? null : n(k?.momdMoyenM3),
+      ebit: k?.ebitTotal == null ? null : n(k?.ebitTotal),
+    };
+  });
+});
 </script>
 
 <template>
-  <div class="cmp-page">
-    <!-- ========== TOP BAR (compact) ========== -->
-    <div class="topbar">
-      <div class="title">
-        <ArrowsRightLeftIcon class="ico" />
-        <div class="ttext">
-          <div class="h">Comparateur</div>
-          <div class="sub muted">
-            {{ selectedPacks.length }} variante(s) • Base:
-            <b v-if="baselineId">
-              {{ vTitle(allVariants.find((x) => String(x.variant.id) === String(baselineId))?.variant) }}
-            </b>
-            <span v-else>—</span>
-          </div>
+  <div class="page">
+    <!-- Header (cohérent avec tes pages) -->
+    <div class="head">
+      <div class="hTitle">
+        Comparateur variantes
+        <span class="sep">•</span>
+        <span class="hRes">
+          Sélection : <b>{{ selectedPacks.length }}</b> / {{ ui.capMax }}
+        </span>
+      </div>
+
+      <div class="hSearch">
+        <div class="searchBox">
+          <MagnifyingGlassIcon class="sIc" />
+          <input v-model="ui.q" class="hInput" placeholder="Rechercher variante / contrat…" />
+          <button v-if="ui.q" class="sClear" type="button" @click="ui.q = ''" title="Effacer">×</button>
         </div>
       </div>
 
-      <div class="tools">
-        <button class="btn" :disabled="loading" @click="clearSelection" title="Reset sélection">
-          <ArrowPathIcon class="btn-ico" />
-          Reset
+      <div class="hRight">
+        <button class="btn ghost" @click="resetSelection" :disabled="loading" title="Reset sélection">
+          <ArrowPathIcon class="btnic" />
         </button>
 
         <label class="toggle" title="Afficher Δ vs base">
@@ -523,12 +464,12 @@ const optimal = computed(() => {
           <span>Δ</span>
         </label>
 
-        <select class="select" v-model="ui.baselineMode" :disabled="!activeVariantId" title="Base de comparaison">
+        <select class="sel" v-model="ui.baselineMode" :disabled="!activeVariantId" title="Base de comparaison">
           <option value="first">Base: 1ère</option>
           <option value="active">Base: active</option>
         </select>
 
-        <select class="select" v-model="ui.metricGroup" title="Groupe KPI">
+        <select class="sel" v-model="ui.metricGroup" title="Groupe KPI">
           <option value="Essentiel">KPI: Essentiel</option>
           <option value="Avancé">KPI: Avancé</option>
           <option value="Tout">KPI: Tout</option>
@@ -536,210 +477,190 @@ const optimal = computed(() => {
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-err">
-      <ExclamationTriangleIcon class="alert-ico" />
-      <div class="alert-text">{{ error }}</div>
+    <div v-if="error" class="alert error">
+      <ExclamationTriangleIcon class="aic" />
+      <div><b>Erreur :</b> {{ error }}</div>
     </div>
-    <div v-if="loading" class="alert alert-info">
-      <ArrowPathIcon class="alert-ico spin" />
-      <div class="alert-text">Chargement…</div>
-    </div>
+    <div v-if="loading" class="alert info">Chargement…</div>
 
-    <!-- ========== KPI OPTIMAL (compact, before panels) ========== -->
-    <div v-if="optimal && selectedPacks.length >= 2" class="card opt-card">
-      <div class="card-head small">
-        <div class="ch-left">
-          <SparklesIcon class="spark" />
-          <div class="card-title">Variante optimale (compromis PV bas + EBIT haut)</div>
+    <!-- ✅ Variante optimale (compact) -->
+    <div v-if="optimal" class="opt">
+      <div class="optHead">
+        <div class="optLeft">
+          <SparklesIcon class="optIc" />
+          <div class="optT">
+            <div class="optTitle">Variante optimale</div>
+            <div class="optSub">Compromis PV bas + EBIT haut (score = z(EBIT) − z(PV))</div>
+          </div>
           <span class="pill pill-blue">Auto</span>
         </div>
-        <div class="muted">score = z(EBIT) - z(PV)</div>
+
+        <div class="optScore">
+          <div class="k">Score</div>
+          <div class="v" :title="fmtNumber(optimal.score, 2)">{{ fmtNumber(optimal.score, 2) }}</div>
+        </div>
       </div>
 
-      <div class="opt-body">
-        <div class="opt-main">
-          <div class="opt-name">{{ vTitle(optimal.pack.variant) }}</div>
-          <div class="opt-sub muted">
+      <div class="optBody">
+        <div class="optMain">
+          <div class="optName ellipsis" :title="vTitle(optimal.pack.variant)">{{ vTitle(optimal.pack.variant) }}</div>
+          <div class="optMeta ellipsis" :title="cTitle(optimal.pack.contract)">
             {{ optimal.pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(optimal.pack.contract) }}
           </div>
         </div>
 
-        <div class="opt-kpis">
+        <div class="optKpis">
           <div class="okpi">
             <div class="k">PV moyen</div>
-            <div class="v">{{ fmtMoney(optimal.pv, 2) }}</div>
+            <div class="v ellipsis" :title="fmtMoney(optimal.pv, 2)">{{ fmtMoney(optimal.pv, 2) }}</div>
             <div class="r muted">rang {{ optimal.pvRank }}/{{ optimal.count }} (↓ mieux)</div>
           </div>
           <div class="okpi">
             <div class="k">EBIT total</div>
-            <div class="v">{{ fmtMoney(optimal.ebit, 0) }}</div>
+            <div class="v ellipsis" :title="fmtMoney(optimal.ebit, 0)">{{ fmtMoney(optimal.ebit, 0) }}</div>
             <div class="r muted">rang {{ optimal.ebitRank }}/{{ optimal.count }} (↑ mieux)</div>
           </div>
-          <div class="okpi score">
-            <div class="k">Score</div>
-            <div class="v">{{ fmtNumber(optimal.score, 2) }}</div>
-            <div class="r muted">maximisé</div>
-          </div>
-        </div>
-
-        <div class="opt-note muted">
-          Objectif: un prix client “satisfaisant” (PV bas) tout en gardant une rentabilité “optimale” (EBIT haut).
         </div>
       </div>
     </div>
 
-    <!-- ========== COMPACT PANELS (less scroll) ========== -->
-    <div class="panels">
-      <!-- Selection (collapsible + internal scroll) -->
-      <div class="card">
-        <div class="card-head" @click="ui.showSelection = !ui.showSelection" role="button" tabindex="0">
-          <div class="ch-left">
-            <component :is="ui.showSelection ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-            <div class="card-title">Sélection (max {{ ui.capMax }})</div>
-            <span class="pill pill-gray">{{ selectedIds.length }}/{{ ui.capMax }}</span>
+    <!-- Score cards (super compact, fix overflow) -->
+    <div v-if="selectedPacks.length" class="cards">
+      <div v-for="c in cards" :key="String(c.pack.variant.id)" class="card">
+        <div class="cardTop">
+          <div class="left">
+            <div class="line1">
+              <span class="name ellipsis" :title="vTitle(c.pack.variant)">{{ vTitle(c.pack.variant) }}</span>
+              <span v-if="String(c.pack.variant.id) === String(activeVariantId ?? '')" class="tag">Active</span>
+              <span v-if="String(c.pack.variant.id) === String(baselineId ?? '')" class="tag base">Base</span>
+            </div>
+            <div class="line2 ellipsis" :title="cTitle(c.pack.contract)">
+              {{ c.pack.contract?.dureeMois ?? 0 }} mois — {{ cTitle(c.pack.contract) }}
+            </div>
           </div>
 
-          <div class="chips">
-            <span v-for="id in selectedIds" :key="id" class="chip" @click.stop>
+          <div class="right">
+            <span class="pill" :class="statusPillClass(c.status)">{{ c.status }}</span>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="k">PV/m³</div>
+            <div class="v ellipsis" :title="c.pv == null ? '—' : fmtMoney(c.pv, 2)">{{ c.pv == null ? "—" : fmtMoney(c.pv, 2) }}</div>
+          </div>
+
+          <div class="kpi">
+            <div class="k">MOMD/m³</div>
+            <div class="v ellipsis" :title="c.momd == null ? '—' : fmtMoney(c.momd, 2)">{{ c.momd == null ? "—" : fmtMoney(c.momd, 2) }}</div>
+          </div>
+
+          <div class="kpi">
+            <div class="k">EBIT</div>
+            <!-- ✅ ici: overflow impossible (min-width:0 + ellipsis + tabular) -->
+            <div class="v num ellipsis" :title="c.ebit == null ? '—' : fmtMoney(c.ebit, 0)">{{ c.ebit == null ? "—" : fmtMoney(c.ebit, 0) }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sélection (pliable) -->
+    <div class="box">
+      <button class="boxHead" type="button" @click="ui.showSelection = !ui.showSelection">
+        <div class="bhLeft">
+          <component :is="ui.showSelection ? ChevronDownIcon : ChevronRightIcon" class="chev" />
+          <div class="bhTitle">Sélection</div>
+          <span class="pill pill-gray">{{ selectedIds.length }}/{{ ui.capMax }}</span>
+        </div>
+
+        <div class="chips" @click.stop>
+          <span v-for="id in selectedIds" :key="id" class="chip">
+            <span class="ellipsis chipTxt" :title="vTitle(allVariants.find((x) => String(x.variant.id) === String(id))?.variant)">
               {{ vTitle(allVariants.find((x) => String(x.variant.id) === String(id))?.variant) }}
-              <button class="chip-x" @click="toggleSelect(id)" title="Retirer">
-                <XMarkIcon class="chip-x-ico" />
-              </button>
             </span>
-          </div>
-        </div>
-
-        <div v-show="ui.showSelection" class="card-body">
-          <div class="search">
-            <div class="searchbox">
-              <MagnifyingGlassIcon class="s-ico" />
-              <input v-model="ui.q" class="s-in" placeholder="Rechercher variante / contrat…" />
-              <button v-if="ui.q" class="s-clear" @click="ui.q = ''" title="Effacer">×</button>
-            </div>
-
-            <button class="btn ghost" @click="ui.showSummary = !ui.showSummary" title="Afficher/masquer résumé">
-              <AdjustmentsHorizontalIcon class="btn-ico" />
-              Résumé
+            <button class="chipX" type="button" @click="toggleSelect(id)" title="Retirer">
+              <XMarkIcon class="chipXIc" />
             </button>
-          </div>
-
-          <div class="selector-scroll">
-            <button
-              v-for="pack in filteredVariants"
-              :key="pack.variant.id"
-              class="select-item"
-              :class="{
-                on: selectedIds.includes(String(pack.variant.id)),
-                locked: !selectedIds.includes(String(pack.variant.id)) && selectedIds.length >= ui.capMax,
-                active: String(pack.variant.id) === String(activeVariantId ?? ''),
-              }"
-              @click="toggleSelect(pack.variant.id)"
-              :disabled="!selectedIds.includes(String(pack.variant.id)) && selectedIds.length >= ui.capMax"
-            >
-              <div class="si-top">
-                <div class="si-name">{{ vTitle(pack.variant) }}</div>
-                <CheckCircleIcon v-if="selectedIds.includes(String(pack.variant.id))" class="si-ok" />
-              </div>
-              <div class="si-meta">
-                <span class="muted">{{ cTitle(pack.contract) }}</span>
-                <span class="dot">•</span>
-                <span class="muted">{{ pack.contract?.dureeMois ?? 0 }} mois</span>
-                <span v-if="String(pack.variant.id) === String(activeVariantId ?? '')" class="tag">Active</span>
-              </div>
-            </button>
-          </div>
+          </span>
         </div>
-      </div>
+      </button>
 
-      <!-- Résumé (pliable) -->
-      <div v-if="selectedPacks.length" class="card">
-        <div class="card-head small" @click="ui.showSummary = !ui.showSummary" role="button" tabindex="0">
-          <div class="ch-left">
-            <component :is="ui.showSummary ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-            <div class="card-title">Résumé</div>
-            <span class="muted">PV/m³ • CA • MOMD • EBIT</span>
-          </div>
-          <div class="pill pill-gray">{{ ui.showSummary ? "ON" : "OFF" }}</div>
-        </div>
-
-        <div v-show="ui.showSummary" class="summary-row">
-          <div v-for="pack in selectedPacks" :key="pack.variant.id" class="s-card">
-            <div class="s-head">
-              <div class="s-title">{{ vTitle(pack.variant) }}</div>
-              <div class="pill" :class="statusPillClass(kpisById.get(String(pack.variant.id))?.status)">
-                {{ kpisById.get(String(pack.variant.id))?.status ?? "—" }}
-              </div>
+      <div v-show="ui.showSelection" class="boxBody">
+        <div class="list">
+          <button
+            v-for="pack in filteredVariants"
+            :key="pack.variant.id"
+            class="item"
+            :class="{
+              on: selectedIds.includes(String(pack.variant.id)),
+              locked: !selectedIds.includes(String(pack.variant.id)) && selectedIds.length >= ui.capMax,
+            }"
+            @click="toggleSelect(pack.variant.id)"
+            :disabled="!selectedIds.includes(String(pack.variant.id)) && selectedIds.length >= ui.capMax"
+          >
+            <div class="itTop">
+              <span class="itName ellipsis" :title="vTitle(pack.variant)">{{ vTitle(pack.variant) }}</span>
+              <CheckCircleIcon v-if="selectedIds.includes(String(pack.variant.id))" class="ok" />
             </div>
-
-            <div class="s-grid">
-              <div class="kv">
-                <div class="k">PV/m³</div>
-                <div class="v">{{ fmtMoney(kpisById.get(String(pack.variant.id))?.prixMoyenM3 ?? 0, 2) }}</div>
-              </div>
-              <div class="kv">
-                <div class="k">CA</div>
-                <div class="v">{{ fmtMoney(kpisById.get(String(pack.variant.id))?.caTotal ?? 0, 0) }}</div>
-              </div>
-              <div class="kv">
-                <div class="k">MOMD/m³</div>
-                <div class="v">{{ fmtMoney(kpisById.get(String(pack.variant.id))?.momdMoyenM3 ?? 0, 2) }}</div>
-              </div>
-              <div class="kv">
-                <div class="k">EBIT</div>
-                <div class="v">{{ fmtMoney(kpisById.get(String(pack.variant.id))?.ebitTotal ?? 0, 0) }}</div>
-              </div>
+            <div class="itMeta ellipsis" :title="cTitle(pack.contract)">
+              {{ cTitle(pack.contract) }} • {{ pack.contract?.dureeMois ?? 0 }} mois
+              <span v-if="String(pack.variant.id) === String(activeVariantId ?? '')" class="tag">Active</span>
             </div>
-
-            <div class="s-foot muted">{{ pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(pack.contract) }}</div>
-          </div>
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- ========== TABLE (sticky header) ========== -->
-    <div class="card table-card" v-if="selectedPacks.length">
-      <div class="card-head small">
-        <div class="ch-left">
-          <div class="card-title">Tableau comparatif</div>
-          <div class="muted">
+    <!-- Tableau (compact + sticky + scroll horizontal si besoin) -->
+    <div v-if="selectedPacks.length" class="box">
+      <div class="boxHeadStatic">
+        <div class="bhLeft">
+          <div class="bhTitle">Tableau comparatif</div>
+          <div class="mutedSmall">
             Groupe: <b>{{ ui.metricGroup }}</b>
-            <span class="dot">•</span>
+            <span class="sep">•</span>
             Δ: <b>{{ ui.showDelta ? "ON" : "OFF" }}</b>
           </div>
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="cmp-table">
+      <div class="tableWrap">
+        <table class="tbl">
           <thead>
             <tr>
-              <th class="th-kpi">KPI</th>
-
-              <th v-for="pack in selectedPacks" :key="pack.variant.id" class="th-var">
-                <div class="th-var-title">
-                  <span class="th-name">{{ vTitle(pack.variant) }}</span>
-                  <span v-if="String(pack.variant.id) === String(baselineId ?? '')" class="tag tag-base">Base</span>
+              <th class="kcol">KPI</th>
+              <th v-for="p in selectedPacks" :key="p.variant.id" class="vcol">
+                <div class="thMain">
+                  <span class="ellipsis" :title="vTitle(p.variant)">{{ vTitle(p.variant) }}</span>
+                  <span v-if="String(p.variant.id) === String(baselineId ?? '')" class="tag base">Base</span>
                 </div>
-                <div class="th-sub muted">{{ pack.contract?.dureeMois ?? 0 }} mois • {{ cTitle(pack.contract) }}</div>
+                <div class="thSub ellipsis" :title="cTitle(p.contract)">
+                  {{ p.contract?.dureeMois ?? 0 }} mois — {{ cTitle(p.contract) }}
+                </div>
               </th>
             </tr>
           </thead>
 
           <tbody>
-            <tr v-for="row in tableRows" :key="row.metric.key">
-              <td class="td-kpi">
-                <div class="kpi-label">
-                  <div class="kpi-main">{{ row.metric.label }}</div>
-                  <div v-if="row.metric.unitHint" class="kpi-unit muted">{{ row.metric.unitHint }}</div>
+            <tr v-for="m in metrics" :key="m.key">
+              <td class="kcell">
+                <div class="kLabel">
+                  <div class="kMain ellipsis" :title="m.label">{{ m.label }}</div>
+                  <div v-if="m.unitHint" class="kUnit ellipsis" :title="m.unitHint">{{ m.unitHint }}</div>
                 </div>
               </td>
 
-              <td v-for="(cell, i) in row.cells" :key="String(i) + row.metric.key" class="td-val">
-                <div class="val-box" :class="cell.cls">
-                  <div class="val-main">{{ cell.text }}</div>
+              <td v-for="pack in selectedPacks" :key="String(pack.variant.id) + m.key" class="vcell">
+                <div
+                  class="val"
+                  :class="bestWorstTag(m, getMetricValue(m, pack), selectedPacks.map((x) => getMetricValue(m, x)))"
+                >
+                  <div class="vMain ellipsis" :title="m.format(getMetricValue(m, pack))">
+                    {{ m.format(getMetricValue(m, pack)) }}
+                  </div>
 
-                  <div v-if="ui.showDelta" class="val-sub">
-                    <span :class="['delta', cell.deltaCls]">{{ cell.deltaText }}</span>
+                  <div v-if="ui.showDelta" class="vSub">
+                    <span class="delta" :class="deltaFor(m, pack).cls">{{ deltaFor(m, pack).text }}</span>
                   </div>
                 </div>
               </td>
@@ -747,489 +668,182 @@ const optimal = computed(() => {
           </tbody>
         </table>
 
-        <div class="table-foot muted">Astuce: “Essentiel” = lecture rapide. “Avancé” = détails (moins de scroll).</div>
+        <div class="hint">
+          ✅ MOMD est traité comme KPI positif (plus haut = mieux).
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* =========================
-   COMPACT THEME
-========================= */
-.cmp-page {
+/* base */
+.page {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  --b: #e2e8f0;
-  --muted: #64748b;
+  padding: 12px;
   --txt: #0f172a;
-  --bg: #ffffff;
-  --soft: #f8fafc;
+  --muted: rgba(15, 23, 42, 0.65);
+  --b: rgba(16, 24, 40, 0.12);
 }
-.muted {
-  color: var(--muted);
-}
-.dot {
-  color: #cbd5e1;
-  margin: 0 6px;
-}
-
-.card {
-  background: var(--bg);
-  border: 1px solid #e6eaf2;
-  border-radius: 14px;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+.ellipsis {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
+.sep { margin: 0 6px; color: rgba(15, 23, 42, 0.35); }
 
-.card-head {
+/* header (same family as your other pages) */
+.head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #eef2f7;
-  user-select: none;
-}
-.card-head.small {
-  padding: 8px 12px;
-}
-
-.card-title {
-  font-weight: 900;
-  color: var(--txt);
-  font-size: 13px;
-}
-.ch-left {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.chev {
-  width: 16px;
-  height: 16px;
-  color: #334155;
-}
-
-/* =========================
-   TOP BAR (less height)
-========================= */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 55%);
+  border: 1px solid var(--b);
+  border-radius: 16px;
   padding: 8px 10px;
-  border: 1px solid #e6eaf2;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+.hTitle {
+  font-size: 13px;
+  font-weight: 950;
+  color: var(--txt);
+  white-space: nowrap;
+}
+.hRes { color: rgba(15, 23, 42, 0.75); }
+.hSearch { flex: 1 1 520px; min-width: 220px; }
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--b);
   border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  height: 34px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 0 10px;
+  min-width: 0;
 }
-.title {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 240px;
-}
-.ico {
-  width: 18px;
-  height: 18px;
-  color: #334155;
-}
-.ttext .h {
-  font-weight: 950;
-  color: var(--txt);
-  font-size: 14px;
-  line-height: 1.1;
-}
-.ttext .sub {
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-.tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--b);
-  background: #fff;
-  color: var(--txt);
-  padding: 7px 10px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  font-weight: 800;
-  cursor: pointer;
-}
-.btn.ghost {
-  background: var(--soft);
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.btn-ico {
-  width: 16px;
-  height: 16px;
-}
-
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--txt);
-  background: #fff;
-  border: 1px solid var(--b);
-  border-radius: 10px;
-  padding: 7px 10px;
-}
-.toggle input {
-  transform: translateY(1px);
-}
-
-.select {
-  border: 1px solid var(--b);
-  background: #fff;
-  border-radius: 10px;
-  padding: 7px 10px;
-  font-size: 12.5px;
-  color: var(--txt);
-}
-
-/* =========================
-   ALERTS
-========================= */
-.alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid;
-  background: #fff;
-}
-.alert-ico {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-}
-.alert-text {
-  font-size: 12.5px;
-  color: var(--txt);
-  font-weight: 800;
-}
-.alert-err {
-  border-color: #fecaca;
-  background: #fef2f2;
-}
-.alert-err .alert-ico {
-  color: #dc2626;
-}
-.alert-info {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-}
-.alert-info .alert-ico {
-  color: #2563eb;
-}
-.spin {
-  animation: spin 0.9s linear infinite;
-}
-@keyframes spin {
-  from {
-    transform: rotate(0);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* =========================
-   OPT CARD
-========================= */
-.opt-card {
-  border-color: #bfdbfe;
-}
-.spark {
-  width: 16px;
-  height: 16px;
-  color: #2563eb;
-}
-.opt-body {
-  padding: 10px 12px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.opt-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.opt-name {
-  font-weight: 950;
-  color: var(--txt);
-  font-size: 14px;
-}
-.opt-sub {
-  font-size: 12px;
-}
-.opt-kpis {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-@media (max-width: 980px) {
-  .opt-kpis {
-    grid-template-columns: 1fr;
-  }
-}
-.okpi {
-  border: 1px solid #eef2f7;
-  background: #fbfdff;
-  border-radius: 12px;
-  padding: 8px;
-}
-.okpi .k {
-  font-size: 10.5px;
-  color: var(--muted);
-  font-weight: 900;
-  margin-bottom: 3px;
-}
-.okpi .v {
-  font-size: 12.5px;
-  color: var(--txt);
-  font-weight: 950;
-}
-.okpi .r {
-  font-size: 11px;
-  margin-top: 2px;
-}
-.okpi.score {
-  border-color: #93c5fd;
-  background: #eff6ff;
-}
-.opt-note {
-  font-size: 12px;
-}
-
-/* =========================
-   PANELS
-========================= */
-.panels {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
-
-/* chips inline in header */
-.chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--b);
-  background: var(--soft);
-  font-size: 11.5px;
-  color: var(--txt);
-  font-weight: 800;
-}
-.chip-x {
-  display: inline-flex;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-}
-.chip-x-ico {
-  width: 14px;
-  height: 14px;
-  color: var(--muted);
-}
-
-.card-body {
-  padding: 10px 12px;
-}
-
-/* search row */
-.search {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.searchbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--b);
-  background: #fff;
-  border-radius: 12px;
-  padding: 6px 10px;
-  min-width: 260px;
-  flex: 1;
-}
-.s-ico {
-  width: 16px;
-  height: 16px;
-  color: var(--muted);
-}
-.s-in {
+.sIc { width: 16px; height: 16px; color: rgba(107, 114, 128, 1); flex: 0 0 auto; }
+.hInput {
+  width: 100%;
   border: 0;
   outline: none;
-  font-size: 12.5px;
-  width: 100%;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 850;
   color: var(--txt);
+  min-width: 0;
 }
-.s-clear {
+.sClear {
   border: 0;
   background: transparent;
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
-  color: var(--muted);
+  color: rgba(107, 114, 128, 1);
   padding: 0 4px;
 }
+.hRight { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-/* internal scroll => less page scroll */
-.selector-scroll {
-  max-height: 240px;
-  overflow: auto;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding-right: 4px;
-}
-@media (max-width: 980px) {
-  .selector-scroll {
-    grid-template-columns: 1fr;
-  }
-}
-
-.select-item {
-  text-align: left;
+.btn {
+  height: 34px;
   border: 1px solid var(--b);
-  background: #fff;
-  border-radius: 12px;
-  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.04);
+  border-radius: 14px;
+  padding: 0 12px;
+  font-weight: 950;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
-  transition: transform 0.04s ease, border-color 0.12s ease, background 0.12s ease;
+  white-space: nowrap;
 }
-.select-item:hover {
-  transform: translateY(-1px);
-  border-color: #cbd5e1;
-}
-.select-item.on {
-  border-color: #2563eb;
-  background: #eff6ff;
-}
-.select-item.active {
-  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
-}
-.select-item.locked {
-  opacity: 0.6;
-}
-.select-item:disabled {
-  cursor: not-allowed;
-}
+.btn:hover { background: rgba(32, 184, 232, 0.12); border-color: rgba(32, 184, 232, 0.18); }
+.btn.ghost { background: rgba(255, 255, 255, 0.75); padding: 0 10px; }
+.btnic { width: 16px; height: 16px; }
 
-.si-top {
-  display: flex;
+.toggle {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.si-name {
-  font-weight: 950;
-  color: var(--txt);
-  font-size: 12.5px;
-}
-.si-ok {
-  width: 18px;
-  height: 18px;
-  color: #2563eb;
-}
-.si-meta {
-  margin-top: 5px;
-  font-size: 11.5px;
-  color: var(--muted);
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-/* summary horizontal => less vertical */
-.summary-row {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px;
-  overflow-x: auto;
-}
-.s-card {
-  min-width: 260px;
-  max-width: 300px;
-  border: 1px solid #eef2f7;
-  background: #fbfdff;
-  border-radius: 12px;
-  padding: 10px;
-  flex: 0 0 auto;
-}
-.s-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 8px;
-}
-.s-title {
+  border: 1px solid var(--b);
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 14px;
+  height: 34px;
+  padding: 0 10px;
   font-weight: 950;
-  color: var(--txt);
-  font-size: 13px;
-}
-.s-grid {
-  margin-top: 8px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.kv {
-  border: 1px solid #eef2f7;
-  background: #fff;
-  border-radius: 10px;
-  padding: 8px;
-}
-.k {
-  font-size: 10.5px;
-  color: var(--muted);
-  font-weight: 900;
-  margin-bottom: 3px;
-}
-.v {
   font-size: 12px;
   color: var(--txt);
-  font-weight: 950;
 }
-.s-foot {
-  margin-top: 8px;
-  font-size: 11.5px;
+.sel {
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid var(--b);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--txt);
 }
+
+/* alerts */
+.alert {
+  border: 1px solid var(--b);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #111827;
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.alert.error { border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08); }
+.alert.info { border-color: rgba(37, 99, 235, 0.25); background: rgba(37, 99, 235, 0.06); }
+.aic { width: 18px; height: 18px; margin-top: 1px; flex: 0 0 auto; }
+
+/* optimal */
+.opt {
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.7) 0%, #ffffff 55%);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+.optHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.optLeft { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.optIc { width: 16px; height: 16px; color: #2563eb; flex: 0 0 auto; }
+.optT { min-width: 0; }
+.optTitle { font-size: 13px; font-weight: 950; color: var(--txt); }
+.optSub { font-size: 11px; font-weight: 850; color: rgba(15, 23, 42, 0.55); margin-top: 2px; }
+.optScore { text-align: right; min-width: 0; }
+.optScore .k { font-size: 10.5px; font-weight: 950; color: rgba(15, 23, 42, 0.55); }
+.optScore .v { font-size: 12.5px; font-weight: 950; color: var(--txt); }
+.optBody { padding: 10px 12px 12px; display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.optMain { flex: 1 1 260px; min-width: 220px; }
+.optName { font-size: 13px; font-weight: 950; color: var(--txt); }
+.optMeta { margin-top: 3px; font-size: 11.5px; font-weight: 850; color: rgba(107, 114, 128, 1); }
+.optKpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: 1 1 360px; min-width: 260px; }
+.okpi {
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.okpi .k { font-size: 10.5px; font-weight: 950; color: rgba(15, 23, 42, 0.55); }
+.okpi .v { font-size: 12.5px; font-weight: 950; color: var(--txt); margin-top: 2px; }
+.okpi .r { margin-top: 2px; font-size: 11px; font-weight: 850; color: rgba(107, 114, 128, 1); }
 
 /* pills + tags */
 .pill {
@@ -1242,26 +856,10 @@ const optimal = computed(() => {
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.pill-green {
-  background: #ecfdf5;
-  color: #065f46;
-  border-color: #a7f3d0;
-}
-.pill-red {
-  background: #fef2f2;
-  color: #991b1b;
-  border-color: #fecaca;
-}
-.pill-blue {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #bfdbfe;
-}
-.pill-gray {
-  background: #f8fafc;
-  color: #334155;
-  border-color: var(--b);
-}
+.pill-green { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+.pill-red { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+.pill-blue { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+.pill-gray { background: #f8fafc; color: #334155; border-color: rgba(16, 24, 40, 0.12); }
 
 .tag {
   display: inline-flex;
@@ -1270,139 +868,205 @@ const optimal = computed(() => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 950;
-  border: 1px solid var(--b);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   background: #fff;
   color: var(--txt);
+  white-space: nowrap;
 }
-.tag-base {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
+.tag.base { border-color: rgba(147, 197, 253, 1); background: rgba(239, 246, 255, 1); color: #1d4ed8; }
 
-/* =========================
-   TABLE
-========================= */
-.table-card {
-  overflow: visible;
+/* cards */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
-.table-wrap {
+@media (max-width: 1150px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .cards { grid-template-columns: 1fr; } }
+
+.card {
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
   padding: 10px 12px 12px;
+  min-width: 0;
 }
+.cardTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.cardTop .left { min-width: 0; flex: 1 1 auto; }
+.line1 { display: flex; gap: 8px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.name { font-size: 12.5px; font-weight: 950; color: var(--txt); max-width: 100%; }
+.line2 { margin-top: 4px; font-size: 11.5px; font-weight: 850; color: rgba(107, 114, 128, 1); }
 
-.cmp-table {
+.kpis {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 720px) { .kpis { grid-template-columns: 1fr; } }
+
+.kpi {
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.02);
+  padding: 8px 10px;
+  min-width: 0; /* ✅ critical for ellipsis */
+}
+.kpi .k { font-size: 10.5px; font-weight: 950; color: rgba(15, 23, 42, 0.6); }
+.kpi .v {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 950;
+  color: var(--txt);
+  min-width: 0; /* ✅ critical for ellipsis */
+}
+.kpi .v.num { font-variant-numeric: tabular-nums; }
+
+/* box */
+.box {
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+}
+.boxHead {
+  width: 100%;
+  border: 0;
+  background: #fff;
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.boxHead:hover { background: rgba(15, 23, 42, 0.02); }
+.boxHeadStatic {
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: #fff;
+}
+.bhLeft { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.chev { width: 16px; height: 16px; color: rgba(107, 114, 128, 1); flex: 0 0 auto; }
+.bhTitle { font-size: 12.5px; font-weight: 950; color: var(--txt); }
+.mutedSmall { color: rgba(107, 114, 128, 1); font-size: 12px; font-weight: 850; }
+
+.chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  font-size: 11.5px;
+  color: var(--txt);
+  font-weight: 900;
+  min-width: 0;
+}
+.chipTxt { max-width: 180px; }
+.chipX { border: 0; background: transparent; padding: 0; cursor: pointer; display: inline-flex; }
+.chipXIc { width: 14px; height: 14px; color: rgba(107, 114, 128, 1); }
+
+.boxBody { padding: 10px 12px; }
+
+/* list */
+.list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 4px;
+}
+@media (max-width: 980px) { .list { grid-template-columns: 1fr; } }
+
+.item {
+  text-align: left;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: #fff;
+  border-radius: 14px;
+  padding: 8px 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+.item:hover { background: rgba(15, 23, 42, 0.02); border-color: rgba(32, 184, 232, 0.18); }
+.item.on { border-color: rgba(37, 99, 235, 0.35); background: rgba(239, 246, 255, 0.6); }
+.item.locked { opacity: 0.6; }
+.item:disabled { cursor: not-allowed; }
+
+.itTop { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.itName { font-weight: 950; color: var(--txt); font-size: 12.5px; }
+.ok { width: 18px; height: 18px; color: #2563eb; flex: 0 0 auto; }
+.itMeta { margin-top: 5px; font-size: 11.5px; color: rgba(107, 114, 128, 1); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* table */
+.tableWrap { padding: 10px 12px 12px; overflow-x: auto; }
+.tbl {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
+  min-width: 980px; /* ✅ avoid forced wrapping; use horizontal scroll */
   font-size: 12.5px;
   color: var(--txt);
 }
-
-/* ✅ Sticky header */
-.cmp-table thead th {
+.tbl thead th {
   position: sticky;
   top: -14px;
-  z-index: 12;
+  z-index: 10;
   background: rgba(248, 250, 252, 0.96);
   backdrop-filter: blur(6px);
-  border-bottom: 1px solid var(--b);
-}
-.cmp-table thead tr th {
+  border-bottom: 1px solid rgba(16, 24, 40, 0.12);
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
 }
+.kcol { width: 220px; text-align: left; padding: 9px 10px; font-weight: 950; }
+.vcol { text-align: left; padding: 9px 10px; }
+.thMain { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.thSub { margin-top: 2px; font-size: 11px; color: rgba(107, 114, 128, 1); }
 
-.th-kpi {
-  width: 220px;
-  text-align: left;
-  padding: 9px 10px;
-  font-weight: 950;
-}
-.th-var {
-  text-align: left;
-  padding: 9px 10px;
-}
-.th-var-title {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.th-name {
-  font-weight: 950;
-}
-.th-sub {
-  margin-top: 2px;
-  font-size: 11px;
-}
+tbody tr td { border-bottom: 1px solid rgba(16, 24, 40, 0.06); }
+.kcell { padding: 9px 10px; vertical-align: middle; }
+.vcell { padding: 7px 10px; vertical-align: middle; }
 
-tbody tr td {
-  border-bottom: 1px solid #f1f5f9;
-}
-.td-kpi {
-  padding: 9px 10px;
-  vertical-align: middle;
-}
-.td-val {
-  padding: 7px 10px;
-  vertical-align: middle;
-}
+.kLabel { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kMain { font-weight: 950; }
+.kUnit { font-size: 11px; color: rgba(107, 114, 128, 1); }
 
-.kpi-label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.kpi-main {
-  font-weight: 950;
-}
-.kpi-unit {
-  font-size: 11px;
-}
-
-.val-box {
-  border: 1px solid #eef2f7;
-  background: #fbfdff;
-  border-radius: 12px;
-  padding: 7px 9px;
+.val {
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(15, 23, 42, 0.02);
+  border-radius: 14px;
+  padding: 8px 9px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: 42px;
+  min-height: 52px;
   justify-content: center;
+  min-width: 0;
 }
-.val-main {
-  font-weight: 950;
-  font-size: 12.5px;
-}
-.val-sub {
-  font-size: 11px;
-}
+.vMain { font-weight: 950; font-size: 12.5px; }
+.vSub { font-size: 11px; }
+.delta { font-weight: 950; }
+.delta.pos { color: #166534; }
+.delta.neg { color: #991b1b; }
+.delta.muted { color: rgba(107, 114, 128, 1); }
 
-.delta {
-  font-weight: 950;
-}
-.delta.pos {
-  color: #166534;
-}
-.delta.neg {
-  color: #991b1b;
-}
-.delta.muted {
-  color: var(--muted);
-}
+.val.best { border-color: rgba(34, 197, 94, 0.28); background: rgba(34, 197, 94, 0.08); }
+.val.worst { border-color: rgba(239, 68, 68, 0.28); background: rgba(239, 68, 68, 0.08); }
 
-.best {
-  border-color: #86efac;
-  background: #f0fdf4;
-}
-.worst {
-  border-color: #fecaca;
-  background: #fef2f2;
-}
+.hint { margin-top: 8px; font-size: 12px; color: rgba(107, 114, 128, 1); font-weight: 850; }
 
-.table-foot {
-  margin-top: 8px;
-  font-size: 12px;
+@media (max-width: 980px) {
+  .head { flex-wrap: wrap; }
+  .hSearch { flex: 1 1 100%; }
 }
 </style>

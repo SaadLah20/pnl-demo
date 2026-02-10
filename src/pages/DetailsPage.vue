@@ -1,8 +1,15 @@
-<!-- src/pages/DetailsPage.vue -->
+<!-- ✅ src/pages/DetailsPage.vue (FICHIER COMPLET) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive } from "vue";
 import { useRouter } from "vue-router";
 import { usePnlStore } from "@/stores/pnl.store";
+
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  PencilSquareIcon,
+  Squares2X2Icon,
+} from "@heroicons/vue/24/outline";
 
 const router = useRouter();
 const store = usePnlStore();
@@ -22,16 +29,14 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: any, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
-function money(v: any) {
+function money(v: any, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
     style: "currency",
     currency: "MAD",
-    maximumFractionDigits: 2,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
   }).format(toNum(v));
 }
 function safeDiv(a: number, b: number): number {
@@ -41,8 +46,9 @@ function safeDiv(a: number, b: number): number {
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => store.activeVariant as any);
-const contract = computed<any>(() => store.activeContract as any);
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
+
 const dureeMois = computed<number>(() => Math.max(1, toNum(contract.value?.dureeMois) || 1));
 
 const formules = computed<any[]>(() => (variant.value?.formules?.items ?? []) as any[]);
@@ -50,6 +56,7 @@ const volumeTotal = computed<number>(() => formules.value.reduce((s, vf) => s + 
 
 const volumePompePct = computed<number>(() => toNum(variant.value?.transport?.volumePompePct));
 const volumePompe = computed<number>(() => volumeTotal.value * (volumePompePct.value / 100));
+
 const amortMois = computed<number>(() => toNum(variant.value?.cab?.amortMois));
 
 /* =========================
@@ -58,11 +65,7 @@ const amortMois = computed<number>(() => toNum(variant.value?.cab?.amortMois));
 function mpPriceUsed(mpId: string): number {
   const vmp = ((variant.value as any)?.mp?.items ?? []).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-
-  // ✅ prix variante (override)
   if (vmp?.prix != null) return toNum(vmp.prix);
-
-  // fallback catalogue
   return toNum(vmp?.mp?.prix);
 }
 
@@ -107,12 +110,8 @@ function pctOfCa(totalCost: number): number {
 }
 
 /* =========================
-   NAVIGATION (vers pages sidebar)
+   NAVIGATION (sidebar items)
 ========================= */
-/**
- * On mappe chaque "block.key" -> item sidebar
- * (qui est ensuite résolu via la même logique PageView / routes hard)
- */
 const sectionToSidebarItem: Record<string, string> = {
   Transport: "Transport",
   "Coûts / m³": "Cout au m3",
@@ -124,12 +123,7 @@ const sectionToSidebarItem: Record<string, string> = {
   "Autres coûts": "Autres couts",
 };
 
-/**
- * Reproduit la logique de ta sidebar (goToPage) mais localement,
- * pour éviter d'importer le composant sidebar.
- */
 function goToSidebarItem(item: string) {
-  // ✅ routes "hard" = exactement comme Sidebar.vue
   const routeByItem: Record<string, string> = {
     Transport: "Transport",
     CAB: "CAB",
@@ -152,7 +146,6 @@ function goToSidebarItem(item: string) {
     return;
   }
 
-  // fallback PageView (au cas où un item n'a pas de route)
   const pageNameMap: Record<string, string> = {
     Maintenance: "Variante/Sections/Couts/Maintenance",
     "Cout au m3": "Variante/Sections/Couts/Cout au m3",
@@ -165,7 +158,6 @@ function goToSidebarItem(item: string) {
   const pageName = pageNameMap[item] ?? item;
   router.push({ name: "PageView", params: { name: pageName } });
 }
-
 
 function editSection(blockKey: string) {
   const item = sectionToSidebarItem[blockKey];
@@ -180,12 +172,10 @@ type Line = {
   level: 0 | 1;
   section: string;
   label: string;
-
   perM3: number;
   perMonth: number;
   total: number;
   pct: number;
-
   isParent: boolean;
 };
 
@@ -202,25 +192,19 @@ function makeFromTotal(section: string, label: string, total: number, level: 0 |
     pct: pctOfCa(t),
   };
 }
-
 function makeFromPerM3(section: string, label: string, perM3: number, level: 0 | 1, isParent: boolean): Line {
-  const total = toNum(perM3) * volumeTotal.value;
-  return makeFromTotal(section, label, total, level, isParent);
+  return makeFromTotal(section, label, toNum(perM3) * volumeTotal.value, level, isParent);
 }
-
 function makeFromPerMonth(section: string, label: string, perMonth: number, level: 0 | 1, isParent: boolean): Line {
-  const total = toNum(perMonth) * dureeMois.value;
-  return makeFromTotal(section, label, total, level, isParent);
+  return makeFromTotal(section, label, toNum(perMonth) * dureeMois.value, level, isParent);
 }
-
-/** somme des valeurs numériques d'un objet (TS strict-safe) */
 function sumSectionObj(obj: any): number {
   if (!obj) return 0;
   return Object.values(obj).reduce((s: number, v: unknown) => s + toNum(v), 0);
 }
 
 /* =========================
-   BUILD SECTIONS + CHILDREN
+   BUILD BLOCKS
 ========================= */
 type SectionBlock = {
   key: string;
@@ -243,7 +227,7 @@ const blocks = computed<SectionBlock[]>(() => {
     out.push({ key, title: "Transport", parent, children });
   }
 
-  // 2) Coûts / m3 (champs)
+  // 2) Coûts / m3
   {
     const key = "Coûts / m³";
     const obj = v?.coutM3 ?? {};
@@ -260,7 +244,7 @@ const blocks = computed<SectionBlock[]>(() => {
     out.push({ key, title: "Coûts / m³", parent, children });
   }
 
-  // 3) Coûts / mois (champs)
+  // 3) Coûts / mois
   {
     const key = "Coûts / mois";
     const obj = v?.coutMensuel ?? {};
@@ -311,7 +295,7 @@ const blocks = computed<SectionBlock[]>(() => {
     out.push({ key, title: "Maintenance", parent, children });
   }
 
-  // 6) Employés (mensuel) : nb*cout
+  // 6) Employés (mensuel)
   {
     const key = "Employés";
     const e = v?.employes ?? {};
@@ -323,8 +307,8 @@ const blocks = computed<SectionBlock[]>(() => {
     for (const k of keys) {
       if (!k.endsWith("Nb")) continue;
       const base = k.slice(0, -2);
-      const nb = toNum(e[k]);
-      const cout = toNum(e[base + "Cout"]);
+      const nb = toNum((e as any)[k]);
+      const cout = toNum((e as any)[base + "Cout"]);
       const perMonth = nb * cout;
       if (perMonth === 0) continue;
 
@@ -336,7 +320,7 @@ const blocks = computed<SectionBlock[]>(() => {
     out.push({ key, title: "Employés", parent, children });
   }
 
-  // 7) CAB amortissement (mensuel)
+  // 7) CAB (mensuel)
   {
     const key = "CAB";
     const parent = makeFromPerMonth(key, "CAB (amortissement)", amortMois.value, 0, true);
@@ -345,7 +329,7 @@ const blocks = computed<SectionBlock[]>(() => {
     out.push({ key, title: "CAB", parent, children });
   }
 
-  // 8) Autres coûts (mix unités)
+  // 8) Autres coûts
   {
     const key = "Autres coûts";
     const items = v?.autresCouts?.items ?? [];
@@ -360,8 +344,8 @@ const blocks = computed<SectionBlock[]>(() => {
       const label = String(it?.label ?? "Autre coût");
       const unite = String(it?.unite ?? "FORFAIT");
       const valeur = toNum(it?.valeur);
-      let total = 0;
 
+      let total = 0;
       if (unite === "FORFAIT") total = valeur;
       else if (unite === "MOIS") total = valeur * d;
       else if (unite === "M3") total = valeur * vol;
@@ -369,7 +353,6 @@ const blocks = computed<SectionBlock[]>(() => {
 
       if (total === 0) continue;
       parentTotal += total;
-
       children.push(makeFromTotal(key, `${label} (${unite})`, total, 1, false));
     }
 
@@ -381,18 +364,15 @@ const blocks = computed<SectionBlock[]>(() => {
 });
 
 /* =========================
-   COLLAPSE / EXPAND (default collapsed)
+   ACCORDION STATE
 ========================= */
 const open = reactive<Record<string, boolean>>({});
 
 function initOpenState() {
-  for (const b of blocks.value) {
-    if (!(b.key in open)) open[b.key] = false; // collapsed by default
-  }
+  for (const b of blocks.value) if (!(b.key in open)) open[b.key] = false;
 }
-
 onMounted(() => initOpenState());
-const _blocksWatcher = computed(() => {
+computed(() => {
   initOpenState();
   return blocks.value.length;
 });
@@ -406,128 +386,142 @@ function collapseAll() {
 function expandAll() {
   for (const k of Object.keys(open)) open[k] = true;
 }
+
+/* =========================
+   QUICK META
+========================= */
+const headerTitle = computed(() => {
+  if (!variant.value) return "Détails";
+  const t = variant.value?.title ?? "Variante";
+  const c = contract.value?.title ?? contract.value?.name ?? "Contrat";
+  return `${t} — ${c}`;
+});
 </script>
 
 <template>
   <div class="page">
-    <div class="topbar">
-      <div class="titleWrap">
-        <div class="h1">Détails</div>
-        <div class="sub" v-if="variant">{{ variant?.title ?? "Variante" }} — {{ dureeMois }} mois</div>
+    <div class="head">
+      <div class="hLeft">
+        <div class="hTop">
+          <Squares2X2Icon class="hIc" />
+          <div class="hTitle ellipsis" :title="headerTitle">{{ headerTitle }}</div>
+        </div>
+        <div class="hSub muted ellipsis" v-if="variant">
+          Durée: <b>{{ dureeMois }}</b> mois • Volume: <b>{{ n(volumeTotal, 0) }}</b> m³ • CA estimé:
+          <b>{{ money(caTotal, 0) }}</b>
+        </div>
       </div>
 
-      <div class="actions" v-if="variant">
-        <button class="btn" @click="expandAll()">Tout ouvrir</button>
-        <button class="btn" @click="collapseAll()">Tout réduire</button>
+      <div class="hRight" v-if="variant">
+        <button class="btn ghost" type="button" @click="expandAll" title="Ouvrir toutes les sections">
+          <ChevronDownIcon class="btnic" />
+          Tout ouvrir
+        </button>
+        <button class="btn ghost" type="button" @click="collapseAll" title="Réduire toutes les sections">
+          <ChevronRightIcon class="btnic" />
+          Tout réduire
+        </button>
       </div>
     </div>
 
-    <div v-if="store.loading" class="panel">Chargement…</div>
-    <div v-else-if="store.error" class="panel error"><b>Erreur :</b> {{ store.error }}</div>
+    <div v-if="(store as any).loading" class="alert info">Chargement…</div>
+    <div v-else-if="(store as any).error" class="alert error"><b>Erreur :</b> {{ (store as any).error }}</div>
 
     <template v-else>
-      <div v-if="!variant" class="panel muted">Aucune variante active.</div>
+      <div v-if="!variant" class="alert muted">Aucune variante active.</div>
 
       <template v-else>
-        <!-- KPIs -->
-        <div class="panel">
-          <div class="kpiGrid">
-            <div class="kpi">
-              <div class="k">Volume total</div>
-              <div class="v">{{ n(volumeTotal, 0) }} <span class="u">m³</span></div>
+        <div class="grid3">
+          <div class="card">
+            <div class="k">Volume total</div>
+            <div class="v num">
+              {{ n(volumeTotal, 0) }} <span class="u">m³</span>
             </div>
+          </div>
 
-            <div class="kpi">
-              <div class="k">Volume pompé</div>
-              <div class="v">
-                {{ n(volumePompe, 0) }} <span class="u">m³</span>
-                <span class="tag">{{ n(volumePompePct, 0) }}%</span>
-              </div>
+          <div class="card">
+            <div class="k">Volume pompé</div>
+            <div class="v num">
+              {{ n(volumePompe, 0) }} <span class="u">m³</span>
+              <span class="pill">{{ n(volumePompePct, 0) }}%</span>
             </div>
+          </div>
 
-            <div class="kpi">
-              <div class="k">Amortissement</div>
-              <div class="v">{{ money(amortMois) }} <span class="u">/mois</span></div>
+          <div class="card">
+            <div class="k">Amortissement CAB</div>
+            <div class="v num">
+              {{ money(amortMois, 0) }} <span class="u">/mois</span>
             </div>
           </div>
         </div>
 
-        <!-- SECTIONS -->
-        <div class="panel">
-          <div class="sectionHead">
-            <div class="sectionTitle">Sections (hiérarchie)</div>
-            <div class="hint">% = part du CA total (CA = PV moyen × volume total). Les champs à 0 sont masqués.</div>
+        <div class="box">
+          <div class="boxHead">
+            <div class="bhLeft">
+              <div class="bhTitle">Sections</div>
+              <div class="bhHint muted">
+                % = part du CA (CA = PV moyen × volume). Les champs à 0 sont masqués.
+              </div>
+            </div>
           </div>
 
-          <div class="tableWrap">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Libellé</th>
-                  <th class="r">/m³</th>
-                  <th class="r">/mois</th>
-                  <th class="r">Total</th>
-                  <th class="r">%</th>
-                  <th class="r editCol">Édit</th>
-                </tr>
-              </thead>
+          <div class="acc">
+            <div v-for="b in blocks" :key="b.key" class="accItem">
+              <div class="accRow">
+                <button
+                  class="chevBtn"
+                  type="button"
+                  @click="toggle(b.key)"
+                  :title="open[b.key] ? 'Réduire' : 'Ouvrir'"
+                >
+                  <component :is="open[b.key] ? ChevronDownIcon : ChevronRightIcon" class="chevIc" />
+                </button>
 
-              <tbody>
-                <template v-for="b in blocks" :key="b.key">
-                  <!-- Parent row -->
-                  <tr class="parentRow">
-                    <td>
-                      <div class="labelCell">
-                        <!-- toggle uniquement via chevron -->
-                        <button class="chevBtn" @click.stop="toggle(b.key)" :aria-label="'toggle ' + b.key">
-                          <span class="chev">{{ open[b.key] ? "▾" : "▸" }}</span>
-                        </button>
+                <button class="rowMain" type="button" @click="editSection(b.key)" :title="'Éditer: ' + b.key">
+                  <div class="rowTitle ellipsis">
+                    <b>{{ b.parent.label }}</b>
+                  </div>
+                  <div class="rowSub muted ellipsis">
+                    /m³ {{ n(b.parent.perM3) }} • /mois {{ money(b.parent.perMonth, 0) }} • Total
+                    <b>{{ money(b.parent.total, 0) }}</b> • {{ n(b.parent.pct, 1) }}%
+                  </div>
+                </button>
 
-                        <!-- clic sur le nom => edit/navigate -->
-                        <button class="sectionLink" @click.stop="editSection(b.key)" :title="'Ouvrir: ' + b.key">
-                          <b>{{ b.parent.label }}</b>
-                        </button>
-                      </div>
-                    </td>
+                <button class="editBtn" type="button" @click="editSection(b.key)" title="Ouvrir la section">
+                  <PencilSquareIcon class="editIc" />
+                </button>
+              </div>
 
-                    <td class="r">{{ n(b.parent.perM3) }}</td>
-                    <td class="r">{{ money(b.parent.perMonth) }}</td>
-                    <td class="r"><b>{{ money(b.parent.total) }}</b></td>
-                    <td class="r">{{ n(b.parent.pct) }}%</td>
+              <div v-show="open[b.key]" class="accBody">
+                <div v-if="b.children.length === 0" class="empty muted">Aucun détail (valeurs = 0).</div>
 
-                    <td class="r editCol">
-                      <button class="editBtn" @click.stop="editSection(b.key)">Éditer</button>
-                    </td>
-                  </tr>
-
-                  <!-- Children rows -->
-                  <tr
-                    v-for="c in b.children"
-                    v-show="open[b.key]"
-                    :key="b.key + '::' + c.label"
-                    class="childRow"
-                  >
-                    <td>
-                      <div class="labelCell child">
-                        <span class="indent">—</span>
-                        <span>{{ c.label }}</span>
-                      </div>
-                    </td>
-                    <td class="r">{{ n(c.perM3) }}</td>
-                    <td class="r">{{ money(c.perMonth) }}</td>
-                    <td class="r">{{ money(c.total) }}</td>
-                    <td class="r">{{ n(c.pct) }}%</td>
-                    <td class="r editCol"></td>
-                  </tr>
-
-                  <!-- If no children -->
-                  <tr v-if="open[b.key] && b.children.length === 0" class="childRow empty">
-                    <td class="muted" colspan="6" style="padding-left: 40px">Aucun détail (valeurs = 0).</td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
+                <div v-else class="tblWrap">
+                  <table class="tbl">
+                    <thead>
+                      <tr>
+                        <th>Libellé</th>
+                        <th class="r">/m³</th>
+                        <th class="r">/mois</th>
+                        <th class="r">Total</th>
+                        <th class="r">%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="c in b.children" :key="b.key + '::' + c.label">
+                        <td class="ellipsis" :title="c.label">{{ c.label }}</td>
+                        <td class="r">{{ n(c.perM3) }}</td>
+                        <td class="r">{{ money(c.perMonth, 0) }}</td>
+                        <td class="r">{{ money(c.total, 0) }}</td>
+                        <td class="r">{{ n(c.pct, 1) }}%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           </div>
+
+          <div class="foot muted">Astuce: clic sur le titre d’une section pour l’éditer. Chevron = ouvrir/fermer.</div>
         </div>
       </template>
     </template>
@@ -535,197 +529,226 @@ function expandAll() {
 </template>
 
 <style scoped>
-/* Palette proche HeaderDashboard.vue */
-.page{
-  --text:#0f172a;
-  --muted: rgba(15,23,42,0.65);
-  --border: rgba(16,24,40,0.12);
-  --soft: rgba(15,23,42,0.04);
-  --soft2: rgba(15,23,42,0.03);
+.page {
+  --text: #0f172a;
+  --muted: rgba(15, 23, 42, 0.62);
+  --border: rgba(16, 24, 40, 0.12);
+  --soft: rgba(15, 23, 42, 0.04);
+  --soft2: rgba(15, 23, 42, 0.02);
 
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  padding:10px 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 10px 14px;
 }
+.muted { color: var(--muted); }
+.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
 
-/* top */
-.topbar{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:10px;
-  flex-wrap:wrap;
+/* header */
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 55%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
 }
-.titleWrap{ display:flex; flex-direction:column; gap:2px; min-width:0; }
-.h1{ font-size:14px; font-weight:950; color:var(--text); }
-.sub{ font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hLeft { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.hTop { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.hIc { width: 18px; height: 18px; color: rgba(15, 23, 42, 0.75); flex: 0 0 auto; }
+.hTitle { font-size: 13px; font-weight: 950; color: var(--text); }
+.hSub { font-size: 12px; }
 
-.actions{ display:flex; gap:8px; align-items:center; }
-.btn{
-  border:1px solid var(--border);
-  background: rgba(255,255,255,0.80);
-  border-radius:14px;
-  padding:7px 10px;
-  font-size:12px;
-  font-weight:900;
-  color: rgba(15,23,42,0.86);
-  cursor:pointer;
-  box-shadow: 0 4px 14px rgba(15,23,42,0.06);
-}
-.btn:hover{
-  background: rgba(32,184,232,0.12);
-  border-color: rgba(32,184,232,0.18);
-}
+.hRight { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-/* panels */
-.panel{
-  background: rgba(255,255,255,0.92);
-  border:1px solid var(--border);
-  border-radius:16px;
-  padding:12px;
-  box-shadow: 0 10px 26px rgba(15,23,42,0.06);
-}
-.error{ border-color: rgba(239,68,68,0.45); background: rgba(255,245,245,0.92); }
-.muted{ color:var(--muted); font-size:12px; }
-
-/* KPIs */
-.kpiGrid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
-  gap:10px;
-}
-@media (max-width: 980px){ .kpiGrid{ grid-template-columns: 1fr; } }
-
-.kpi{
-  border:1px solid rgba(16,24,40,0.10);
-  border-radius:16px;
-  padding:10px 10px;
-  background: linear-gradient(180deg, var(--soft2), rgba(255,255,255,0.92));
-}
-.k{ font-size:10px; font-weight:950; color: rgba(15,23,42,0.55); letter-spacing:0.2px; }
-.v{
-  font-size:15px;
-  font-weight:950;
-  margin-top:4px;
-  display:flex;
-  gap:8px;
-  align-items:baseline;
-  flex-wrap:wrap;
-  color: var(--text);
-}
-.u{ font-size:11px; font-weight:900; color: rgba(15,23,42,0.55); }
-.tag{
-  border:1px solid rgba(16,24,40,0.12);
-  background: rgba(255,255,255,0.9);
-  padding:2px 8px;
-  border-radius:999px;
-  font-size:11px;
-  font-weight:950;
-  color: rgba(15,23,42,0.86);
-}
-
-/* sections head */
-.sectionHead{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:10px;
-  flex-wrap:wrap;
-  margin-bottom:8px;
-}
-.sectionTitle{ font-size:12px; font-weight:950; color: var(--text); }
-.hint{ font-size:11px; color: var(--muted); }
-
-/* table */
-.tableWrap{
-  overflow:auto;
-  border: 1px solid rgba(16,24,40,0.10);
+.btn {
+  height: 34px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.04);
   border-radius: 14px;
-  background:#fff;
-}
-.table{
-  width:100%;
-  border-collapse:separate;
-  border-spacing:0;
-  font-size:12px;
-}
-.table th, .table td{
-  border-bottom:1px solid rgba(16,24,40,0.10);
-  padding:8px 10px;
-  text-align:left;
-  vertical-align:middle; /* ✅ centrage vertical */
-  white-space:nowrap;
-}
-.table thead th{
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: linear-gradient(180deg, rgba(15,23,42,0.02), rgba(15,23,42,0.04));
-  color: rgba(15,23,42,0.55);
-  font-size:10px;
-  font-weight:950;
-  letter-spacing:0.2px;
-}
-.r{ text-align:right; }
-.editCol{ width: 98px; }
-
-/* rows */
-.parentRow{
-  background: rgba(15,23,42,0.02);
-  user-select:none;
-}
-.parentRow:hover{ background: rgba(32,184,232,0.08); }
-.childRow{ background:#fff; }
-.childRow.empty{ background:#fff; }
-
-.labelCell{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  min-width: 260px;
-}
-.labelCell.child{ padding-left: 18px; }
-
-.chev{ width:16px; display:inline-block; color: rgba(15,23,42,0.55); font-weight:900; }
-.indent{ width:16px; display:inline-block; color: rgba(15,23,42,0.35); }
-
-/* controls */
-.chevBtn{
-  border:1px solid transparent;
-  background: transparent;
-  cursor:pointer;
-  padding: 2px 6px;
-  border-radius: 10px;
-}
-.chevBtn:hover{
-  background: rgba(15,23,42,0.04);
-  border-color: rgba(16,24,40,0.10);
-}
-
-.sectionLink{
-  border:0;
-  background: transparent;
-  cursor:pointer;
-  padding: 2px 6px;
-  border-radius: 10px;
-  text-align:left;
-  color: var(--text);
-}
-.sectionLink:hover{ background: rgba(15,23,42,0.04); }
-
-.editBtn{
-  border:1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.04);
-  border-radius: 14px;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 0 12px;
   font-weight: 950;
-  cursor:pointer;
-  color: rgba(15,23,42,0.86);
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.86);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
-.editBtn:hover{
-  background: rgba(32,184,232,0.12);
-  border-color: rgba(32,184,232,0.18);
+.btn:hover { background: rgba(32, 184, 232, 0.12); border-color: rgba(32, 184, 232, 0.18); }
+.btn.ghost { background: rgba(255, 255, 255, 0.75); }
+.btnic { width: 16px; height: 16px; }
+
+/* alerts */
+.alert {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+  font-size: 12.5px;
+}
+.alert.info { border-color: rgba(37, 99, 235, 0.25); background: rgba(37, 99, 235, 0.06); }
+.alert.error { border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08); }
+
+/* KPI grid */
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 10px;
+}
+@media (max-width: 980px) { .grid3 { grid-template-columns: 1fr; } }
+
+.card {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, var(--soft2), rgba(255, 255, 255, 0.92));
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+  min-width: 0;
+}
+.k { font-size: 10.5px; font-weight: 950; color: rgba(15, 23, 42, 0.55); }
+.v {
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 950;
+  color: var(--text);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.u { font-size: 11px; font-weight: 900; color: rgba(15, 23, 42, 0.55); }
+.pill {
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.86);
+}
+
+/* box */
+.box {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+}
+.boxHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.bhLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bhTitle { font-size: 12.5px; font-weight: 950; color: var(--text); }
+.bhHint { font-size: 11px; }
+
+.acc { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; }
+.accItem {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
+.accRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.02);
+}
+.chevBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(255, 255, 255, 0.75);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.chevBtn:hover { background: rgba(32, 184, 232, 0.12); border-color: rgba(32, 184, 232, 0.18); }
+.chevIc { width: 18px; height: 18px; color: rgba(15, 23, 42, 0.75); }
+
+.rowMain {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  padding: 0;
+}
+.rowTitle { font-size: 12.5px; font-weight: 950; color: var(--text); }
+.rowSub { margin-top: 2px; font-size: 11.5px; font-weight: 850; }
+
+.editBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(24, 64, 112, 0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.editBtn:hover { background: rgba(24, 64, 112, 1); }
+.editIc { width: 18px; height: 18px; color: #fff; }
+
+.accBody { padding: 10px; background: #fff; }
+.empty { font-size: 12px; font-weight: 850; padding: 4px 2px; }
+
+.tblWrap {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  border-radius: 14px;
+  overflow: auto;
+  background: #fff;
+}
+.tbl {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.tbl th, .tbl td {
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+.tbl thead th {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.02), rgba(15, 23, 42, 0.04));
+  color: rgba(15, 23, 42, 0.55);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.2px;
+}
+.r { text-align: right; }
+.tbl td:first-child { min-width: 260px; }
+.tbl td:first-child.ellipsis { display: block; }
+
+.foot {
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+  padding: 10px 12px;
+  font-size: 11.5px;
+  font-weight: 850;
 }
 </style>

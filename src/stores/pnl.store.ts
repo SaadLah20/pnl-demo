@@ -52,6 +52,18 @@ async function jsonFetch(url: string, opts?: RequestInit) {
   return res.json();
 }
 
+async function blobFetch(url: string, opts?: RequestInit): Promise<Response> {
+  const res = await fetch(API + url, { ...opts });
+  if (!res.ok) {
+    let txt = "";
+    try {
+      txt = await res.text();
+    } catch {}
+    throw new Error(txt || `API error: ${res.status}`);
+  }
+  return res;
+}
+
 type AnyObj = Record<string, any>;
 
 export const usePnlStore = defineStore("pnl", {
@@ -160,9 +172,7 @@ export const usePnlStore = defineStore("pnl", {
       if (this.activeVariantId) {
         for (const p of this.pnls ?? []) {
           for (const c of (p as any)?.contracts ?? []) {
-            const hit = (c?.variants ?? []).some(
-              (v: any) => String(v?.id ?? "") === String(this.activeVariantId)
-            );
+            const hit = (c?.variants ?? []).some((v: any) => String(v?.id ?? "") === String(this.activeVariantId));
             if (hit) {
               this.activePnlId = String((p as any)?.id ?? null);
               return;
@@ -183,7 +193,7 @@ export const usePnlStore = defineStore("pnl", {
       if (!next?.id) return;
 
       // ✅ 1) essaie d'abord dans le pnl actif
-      const pools = [];
+      const pools: any[] = [];
       const active = this.pnls.find((p) => p.id === this.activePnlId);
       if (active) pools.push(active);
 
@@ -223,14 +233,7 @@ export const usePnlStore = defineStore("pnl", {
           for (const k of sectionKeys) {
             const p = (prev as any)?.[k];
             const n = (next as any)?.[k];
-            if (
-              p &&
-              n &&
-              typeof p === "object" &&
-              typeof n === "object" &&
-              !Array.isArray(p) &&
-              !Array.isArray(n)
-            ) {
+            if (p && n && typeof p === "object" && typeof n === "object" && !Array.isArray(p) && !Array.isArray(n)) {
               merged[k] = { ...p, ...n };
             }
           }
@@ -460,6 +463,34 @@ export const usePnlStore = defineStore("pnl", {
 
       this.headerDevisSurchargesPreview = null;
       return updated;
+    },
+
+    // =========================================================
+    // ✅ Export Devis Word (DOCX)
+    // =========================================================
+    async exportDevisWord(variantId: string) {
+      const id = encodeURIComponent(String(variantId ?? ""));
+      if (!id) throw new Error("variantId manquant.");
+
+      const res = await blobFetch(`/variants/${id}/devis/word`, { method: "GET" });
+      const blob = await res.blob();
+
+      // filename depuis header si dispo
+      const dispo = res.headers.get("Content-Disposition") || "";
+      const match = dispo.match(/filename="([^"]+)"/i);
+      const filename = (match?.[1] ?? `Devis - ${id}.docx`).trim();
+
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename.endsWith(".docx") ? filename : `${filename}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     },
 
     // =========================================================
