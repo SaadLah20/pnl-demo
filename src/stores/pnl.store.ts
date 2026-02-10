@@ -468,30 +468,44 @@ export const usePnlStore = defineStore("pnl", {
     // =========================================================
     // ✅ Export Devis Word (DOCX)
     // =========================================================
-    async exportDevisWord(variantId: string) {
-      const id = encodeURIComponent(String(variantId ?? ""));
-      if (!id) throw new Error("variantId manquant.");
+async exportDevisWord(variantId?: string) {
+  const vid = String(variantId ?? this.activeVariant?.id ?? "");
+  if (!vid) throw new Error("Aucune variante active (variantId manquant)");
 
-      const res = await blobFetch(`/variants/${id}/devis/word`, { method: "GET" });
-      const blob = await res.blob();
+  const useMajorations = !!this.headerUseMajorations;
+  const useDevisSurcharges = !!this.headerUseDevisSurcharge;
 
-      // filename depuis header si dispo
-      const dispo = res.headers.get("Content-Disposition") || "";
-      const match = dispo.match(/filename="([^"]+)"/i);
-      const filename = (match?.[1] ?? `Devis - ${id}.docx`).trim();
+  const qs = new URLSearchParams({
+    useMajorations: useMajorations ? "1" : "0",
+    useDevisSurcharges: useDevisSurcharges ? "1" : "0",
+  });
 
-      const url = URL.createObjectURL(blob);
-      try {
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename.endsWith(".docx") ? filename : `${filename}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    },
+  const url = `${API}/variants/${vid}/devis/word?${qs.toString()}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    let msg = `Export devis Word échoué: ${res.status}`;
+    try {
+      const j = await res.clone().json();
+      if (typeof j?.error === "string") msg = j.error;
+    } catch {}
+    throw new Error(msg);
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  // ✅ download browser
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = `Devis-${vid}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+},
+
 
     // =========================================================
     // Variant update (optimistic + normalisation réponse)

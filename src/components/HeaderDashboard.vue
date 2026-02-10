@@ -663,13 +663,33 @@ onBeforeUnmount(() => {
   gap: 7px;
 }
 
-/* Controls => flat, readable */
+/* Controls => more visible (P&L / Contrat / Variante) */
 .pill.control {
-  background: #f8fafc;
-  border-color: rgba(15, 23, 42, 0.16);
+  border-color: rgba(15, 23, 42, 0.18);
 }
-.pill.control:hover {
-  background: #f1f5f9;
+
+/* ✅ Each selector gets a light distinct background */
+.pill.pnl.control {
+  background: #fff7e6; /* light beige */
+}
+.pill.contract.control {
+  background: #ffffff; /* clean white */
+}
+.pill.variant.control {
+  background: #eef6ff; /* light blue */
+}
+
+/* hover keeps the same feel but a bit more “pop” */
+.pill.pnl.control:hover {
+  background: #fff1d6;
+  border-color: rgba(32, 184, 232, 0.28);
+}
+.pill.contract.control:hover {
+  background: #f3f6fb;
+  border-color: rgba(32, 184, 232, 0.28);
+}
+.pill.variant.control:hover {
+  background: #e5f0ff;
   border-color: rgba(32, 184, 232, 0.28);
 }
 
@@ -706,9 +726,9 @@ onBeforeUnmount(() => {
 
 /* ✅ valeur beaucoup plus lisible (demande principale) */
 .pill__value {
-  font-size: 13px;           /* ↑ lisibilité */
+  font-size: 13px; /* ↑ lisibilité */
   font-weight: 950;
-  color: var(--navy);        /* Holcim navy */
+  color: var(--navy); /* Holcim navy */
   line-height: 1.1;
 
   min-width: 0;

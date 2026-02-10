@@ -14,6 +14,7 @@ import {
   TextRun,
   WidthType,
   BorderStyle,
+  HeightRule,
 } from "docx";
 import { prisma } from "./db";
 
@@ -21,8 +22,8 @@ import { prisma } from "./db";
 type DocxAlignment = (typeof AlignmentType)[keyof typeof AlignmentType];
 
 type BuildOptions = {
-  useMajorations?: boolean;      // ✅ applique majorations (MP + transport)
-  useDevisSurcharges?: boolean;  // ✅ applique surcharges devis par formule
+  useMajorations?: boolean; // ✅ applique majorations (MP + transport)
+  useDevisSurcharges?: boolean; // ✅ applique surcharges devis par formule
 };
 
 function n(x: any): number {
@@ -117,6 +118,7 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
 
 const FONT = "Tahoma";
 const SIZE_9 = 18; // docx = half-points (9pt => 18)
+const ROW_HEIGHT = 360; // ✅ twips (~18pt) => lignes du tableau un peu plus hautes
 
 function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
   return new Paragraph({
@@ -173,17 +175,14 @@ function normalizeLines(raw: any): string[] {
       if (typeof it === "string") return it;
 
       if (it && typeof it === "object") {
-        // cas fréquents
         const text = (it as any).text ?? (it as any).label ?? (it as any).name ?? (it as any).titre;
         const value = (it as any).value ?? (it as any).valeur ?? (it as any).amount ?? (it as any).montant;
         const unit = (it as any).unit ?? (it as any).unite ?? "";
 
-        // si l'objet contient déjà une phrase complète
         if (typeof text === "string" && text.trim() && (value === undefined || value === null || value === "")) {
           return text.trim();
         }
 
-        // si on a label + value, on construit une phrase lisible
         if (typeof text === "string" && text.trim() && value !== undefined) {
           const vNum = n(value);
           const vStr = Number.isFinite(vNum) ? fmtMoney0(vNum) : String(value);
@@ -191,7 +190,6 @@ function normalizeLines(raw: any): string[] {
           return `${text.trim()} : ${vStr}${uStr}`.trim();
         }
 
-        // fallback ultime
         try {
           return JSON.stringify(it);
         } catch {
@@ -205,10 +203,7 @@ function normalizeLines(raw: any): string[] {
     .filter(Boolean);
 }
 
-export async function buildDevisWordBuffer(
-  variantId: string,
-  opts?: BuildOptions
-): Promise<Buffer> {
+export async function buildDevisWordBuffer(variantId: string, opts?: BuildOptions): Promise<Buffer> {
   const useMajorations = opts?.useMajorations !== undefined ? !!opts.useMajorations : true;
   const useDevisSurcharges = opts?.useDevisSurcharges !== undefined ? !!opts.useDevisSurcharges : true;
 
@@ -306,9 +301,7 @@ export async function buildDevisWordBuffer(
   }
 
   const transportBase = n(v?.transport?.prixMoyen ?? 0);
-  const transportUsed = useMajorations
-    ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj))
-    : transportBase;
+  const transportUsed = useMajorations ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj)) : transportBase;
 
   const tableLines: Array<{ label: string; pu: number; vol: number; total: number }> = rows.map((r: any) => {
     const label = String(r?.formule?.label ?? "—");
@@ -358,6 +351,7 @@ export async function buildDevisWordBuffer(
 
   // --- Table (proche du modèle)
   const headerRow = new TableRow({
+    height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
       new TableCell({ children: [pTxt("Désignation", { bold: true })] }),
       new TableCell({ children: [pTxt("PU HT/m3", { bold: true, align: AlignmentType.RIGHT })] }),
@@ -369,6 +363,7 @@ export async function buildDevisWordBuffer(
   const bodyRows = tableLines.map(
     (x) =>
       new TableRow({
+        height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
         children: [
           new TableCell({ children: [pTxt(x.label)] }),
           new TableCell({ children: [pTxt(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })] }),
@@ -380,6 +375,7 @@ export async function buildDevisWordBuffer(
 
   const footRows = [
     new TableRow({
+      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [
         new TableCell({ children: [pTxt("Total :", { bold: true })] }),
         new TableCell({ children: [pTxt("")] }),
@@ -388,6 +384,7 @@ export async function buildDevisWordBuffer(
       ],
     }),
     new TableRow({
+      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [
         new TableCell({ children: [pTxt("Montant TVA", { bold: true })] }),
         new TableCell({ children: [pTxt("")] }),
@@ -396,6 +393,7 @@ export async function buildDevisWordBuffer(
       ],
     }),
     new TableRow({
+      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [
         new TableCell({ children: [pTxt("Montant TTC", { bold: true })] }),
         new TableCell({ children: [pTxt("")] }),
@@ -443,7 +441,8 @@ export async function buildDevisWordBuffer(
             children: [new TextRun({ text: `${ville}, le ${date}`, font: FONT, size: SIZE_9 })],
           }),
 
-          ...blank(1),
+          // ✅ plus d'espace entre date ... et "Offre de prix ..."
+          ...blank(2),
 
           // ✅ Titre centré avec retour à la ligne entre "Offre de prix" et le nom du P&L
           new Paragraph({
@@ -454,9 +453,12 @@ export async function buildDevisWordBuffer(
             ],
           }),
 
-          // ✅ Client à droite: "Client: xxxx" en gras
+          // ✅ espace entre "offre de prix ...." et "Client..."
+          ...blank(1),
+
+          // ✅ Client aligné à gauche: "Client: xxxx" en gras
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
+            alignment: AlignmentType.LEFT,
             children: [
               new TextRun({
                 text: client ? `Client: ${client}` : "Client: —",
@@ -503,9 +505,7 @@ export async function buildDevisWordBuffer(
 
           // Prix complémentaires
           sectionTitle("Prix complémentaires :"),
-          ...(prixComplementaires.length
-            ? bulletsFromStrings(prixComplementaires)
-            : bulletsFromStrings(["—"])),
+          ...(prixComplementaires.length ? bulletsFromStrings(prixComplementaires) : bulletsFromStrings(["—"])),
 
           ...blank(1),
 
@@ -519,18 +519,18 @@ export async function buildDevisWordBuffer(
           sectionTitle("Validité de l’offre :"),
           pTxt(validiteTexte),
 
-          // ✅ Signature: espace vide avant + chaque info sur une ligne séparée
-          ...blank(2),
+          // ✅ Signature: alignée à gauche + un peu plus bas
+          ...blank(3),
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
+            alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigNom, bold: true, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
+            alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigPoste, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
+            alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigTel, font: FONT, size: SIZE_9 })],
           }),
         ],
