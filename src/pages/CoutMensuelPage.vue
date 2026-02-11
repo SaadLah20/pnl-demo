@@ -454,9 +454,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <!-- ✅ compact grid -->
-        <div class="grid6">
-          <div class="field" v-if="!hideZeros || !isZero(draft.electricite)">
+        <!-- ✅ ULTRA COMPACT GRID (zero waste + low scroll) -->
+        <div class="gridDense">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.electricite)">
             <div class="label">Électricité</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.electricite" />
@@ -464,8 +464,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <!-- ✅ Location groupes = DB legacy: location -->
-          <div class="field" v-if="!hideZeros || !isZero(draft.location)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.location)">
             <div class="label">Location groupes</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.location" />
@@ -473,7 +472,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.gasoil)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.gasoil)">
             <div class="label">Gasoil</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.gasoil" />
@@ -481,7 +480,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.hebergements)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.hebergements)">
             <div class="label">Hébergements</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.hebergements" />
@@ -489,7 +488,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.locationTerrain)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationTerrain)">
             <div class="label">Location terrain</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationTerrain" />
@@ -497,7 +496,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.telephone)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.telephone)">
             <div class="label">Téléphone</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.telephone" />
@@ -505,7 +504,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.troisG)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.troisG)">
             <div class="label">3G</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.troisG" />
@@ -513,7 +512,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.taxeProfessionnelle)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.taxeProfessionnelle)">
             <div class="label">Taxe prof.</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.taxeProfessionnelle" />
@@ -521,7 +520,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.securite)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.securite)">
             <div class="label">Sécurité</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.securite" />
@@ -529,7 +528,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.locationVehicule)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationVehicule)">
             <div class="label">Loc. véhicule</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationVehicule" />
@@ -537,7 +536,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.locationAmbulance)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationAmbulance)">
             <div class="label">Loc. ambulance</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationAmbulance" />
@@ -545,7 +544,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.locationBungalows)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationBungalows)">
             <div class="label">Loc. bungalows</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationBungalows" />
@@ -553,7 +552,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field" v-if="!hideZeros || !isZero(draft.epi)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.epi)">
             <div class="label">EPI</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.epi" />
@@ -835,43 +834,45 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 12px;
 }
 
-/* ✅ dense fields grid */
-.grid6 {
+/* ✅ ULTRA COMPACT GRID (remplit la largeur + réduit le scroll) */
+.gridDense {
   padding: 10px;
   display: grid;
-  grid-template-columns: repeat(6, minmax(170px, 1fr));
-  gap: 8px;
-}
-@media (max-width: 1400px) {
-  .grid6 {
-    grid-template-columns: repeat(3, minmax(200px, 1fr));
-  }
-}
-@media (max-width: 980px) {
-  .grid6 {
-    grid-template-columns: 1fr;
-  }
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.label {
-  font-size: 11px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.65);
-}
-.inCell {
-  display: flex;
-  align-items: center;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 8px;
 }
 
-/* ✅ smaller inputs */
+/* ✅ champ en ligne => densité + moins de hauteur */
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 170px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(15, 23, 42, 0.012);
+}
+
+/* label compact */
+.fieldRow .label {
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.68);
+  line-height: 1.1;
+}
+
+.inCell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ✅ input fluide (plus de width fixe => pas de gaspillage) */
 .in {
-  width: 120px;
-  height: 30px;
+  width: 100%;
+  height: 28px;
   border-radius: 12px;
   border: 1px solid rgba(2, 132, 199, 0.26);
   background: rgba(2, 132, 199, 0.06);
@@ -885,11 +886,26 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
+
 .u {
   font-size: 10.5px;
   font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
+}
+
+/* ✅ mobile: label au-dessus pour éviter l’écrasement */
+@media (max-width: 520px) {
+  .fieldRow {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .inCell {
+    justify-content: flex-start;
+  }
+  .in {
+    max-width: 240px;
+  }
 }
 
 .note {

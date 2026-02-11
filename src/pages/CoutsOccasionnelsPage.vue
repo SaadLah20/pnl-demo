@@ -125,7 +125,7 @@ const caTotal = computed(() => {
 ========================= */
 type Draft = {
   genieCivil: number;
-  installationCab: number;
+  installationCab: number; // (retiré de l'UI, gardé pour compat éventuelle)
   demontage: number;
   remisePointCentrale: number;
   transport: number;
@@ -133,7 +133,7 @@ type Draft = {
   localAdjuvant: number;
   bungalows: number;
 
-  // legacy compat
+  // legacy compat (✅ utilisé comme Installation CAB côté UI)
   installation: number;
 };
 
@@ -172,7 +172,7 @@ watch(
 const total = computed(() => {
   return (
     clamp(draft.genieCivil) +
-    clamp(draft.installationCab) +
+    // ✅ on retire installationCab du total UI, et on utilise le legacy (installation) comme "Installation CAB"
     clamp(draft.demontage) +
     clamp(draft.remisePointCentrale) +
     clamp(draft.transport) +
@@ -259,6 +259,7 @@ function buildPayload() {
   return {
     category: existing.category ?? "COUTS_CHARGES",
     genieCivil: Number(clamp(draft.genieCivil)),
+    // ✅ on ne pousse plus installationCab (champ retiré côté UI)
     installationCab: Number(clamp(draft.installationCab)),
     demontage: Number(clamp(draft.demontage)),
     remisePointCentrale: Number(clamp(draft.remisePointCentrale)),
@@ -266,7 +267,8 @@ function buildPayload() {
     silots: Number(clamp(draft.silots)),
     localAdjuvant: Number(clamp(draft.localAdjuvant)),
     bungalows: Number(clamp(draft.bungalows)),
-    installation: Number(clamp(draft.installation)), // legacy
+    // ✅ legacy : utilisé comme Installation CAB côté UI
+    installation: Number(clamp(draft.installation)),
   };
 }
 
@@ -360,7 +362,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 ========================= */
 const COSTS = [
   { key: "genieCivil", label: "Génie civil" },
-  { key: "installationCab", label: "Installation CAB" },
+  // ✅ SUPPRIMÉ: installationCab
   { key: "demontage", label: "Démontage" },
   { key: "remisePointCentrale", label: "Remise point centrale" },
   { key: "transport", label: "Transport" },
@@ -465,31 +467,30 @@ type CostKey = (typeof COSTS)[number]["key"];
       <div class="card">
         <!-- ✅ ultra compact grid -->
         <div class="cards">
-<template v-for="c in COSTS" :key="c.key">
-  <div class="costCard" v-if="!hideZeros || !isZero((draft as any)[c.key])">
-    <div class="hdr">
-      <div class="t" :title="c.label">{{ c.label }}</div>
-      <div class="h">DH</div>
-    </div>
+          <template v-for="c in COSTS" :key="c.key">
+            <div class="costCard" v-if="!hideZeros || !isZero((draft as any)[c.key])">
+              <div class="hdr">
+                <div class="t" :title="c.label">{{ c.label }}</div>
+                <div class="h">DH</div>
+              </div>
 
-    <div class="line">
-      <input
-        class="inCout mono"
-        type="number"
-        step="0.01"
-        min="0"
-        :value="(draft as any)[c.key]"
-        @input="(draft as any)[c.key] = clamp(($event.target as HTMLInputElement).value)"
-      />
-    </div>
-  </div>
-</template>
+              <div class="line">
+                <input
+                  class="inCout mono"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  :value="(draft as any)[c.key]"
+                  @input="(draft as any)[c.key] = clamp(($event.target as HTMLInputElement).value)"
+                />
+              </div>
+            </div>
+          </template>
 
-
-          <!-- legacy -->
+          <!-- legacy (✅ renommé Installation CAB) -->
           <div class="costCard legacy" v-if="!hideZeros || !isZero(draft.installation)">
             <div class="hdr">
-              <div class="t muted" title="DB legacy">installation (legacy)</div>
+              <div class="t" title="DB legacy">Installation CAB</div>
               <div class="h">DH</div>
             </div>
             <div class="line">
@@ -506,7 +507,7 @@ type CostKey = (typeof COSTS)[number]["key"];
         </div>
 
         <div class="note muted">
-          Saisie en <b>DH</b>. Le <b>Total</b> inclut aussi <span class="mono">installation (legacy)</span>.
+          Saisie en <b>DH</b>. Le <b>Total</b> inclut aussi <span class="mono">Installation CAB</span>.
         </div>
       </div>
     </template>

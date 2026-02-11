@@ -1,4 +1,4 @@
-<!-- src/pages/DevisPage.vue -->
+<!-- src/pages/DevisPage.vue (FICHIER COMPLET) -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -120,6 +120,9 @@ function getSurcharge(r: any): number {
 function setSurcharge(r: any, v: any) {
   const k = rowKey(r);
   draft.surcharges[k] = n(v);
+}
+function isRowTouched(r: any): boolean {
+  return Math.abs(getSurcharge(r)) > 0;
 }
 
 /* =========================
@@ -608,15 +611,33 @@ function removeExtra(idx: number) {
     <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <!-- TABS -->
-    <div class="tabs card">
-      <button class="tabBtn" :class="activeTab === 'SURCHARGES' ? 'active' : ''" @click="activeTab = 'SURCHARGES'">
-        Surcharges (prix /m³)
-      </button>
+    <!-- TABS (segmented) -->
+    <div class="tabsSeg card">
+      <div class="seg" role="tablist" aria-label="Devis tabs">
+        <button
+          class="segBtn"
+          :class="{ active: activeTab === 'SURCHARGES' }"
+          role="tab"
+          :aria-selected="activeTab === 'SURCHARGES'"
+          @click="activeTab = 'SURCHARGES'"
+          type="button"
+        >
+          Surcharges <span class="segHint">(/m³)</span>
+        </button>
 
-      <button class="tabBtn" :class="activeTab === 'CONTENU' ? 'active' : ''" @click="activeTab = 'CONTENU'">
-        Contenu devis (text)
-      </button>
+        <button
+          class="segBtn"
+          :class="{ active: activeTab === 'CONTENU' }"
+          role="tab"
+          :aria-selected="activeTab === 'CONTENU'"
+          @click="activeTab = 'CONTENU'"
+          type="button"
+        >
+          Contenu <span class="segHint">(texte)</span>
+        </button>
+
+        <span class="segRail" aria-hidden="true"></span>
+      </div>
     </div>
 
     <!-- TAB 1: SURCHARGES -->
@@ -649,116 +670,114 @@ function removeExtra(idx: number) {
       </div>
 
       <div class="card cardTable">
-        <div class="gHead theadSticky" role="row">
-          <div class="hCell">Désignation</div>
-          <div class="hCell right">CMP</div>
-          <div class="hCell right">MOMD</div>
-          <div class="hCell right">Prix</div>
-          <div class="hCell right">Surcharge</div>
-          <div class="hCell right">Prix déf.</div>
-          <div class="hCell right">Vol.</div>
-          <div class="hCell right">Total</div>
-        </div>
+        <div class="tableWrap">
+          <div class="tHead" role="row">
+            <div class="th">Désignation</div>
+            <div class="th r">CMP</div>
+            <div class="th r">MOMD</div>
+            <div class="th r">PV (pond)</div>
+            <div class="th r">Surcharge</div>
+            <div class="th r">PV déf.</div>
+            <div class="th r">Total</div>
+          </div>
 
-        <div class="gBody">
-          <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
+          <div class="tBody">
+            <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
 
-          <div v-for="r in rows" :key="rowKey(r)" class="gRow" role="row">
-            <div class="cell cellMain" :data-label="'Désignation'">
-              <div class="mainLine">
-                <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
+            <div
+              v-for="r in rows"
+              :key="rowKey(r)"
+              class="tRow"
+              role="row"
+              :class="{ touched: isRowTouched(r) }"
+            >
+              <!-- Désignation (hauteur stable) -->
+              <div class="td main" :data-label="'Désignation'">
+                <div class="mainLine">
+                  <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
 
-                <span class="cmtWrap">
-                  <button class="cmtBtn" type="button" aria-label="Info">
-                    <InformationCircleIcon class="cmtIc" />
-                  </button>
-                  <span class="cmtTip" role="tooltip">
-                    Transport (base) : <b>{{ money2(transportBaseM3) }}</b> DH/m³
-                    <br />
-                    Volume : <b>{{ int(r?.volumeM3) }}</b> m³
+                  <!-- tooltip compact (ne change pas la hauteur) -->
+                  <span class="tipWrap">
+                    <button class="tipBtn" type="button" aria-label="Détails">
+                      <InformationCircleIcon class="tipIc" />
+                    </button>
+
+                    <span class="tip" role="tooltip">
+                      CMP : <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b> DH/m³<br />
+                      Transport (base) : <b class="mono">{{ money2(transportBaseM3) }}</b> DH/m³<br />
+                      MOMD : <b class="mono">{{ money2(r?.momd) }}</b> DH/m³<br />
+                      PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />
+                      <template v-if="withMajorations">
+                        PV Maj : <b class="mono">{{ money2(pvWithMajorationM3(r)) }}</b> DH/m³<br />
+                      </template>
+                      PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
+                      <span class="mutedLine">Clé: {{ rowKey(r) }}</span>
+                    </span>
                   </span>
-                </span>
-              </div>
-
-              <div class="subText ell">
-                Clé: <span class="mono">{{ rowKey(r) }}</span>
-              </div>
-            </div>
-
-            <div class="cell right" :data-label="'CMP'">
-              <div class="value mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</div>
-            </div>
-
-            <div class="cell right" :data-label="'MOMD'">
-              <div class="value mono">{{ money2(r?.momd) }}</div>
-            </div>
-
-            <div class="cell right" :data-label="'Prix'">
-              <div class="priceStack">
-                <div class="pLine">
-                  <span class="tag">Base</span>
-                  <span class="mono pVal">{{ money0(pvBaseM3(r)) }}</span>
-                  <span class="u">DH/m³</span>
                 </div>
-                <div v-if="withMajorations" class="pLine maj">
-                  <span class="tag">Maj</span>
-                  <span class="mono pVal">{{ money0(pvWithMajorationM3(r)) }}</span>
-                  <span class="u">DH/m³</span>
-                </div>
-                <div class="pLine strong">
-                  <span class="tag">Pond</span>
-                  <span class="mono pVal">{{ money0(pvPondereM3(r)) }}</span>
-                  <span class="u">DH/m³</span>
+
+                <!-- volume en ligne compacte (sans augmenter la hauteur) -->
+                <div class="subTextLine">
+                  <span class="muted">Vol.</span>
+                  <b class="mono">{{ int(r?.volumeM3) }}</b>
+                  <span class="muted">m³</span>
                 </div>
               </div>
-            </div>
 
-            <div class="cell right" :data-label="'Surcharge'">
-              <input
-                class="input numInput"
-                type="number"
-                step="1"
-                :value="getSurcharge(r)"
-                @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
-              />
-            </div>
+              <div class="td r" :data-label="'CMP'">
+                <div class="val mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</div>
+              </div>
 
-            <div class="cell right" :data-label="'Prix déf.'">
-              <span class="pillStrong mono">{{ money0(pvDefinitifM3(r)) }}</span>
-            </div>
+              <div class="td r" :data-label="'MOMD'">
+                <div class="val mono">{{ money2(r?.momd) }}</div>
+              </div>
 
-            <div class="cell right" :data-label="'Vol.'">
-              <div class="value mono">{{ int(r?.volumeM3) }}</div>
-            </div>
+              <div class="td r" :data-label="'PV (pond)'">
+                <span class="pillStrong mono">{{ money2(pvPondereM3(r)) }}</span>
+              </div>
 
-            <div class="cell right" :data-label="'Total'">
-              <div class="value mono strong">{{ money0(pvDefinitifM3(r) * n(r?.volumeM3)) }}</div>
+              <div class="td r" :data-label="'Surcharge'">
+                <input
+                  class="input numInput"
+                  type="number"
+                  step="1"
+                  :value="getSurcharge(r)"
+                  @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
+
+              <div class="td r" :data-label="'PV déf.'">
+                <span class="pillFinal mono">{{ money2(pvDefinitifM3(r)) }}</span>
+              </div>
+
+              <div class="td r" :data-label="'Total'">
+                <div class="val mono strong">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="gFoot">
-          <div class="footLine">
-            <span class="muted">Prix moyen devis :</span>
-            <b class="mono">{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
+        <div class="tFoot">
+          <div class="sumGrid">
+            <div class="sumBox">
+              <div class="k">Prix moyen devis</div>
+              <div class="v mono">{{ money2(prixMoyenDefinitif) }} <span>DH/m³</span></div>
+            </div>
 
-            <span class="sep">•</span>
+            <div class="sumBox">
+              <div class="k">Volume</div>
+              <div class="v mono">{{ int(volumeTotalFromFormules) }} <span>m³</span></div>
+            </div>
 
-            <span class="muted">Volume :</span>
-            <b class="mono">{{ int(volumeTotalFromFormules) }}</b><span class="muted">m³</span>
-
-            <span class="sep">•</span>
-
-            <span class="muted">CA devis :</span>
-            <b class="mono">{{ money0(caDevisTotal) }}</b><span class="muted">DH</span>
+            <div class="sumBox">
+              <div class="k">CA devis</div>
+              <div class="v mono">{{ money2(caDevisTotal) }} <span>DH</span></div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div class="card hint">
-        <div class="muted">
-          • <b>Pond</b> = prix (base/maj) arrondi au multiple de 5.
-          &nbsp;• <b>Surcharge</b> peut être négative et s’ajoute après pondération.
+          <div class="muted" style="margin-top:6px;">
+            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après pondération.
+          </div>
         </div>
       </div>
     </template>
@@ -902,56 +921,87 @@ function removeExtra(idx: number) {
 </template>
 
 <style scoped>
-/* styles identiques à ta version précédente (je garde compact) */
-.page { padding: 14px; display:flex; flex-direction:column; gap:12px; }
+/* ✅ header + page plus compact (sans casser la charte) */
+.page { padding: 10px 12px; display:flex; flex-direction:column; gap:10px; }
 
-.top { display:flex; justify-content:space-between; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.tleft { display:flex; flex-direction:column; gap:4px; min-width: 240px; }
-.title { font-size:18px; font-weight:900; color:#111827; }
-.subline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.top { display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap; }
+.tleft { display:flex; flex-direction:column; gap:2px; min-width: 240px; }
+.title { font-size:15px; font-weight:900; color:#111827; line-height: 1.15; }
+.subline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:11.5px; }
 .sep { color:#9ca3af; }
 
-.tright { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.tright { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 
-.alert { border:1px solid #e5e7eb; border-radius:14px; padding:10px 12px; background:#fff; color:#111827; font-size:13px; }
+.alert { border:1px solid #e5e7eb; border-radius:14px; padding:8px 10px; background:#fff; color:#111827; font-size:12px; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
-.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:10px 12px; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:8px 10px; }
 .cardTable { padding: 0; overflow: hidden; }
-.hint { padding: 10px 12px; }
+.hint { padding: 8px 10px; }
 
-.btn { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:8px 10px; font-size:12px; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
+.btn {
+  border:1px solid #d1d5db;
+  background:#fff;
+  border-radius:12px;
+  padding:7px 9px;
+  font-size:11px;
+  font-weight:900;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
 .btn:hover { background:#f9fafb; }
 .btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
 .btn.primary:hover { background: rgba(24,64,112,1); }
 
-.input { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:12px; font-size:13px; background:#fff; }
+.input { width:100%; padding:6px 8px; border:1px solid #d1d5db; border-radius:12px; font-size:12px; background:#fff; }
 .right { text-align:right; }
-.muted { color:#6b7280; font-size:12px; }
+.muted { color:#6b7280; font-size:11.5px; }
 .ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .mono { font-variant-numeric: tabular-nums; }
 .strong { font-weight: 950; }
 
-.actIc{ width:18px; height:18px; }
+.actIc{ width:16px; height:16px; }
 
-.tabs{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.tabBtn{
-  border: 1px solid rgba(16,24,40,0.14);
+/* =========================
+   TABS segmented (pro) - compact
+========================= */
+.tabsSeg { padding: 8px 10px; }
+.seg{
+  position: relative;
+  display:flex;
+  gap:6px;
+  padding: 5px;
+  border-radius: 16px;
+  border: 1px solid rgba(16,24,40,0.12);
   background: rgba(15,23,42,0.02);
-  color:#111827;
+  width: fit-content;
+  max-width: 100%;
+}
+.segBtn{
+  position: relative;
+  z-index: 2;
+  border: 0;
+  background: transparent;
   border-radius: 14px;
-  padding: 10px 12px;
-  font-weight: 950;
-  font-size: 12px;
+  padding: 7px 10px;
+  font-weight: 1000;
+  font-size: 11.5px;
   cursor: pointer;
+  color: rgba(15,23,42,0.75);
+  white-space: nowrap;
 }
-.tabBtn:hover{ background: rgba(15,23,42,0.04); }
-.tabBtn.active{
-  background: rgba(24,64,112,0.10);
-  border-color: rgba(24,64,112,0.30);
+.segBtn:hover{ background: rgba(15,23,42,0.04); }
+.segBtn.active{
   color: rgba(24,64,112,1);
+  background: rgba(24,64,112,0.10);
+  box-shadow: 0 6px 14px rgba(2,6,23,0.06);
 }
+.segHint{ font-weight: 900; opacity: .7; margin-left: 6px; font-size: 10.5px; }
+.segRail{ display:none; }
 
+/* Controls */
 .controls{
   display:flex;
   align-items:flex-start;
@@ -959,214 +1009,276 @@ function removeExtra(idx: number) {
   gap:10px;
   flex-wrap:wrap;
 }
-.leftControls{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.leftControls{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 .chk{
   display:inline-flex;
   align-items:center;
   gap:8px;
-  font-size:12px;
+  font-size:11.5px;
   font-weight:900;
   color:#111827;
   user-select:none;
 }
-.chk input{ width:16px; height:16px; border-radius:6px; }
+.chk input{ width:15px; height:15px; border-radius:6px; }
 
 .pillInfo{
   display:inline-flex;
   align-items:center;
   gap:8px;
-  padding: 6px 10px;
+  padding: 5px 9px;
   border-radius: 999px;
   border: 1px solid rgba(16,24,40,0.12);
   background: rgba(15,23,42,0.03);
-  font-size:12px;
+  font-size:11.5px;
   font-weight:900;
   color:#111827;
 }
 
-.gHead, .gRow{
-  display:grid;
+/* =========================
+   TABLE (zéro scroll horizontal au max)
+========================= */
+.tableWrap{
   width:100%;
-  column-gap: 10px;
-  align-items:start;
+  overflow-x: auto; /* garde fallback */
+  -webkit-overflow-scrolling: touch;
+}
+.tableWrap::-webkit-scrollbar { height: 9px; }
+.tableWrap::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.18); border-radius: 999px; }
+.tableWrap::-webkit-scrollbar-track { background: rgba(15,23,42,0.04); border-radius: 999px; }
+
+/* ✅ colonnes plus serrées + désignation flexible */
+.tHead, .tRow{
+  display:grid;
+  column-gap: 12px;
+  align-items:center;
   grid-template-columns:
-    minmax(200px, 2.4fr)
-    minmax(70px, .7fr)
-    minmax(70px, .7fr)
-    minmax(190px, 1.5fr)
-    minmax(110px, .9fr)
-    minmax(110px, .9fr)
-    minmax(70px, .7fr)
-    minmax(120px, 1fr);
+    minmax(220px, 2.7fr) /* Désignation */
+    78px                 /* CMP */
+    78px                 /* MOMD */
+    90px                 /* PV pond */
+    78px                 /* Surcharge */
+    90px                 /* PV déf */
+    110px;               /* Total */
 }
 
-.gHead{
-  padding: 10px 12px;
-  background:#fafafa;
-  border-bottom: 1px solid #e5e7eb;
-  font-size:11px;
-  font-weight: 900;
-  color:#6b7280;
-}
-.hCell{ min-width: 0; white-space: normal; line-height: 1.15; }
-
-.gBody{ padding: 0; }
-.gRow{
-  padding: 10px 12px;
-  border-bottom:1px solid #e5e7eb;
-}
-.gRow:hover{ background:#fafafa; }
-
-.cell{ min-width: 0; }
-.value{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cellMain{ overflow: visible; }
-.mainLine { display:flex; align-items:center; gap:8px; min-width:0; }
-.subText { margin-top: 2px; font-size: 11px; color: rgba(15,23,42,0.62); }
-
-.emptyRow{ padding: 14px 12px; color:#6b7280; font-size:12px; }
-
-.gFoot{ padding: 10px 12px; background: rgba(15,23,42,0.02); }
-.footLine{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-
-.theadSticky{
+.tHead{
   position: sticky;
-  top: -14px;
-  z-index: 20;
-  box-shadow: 0 6px 14px rgba(2, 6, 23, 0.06);
+  top: 0;
+  z-index: 10;
+  padding: 7px 10px;
+  background: #fafafa;
+  border-bottom: 1px solid rgba(16,24,40,0.10);
+  font-size: 10.5px;
+  font-weight: 1000;
+  color: rgba(15,23,42,0.60);
+}
+.th{ min-width:0; text-align:left; }
+.th.r{ text-align:right; }
+
+/* ✅ séparation visuelle claire entre Désignation et CMP */
+.tHead > .th:first-child,
+.tRow  > .td:first-child{
+  padding-right: 12px;
+  border-right: 1px solid rgba(16,24,40,0.08);
 }
 
-.cmtWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; }
-.cmtBtn{
-  width: 26px; height: 26px;
+/* ✅ CMP respire côté gauche */
+.tHead > .th:nth-child(2),
+.tRow  > .td:nth-child(2){
+  padding-left: 8px;
+}
+
+.tBody{ padding: 0; }
+.tRow{
+  padding: 6px 10px; /* ✅ plus bas */
+  border-bottom: 1px solid rgba(16,24,40,0.10);
+}
+.tRow:hover{ background: rgba(15,23,42,0.02); }
+
+.tRow.touched{
+  box-shadow: inset 3px 0 0 rgba(24,64,112,0.55);
+  background: rgba(24,64,112,0.03);
+}
+
+.td{ min-width:0; }
+.td.r{ text-align:right; }
+
+/* ✅ chiffres plus petits */
+.val{ font-size: 12px; font-weight: 950; }
+
+/* ✅ volume compact et aligné sans “gonfler” la ligne */
+.mainLine{
+  display:flex;
+  align-items:center;
+  gap: 8px;
+  min-height: 20px;     /* stabilise l’alignement vertical */
+}
+.subTextLine{
+  display:flex;
+  align-items:center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: rgba(15,23,42,0.60);
+  line-height: 1.1;
+}
+
+.emptyRow{ padding: 12px 10px; color:#6b7280; font-size:12px; }
+
+/* ✅ pills plus “plates” */
+.pillStrong{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  font-weight: 1000;
+  color:#111827;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.pillFinal{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(24,64,112,0.22);
+  background: rgba(24,64,112,0.06);
+  font-weight: 1000;
+  color: rgba(24,64,112,1);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* ✅ input surcharge plus petit + ne force pas de largeur */
+.numInput{
+  width: 100%;
+  max-width: 78px;
+  text-align:right;
+  margin-left:auto;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 7px;
   border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  font-size: 12px;
+}
+
+/* Tooltip (compact + sans impact hauteur) */
+.tipWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; flex: 0 0 auto; }
+.tipBtn{
+  width: 22px; height: 22px;
+  border-radius: 9px;
+  border: 1px solid rgba(16,24,40,0.12);
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
+  flex: 0 0 auto;
 }
-.cmtIc{ width: 16px; height: 16px; color:#6b7280; }
-.cmtTip{
+.tipIc{ width: 14px; height: 14px; color: rgba(15,23,42,0.55); }
+.tip{
   position:absolute;
-  left: 34px;
+  left: 30px;
   top: 50%;
   transform: translateY(-50%);
-  min-width: 240px;
+  min-width: 230px;
   max-width: 360px;
-  background: rgba(17,24,39,0.95);
+  background: rgba(17,24,39,0.96);
   color: #fff;
   border: 1px solid rgba(255,255,255,0.12);
-  padding: 8px 10px;
+  padding: 7px 9px;
   border-radius: 12px;
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: 11.5px;
+  line-height: 1.22;
   opacity: 0;
   pointer-events: none;
   transition: opacity .12s ease, transform .12s ease;
   transform: translateY(-50%) translateX(-4px);
   z-index: 9999;
 }
-.cmtWrap:hover .cmtTip{
+.tipWrap:hover .tip{
   opacity: 1;
   transform: translateY(-50%) translateX(0px);
 }
+.mutedLine{ display:block; margin-top: 5px; opacity: .85; }
 
-.pillStrong{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.04);
-  font-weight: 1000;
-  color:#111827;
-  max-width: 100%;
-  overflow:hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.numInput{
-  width: 100%;
-  min-width: 0;
-  max-width: 110px;
-  text-align:right;
-  padding-right: 10px;
-  font-variant-numeric: tabular-nums;
-  margin-left: auto;
-}
-
-.priceStack{
-  display:flex;
-  flex-direction:column;
-  gap: 4px;
-  align-items:flex-end;
-}
-.pLine{
-  display:flex;
-  gap: 8px;
-  align-items:center;
-  padding: 4px 8px;
-  border-radius: 12px;
-  border: 1px solid rgba(16,24,40,0.10);
+/* Footer résumé */
+.tFoot{
+  padding: 8px 10px;
   background: rgba(15,23,42,0.02);
-  font-size: 12px;
-  white-space:nowrap;
+  border-top: 1px solid rgba(16,24,40,0.08);
 }
-.pLine.maj{
-  border-color: rgba(16,185,129,0.18);
-  background: rgba(16,185,129,0.06);
+.sumGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 10px;
 }
-.pLine.strong{
-  border-color: rgba(24,64,112,0.22);
-  background: rgba(24,64,112,0.06);
-  font-weight: 1000;
-}
-.tag{
-  font-size: 11px;
-  font-weight: 1000;
-  color: rgba(15,23,42,0.65);
-  background: rgba(255,255,255,0.75);
+.sumBox{
   border: 1px solid rgba(16,24,40,0.10);
-  padding: 1px 8px;
-  border-radius: 999px;
+  background: rgba(255,255,255,0.75);
+  border-radius: 14px;
+  padding: 8px 10px;
 }
-.pVal{ font-weight: 1000; }
-.u{ font-size: 11px; color: rgba(15,23,42,0.60); }
+.sumBox .k{
+  font-size: 10.5px;
+  font-weight: 1000;
+  color: rgba(15,23,42,0.55);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.sumBox .v{
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 1000;
+  color: #0f172a;
+}
+.sumBox .v span{
+  color: rgba(15,23,42,0.55);
+  font-weight: 900;
+  margin-left: 6px;
+  font-size: 11.5px;
+}
 
 @media (max-width: 980px) {
-  .gHead{ display:none; }
-  .gRow{
+  .tHead{ display:none; }
+  .tRow{
     grid-template-columns: 1fr 1fr;
-    row-gap: 10px;
-    border-bottom: none;
-    border-top: 1px solid #e5e7eb;
+    row-gap: 8px;
+    align-items:start;
+    border-top: 1px solid rgba(16,24,40,0.10);
+    border-bottom: 0;
+    padding: 10px 10px;
   }
-  .gRow > .cell:first-child{ grid-column: 1 / -1; }
+  .tRow > .td:first-child{ grid-column: 1 / -1; border-right: 0; padding-right: 0; }
 
-  .gRow > .cell{
+  .tRow > .td{
     display:flex;
     justify-content:space-between;
     gap: 10px;
     align-items:center;
     padding: 2px 0;
+    text-align: right;
   }
-  .gRow > .cell::before{
+  .tRow > .td::before{
     content: attr(data-label);
-    color:#6b7280;
-    font-weight: 900;
+    color: rgba(15,23,42,0.60);
+    font-weight: 950;
     font-size: 11px;
     flex: 0 0 auto;
+    text-align:left;
   }
-  .gRow > .cell.cellMain{
+  .tRow > .td.main{
     display:block;
     padding: 0;
+    text-align:left;
   }
-  .gRow > .cell.cellMain::before{ content: ""; display:none; }
+  .tRow > .td.main::before{ content:""; display:none; }
 
-  .numInput{ max-width: 180px; }
-  .priceStack{ align-items: flex-end; }
+  .numInput{ max-width: 160px; }
+  .sumGrid{ grid-template-columns: 1fr; }
 }
 
 /* Contenu */

@@ -362,7 +362,13 @@ const filteredPnls = computed<any[]>(() => {
       const model = normalize(p?.model);
       const city = normalize(p?.city);
       const status = normalize(p?.status);
-      return title.includes(query) || client.includes(query) || model.includes(query) || city.includes(query) || status.includes(query);
+      return (
+        title.includes(query) ||
+        client.includes(query) ||
+        model.includes(query) ||
+        city.includes(query) ||
+        status.includes(query)
+      );
     });
   }
 
@@ -400,10 +406,7 @@ function onDocDown(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (!t) return;
 
-  // allow filter popover anchor
   if (t.closest?.("[data-filter-anchor]")) return;
-
-  // allow menu clicks
   if (t.closest?.("[data-menu]")) return;
 
   filterOpen.value = false;
@@ -411,6 +414,37 @@ function onDocDown(e: MouseEvent) {
 }
 document.addEventListener("mousedown", onDocDown);
 onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
+
+/* =========================================================
+   ✅ MODAL (confirm/info) — remplace confirm()/alert()
+========================================================= */
+const modal = reactive({
+  open: false,
+  title: "",
+  message: "",
+  mode: "confirm" as "confirm" | "info",
+  onConfirm: null as null | (() => void | Promise<void>),
+});
+function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "confirm";
+  modal.onConfirm = onConfirm;
+}
+function openInfo(title: string, message: string) {
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "info";
+  modal.onConfirm = null;
+}
+function closeModal() {
+  modal.open = false;
+  modal.title = "";
+  modal.message = "";
+  modal.onConfirm = null;
+}
 
 /* =========================================================
    Actions
@@ -421,29 +455,43 @@ function openVariant(pnlId: string, contractId: string, variantId: string) {
 }
 
 async function deleteVariant(variantId: string) {
-  if (!confirm("Supprimer définitivement cette variante ?")) return;
-  try {
-    await apiJson(`/variants/${variantId}`, { method: "DELETE" });
-    localStorage.removeItem(LS_ACTIVE_VARIANT);
-    await ensureInitialActive();
-  } catch (e: any) {
-    alert(e?.message ?? "Suppression impossible");
-  }
+  openConfirm("Supprimer", "Supprimer définitivement cette variante ?", async () => {
+    closeModal();
+    try {
+      await apiJson(`/variants/${variantId}`, { method: "DELETE" });
+      localStorage.removeItem(LS_ACTIVE_VARIANT);
+      await ensureInitialActive();
+    } catch (e: any) {
+      openInfo("Erreur", e?.message ?? "Suppression impossible");
+    }
+  });
 }
 
 async function deleteContract(contractId: string) {
-  if (!confirm("Supprimer définitivement ce contrat et toutes ses variantes ?")) return;
-  await apiJson(`/contracts/${contractId}`, { method: "DELETE" });
-  localStorage.removeItem(LS_ACTIVE_VARIANT);
-  await ensureInitialActive();
+  openConfirm("Supprimer", "Supprimer définitivement ce contrat et toutes ses variantes ?", async () => {
+    closeModal();
+    try {
+      await apiJson(`/contracts/${contractId}`, { method: "DELETE" });
+      localStorage.removeItem(LS_ACTIVE_VARIANT);
+      await ensureInitialActive();
+    } catch (e: any) {
+      openInfo("Erreur", e?.message ?? "Suppression impossible");
+    }
+  });
 }
 
 async function deletePnl(pnlId: string) {
-  if (!confirm("Supprimer définitivement ce P&L (contrats + variantes) ?")) return;
-  await apiJson(`/pnls/${pnlId}`, { method: "DELETE" });
-  localStorage.removeItem(LS_ACTIVE_PNL);
-  localStorage.removeItem(LS_ACTIVE_VARIANT);
-  await ensureInitialActive();
+  openConfirm("Supprimer", "Supprimer définitivement ce P&L (contrats + variantes) ?", async () => {
+    closeModal();
+    try {
+      await apiJson(`/pnls/${pnlId}`, { method: "DELETE" });
+      localStorage.removeItem(LS_ACTIVE_PNL);
+      localStorage.removeItem(LS_ACTIVE_VARIANT);
+      await ensureInitialActive();
+    } catch (e: any) {
+      openInfo("Erreur", e?.message ?? "Suppression impossible");
+    }
+  });
 }
 
 /* =========================================================
@@ -535,6 +583,7 @@ function resetDraft() {
   draft.matierePremiere = "LHM";
   draft.maintenance = "LHM";
   draft.chargeuse = "LHM";
+
   draft.branchementEau = "LHM";
   draft.consoEau = "LHM";
   draft.branchementElec = "LHM";
@@ -887,7 +936,6 @@ async function handleSaveComposee(payload: ComposePayload) {
 
 <template>
   <div class="page">
-    <!-- ✅ SUB HEADER (sticky under HeaderDashboard) -->
     <div class="subHeader">
       <div class="subLeft">
         <div class="title">Mes P&amp;L</div>
@@ -899,18 +947,14 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
 
       <div class="subRight">
-        <!-- ✅ +P&L : bleu Holcim -->
         <button class="chipBtn chipBtn--pnl" @click="openCreatePnl">+ P&amp;L</button>
 
         <button class="chipBtn" @click="collapseAllPnls" title="Tout réduire">Réduire</button>
 
-        <button class="chipIcon" data-filter-anchor @click="filterOpen = !filterOpen" title="Filtres / Tri">
-          ⚙
-        </button>
+        <button class="chipIcon" data-filter-anchor @click="filterOpen = !filterOpen" title="Filtres / Tri">⚙</button>
 
         <button class="chipIcon" @click="store.loadPnls?.()" title="Recharger">↻</button>
 
-        <!-- FILTER POPOVER -->
         <div v-if="filterOpen" class="popover" data-filter-anchor>
           <div class="popGrid">
             <select class="sel" v-model="pnlStatusFilter" title="Statut">
@@ -951,7 +995,6 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
     </div>
 
-    <!-- LIST -->
     <div v-if="store.loading" class="card">Chargement…</div>
     <div v-else-if="store.error" class="card card--error"><b>Erreur :</b> {{ store.error }}</div>
 
@@ -959,7 +1002,6 @@ async function handleSaveComposee(payload: ComposePayload) {
       <div v-if="filteredPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
 
       <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: p.id === activePnlId }">
-        <!-- PNL ROW -->
         <div class="row pnlRow">
           <button class="disc" @click="togglePnl(p.id)" :aria-expanded="isOpenPnl(p.id)">
             {{ isOpenPnl(p.id) ? "▾" : "▸" }}
@@ -983,9 +1025,7 @@ async function handleSaveComposee(payload: ComposePayload) {
             </div>
           </div>
 
-          <!-- ✅ actions: 1 bouton + menu -->
           <div class="actions">
-            <!-- ✅ Créer contrat : vert Holcim -->
             <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
               + Contrat
             </button>
@@ -1002,7 +1042,6 @@ async function handleSaveComposee(payload: ComposePayload) {
           </div>
         </div>
 
-        <!-- CONTRACTS -->
         <div v-show="isOpenPnl(p.id)" class="children">
           <div class="sectionHead">
             <div class="sectionTitle">Contrats</div>
@@ -1040,7 +1079,6 @@ async function handleSaveComposee(payload: ComposePayload) {
               </div>
 
               <div class="actions">
-                <!-- ✅ Créer variante : cyan Holcim -->
                 <button class="chipBtn chipBtn--variant" @click="openCreateVariant(c.id)" title="Créer une variante">
                   + Variante
                 </button>
@@ -1087,10 +1125,7 @@ async function handleSaveComposee(payload: ComposePayload) {
                 </div>
 
                 <div class="actions">
-                  <!-- ✅ Ouvrir : navy soft / gris bleuté (neutre mais distinct) -->
-                  <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">
-                    Ouvrir
-                  </button>
+                  <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
 
                   <div class="menu" data-menu>
                     <button class="chipIcon" @click="openMenu(`variant:${v.id}`)" title="Actions">⋯</button>
@@ -1110,6 +1145,34 @@ async function handleSaveComposee(payload: ComposePayload) {
         </div>
       </div>
     </div>
+
+    <!-- ✅ CONFIRM/INFO MODAL (custom) -->
+    <teleport to="body">
+      <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
+        <div class="dlg">
+          <div class="dlgHdr">
+            <div class="dlgTtl">{{ modal.title }}</div>
+            <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
+          </div>
+
+          <div class="dlgBody">
+            <div class="dlgMsg">{{ modal.message }}</div>
+          </div>
+
+          <div class="dlgFtr">
+            <button class="btn2" type="button" @click="closeModal()">Fermer</button>
+            <button
+              v-if="modal.mode === 'confirm'"
+              class="btn2 pri"
+              type="button"
+              @click="modal.onConfirm && modal.onConfirm()"
+            >
+              Confirmer
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
 
     <!-- VIEW MODAL -->
     <Teleport to="body">
@@ -1171,7 +1234,7 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
     </Teleport>
 
-    <!-- EDIT MODAL (inchangé fonctionnellement) -->
+    <!-- EDIT MODAL -->
     <Teleport to="body">
       <div v-if="editOpen" class="modalOverlay" @click.self="closeEdit()">
         <div class="modal">
@@ -1188,7 +1251,6 @@ async function handleSaveComposee(payload: ComposePayload) {
           <div class="modalBody">
             <div v-if="editErr" class="alert"><b>Erreur :</b> {{ editErr }}</div>
 
-            <!-- PNL -->
             <div v-if="editMode === 'pnl'" class="formGrid">
               <div class="f">
                 <div class="k">Titre</div>
@@ -1225,7 +1287,6 @@ async function handleSaveComposee(payload: ComposePayload) {
               </div>
             </div>
 
-            <!-- CONTRACT -->
             <div v-else-if="editMode === 'contract'" class="stack">
               <div class="sectionBox">
                 <div class="sectionTitle">Synthèse</div>
@@ -1287,7 +1348,6 @@ async function handleSaveComposee(payload: ComposePayload) {
               </div>
             </div>
 
-            <!-- VARIANT UPDATE -->
             <div v-else class="formGrid">
               <div class="f">
                 <div class="k">Titre</div>
@@ -1311,7 +1371,6 @@ async function handleSaveComposee(payload: ComposePayload) {
 
           <div class="modalFoot">
             <button class="chipBtn" :disabled="editBusy" @click="closeEdit()">Annuler</button>
-            <!-- ✅ CTA principal garde le style global (navy) -->
             <button class="chipBtn chipBtn--primary" :disabled="editBusy" @click="saveEdit()">
               {{ editBusy ? "Enregistrement…" : isCreate ? "Créer" : "Enregistrer" }}
             </button>
@@ -1320,7 +1379,6 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
     </Teleport>
 
-    <!-- ✅ NEW VARIANT MODALS -->
     <VariantCreateModal
       :open="createOpen"
       :contract-id="createContractId"
@@ -1342,18 +1400,22 @@ async function handleSaveComposee(payload: ComposePayload) {
 </template>
 
 <style scoped>
-/* Layout page compact */
 .page {
   --navy: #184070;
   --cyan: #20b8e8;
 
-  /* ✅ Holcim-inspired accents */
-  --holcim-navy: #184070;   /* bleu profond */
-  --holcim-cyan: #20b8e8;   /* cyan du logo */
-  --holcim-green: #7bbf3a;  /* vert du logo */
+  --holcim-navy: #184070;
+  --holcim-cyan: #7b9da7;
+  --holcim-green: #65814d;
+
   --holcim-open-bg: rgba(24, 64, 112, 0.08);
-  --holcim-open-bd: rgba(24, 64, 112, 0.20);
+  --holcim-open-bd: rgba(24, 64, 112, 0.2);
   --holcim-open-tx: rgba(24, 64, 112, 0.92);
+
+  /* ✅ active accents */
+  --active-pnl: rgba(32, 184, 232, 1);
+  --active-contract: rgba(24, 64, 112, 1);
+  --active-variant: rgba(123, 191, 58, 1);
 
   --bg: #f4f6fb;
   --card: #ffffff;
@@ -1369,17 +1431,14 @@ async function handleSaveComposee(payload: ComposePayload) {
   box-sizing: border-box;
 }
 
-/* ✅ Sous header sticky */
 .subHeader {
   position: sticky;
-  top: var(--hd-offset, -15px); /* ⬅️ ajuste si besoin */
+  top: var(--hd-offset, -15px);
   z-index: 50;
-
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-
   background: rgba(244, 246, 251, 0.92);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
@@ -1405,11 +1464,9 @@ async function handleSaveComposee(payload: ComposePayload) {
   min-width: 280px;
   max-width: 460px;
   flex: 1 1 auto;
-
   display: flex;
   align-items: center;
   gap: 6px;
-
   background: #ffffff;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1437,7 +1494,9 @@ async function handleSaveComposee(payload: ComposePayload) {
   position: relative;
 }
 
-/* Compact buttons (chips) */
+/* =========================
+   Buttons / chips
+========================= */
 .chipBtn {
   border-radius: 12px;
   padding: 7px 10px;
@@ -1453,52 +1512,61 @@ async function handleSaveComposee(payload: ComposePayload) {
   background: rgba(32, 184, 232, 0.08);
   border-color: rgba(32, 184, 232, 0.22);
 }
+
+/* ✅ primary visible (create/save) even before hover */
 .chipBtn--primary {
-  background: var(--navy);
-  border-color: var(--navy);
-  color: #fff;
+  background: var(--holcim-navy) !important;
+  border-color: var(--holcim-navy) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 18px rgba(24, 64, 112, 0.18);
 }
 .chipBtn--primary:hover {
-  background: #14345c;
+  background: #14345c !important;
+  border-color: #14345c !important;
+}
+.modalFoot .chipBtn--primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: var(--holcim-navy) !important;
+  border-color: var(--holcim-navy) !important;
 }
 
-/* =========================================================
-   ✅ NEW: Action color variants (Holcim-inspired)
-========================================================= */
-/* +P&L (navy) */
+/* ✅ +P&L (navy) */
 .chipBtn--pnl {
   background: var(--holcim-navy);
   border-color: var(--holcim-navy);
   color: #fff;
+  box-shadow: 0 6px 18px rgba(24, 64, 112, 0.16);
 }
 .chipBtn--pnl:hover {
   background: #14345c;
   border-color: #14345c;
 }
 
-/* +Contrat (green) */
+/* ✅ +Contrat (green) */
 .chipBtn--contract {
   background: var(--holcim-green);
   border-color: var(--holcim-green);
   color: #ffffff;
+  box-shadow: 0 6px 18px rgba(123, 191, 58, 0.18);
 }
 .chipBtn--contract:hover {
   background: #67a931;
   border-color: #67a931;
 }
 
-/* +Variante (cyan) */
+/* ✅ +Variante (cyan) */
 .chipBtn--variant {
   background: var(--holcim-cyan);
   border-color: var(--holcim-cyan);
   color: #ffffff;
+  box-shadow: 0 6px 18px rgba(32, 184, 232, 0.18);
 }
 .chipBtn--variant:hover {
   background: #18a7d4;
   border-color: #18a7d4;
 }
 
-/* Ouvrir (neutral distinct, bluish soft) */
 .chipBtn--open {
   background: var(--holcim-open-bg);
   border-color: var(--holcim-open-bd);
@@ -1509,7 +1577,6 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: rgba(24, 64, 112, 0.28);
 }
 
-/* Icons */
 .chipIcon {
   width: 34px;
   height: 34px;
@@ -1561,6 +1628,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   padding: 10px;
   box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
   overflow: visible;
+  position: relative;
 }
 .card--error {
   border-color: #fecaca;
@@ -1577,7 +1645,6 @@ async function handleSaveComposee(payload: ComposePayload) {
   gap: 10px;
 }
 
-/* Rows compact */
 .row {
   display: flex;
   gap: 10px;
@@ -1676,6 +1743,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   background: rgba(148, 163, 184, 0.12);
   color: rgba(15, 23, 42, 0.62);
 }
+
 .pill {
   font-size: 10.5px;
   font-weight: 950;
@@ -1683,12 +1751,12 @@ async function handleSaveComposee(payload: ComposePayload) {
   padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid rgba(32, 184, 232, 0.25);
-  background: rgba(32, 184, 232, 0.10);
+  background: rgba(32, 184, 232, 0.1);
   color: rgba(15, 23, 42, 0.82);
 }
 .pill--green {
   border-color: rgba(34, 197, 94, 0.25);
-  background: rgba(34, 197, 94, 0.10);
+  background: rgba(34, 197, 94, 0.1);
   color: rgba(21, 128, 61, 1);
 }
 
@@ -1725,12 +1793,23 @@ async function handleSaveComposee(payload: ComposePayload) {
   font-weight: 800;
 }
 
+/* Active visibility */
 .pnl {
   background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
 }
 .pnl.activePnl {
-  border-color: rgba(32, 184, 232, 0.35);
-  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.12);
+  border-color: rgba(32, 184, 232, 0.55);
+  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.14), 0 14px 35px rgba(17, 24, 39, 0.08);
+}
+.pnl.activePnl::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  border-radius: 10px;
+  background: var(--active-pnl);
 }
 
 .contract {
@@ -1738,10 +1817,22 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-radius: 14px;
   padding: 10px;
   background: rgba(255, 255, 255, 0.78);
+  position: relative;
 }
 .contract.activeContract {
-  border-color: rgba(59, 130, 246, 0.25);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.10);
+  border-color: rgba(24, 64, 112, 0.42);
+  background: rgba(24, 64, 112, 0.035);
+  box-shadow: 0 0 0 4px rgba(24, 64, 112, 0.1);
+}
+.contract.activeContract::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  border-radius: 10px;
+  background: var(--active-contract);
 }
 .contractRow {
   align-items: flex-start;
@@ -1771,10 +1862,22 @@ async function handleSaveComposee(payload: ComposePayload) {
   border: 1px solid rgba(16, 24, 40, 0.08);
   border-radius: 14px;
   background: #ffffff;
+  position: relative;
 }
 .variantRow.activeVariant {
-  border-color: rgba(34, 197, 94, 0.22);
-  background: rgba(34, 197, 94, 0.06);
+  border-color: rgba(123, 191, 58, 0.4);
+  background: rgba(123, 191, 58, 0.08);
+  box-shadow: 0 0 0 4px rgba(123, 191, 58, 0.1);
+}
+.variantRow.activeVariant::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 5px;
+  border-radius: 10px;
+  background: var(--active-variant);
 }
 
 .desc {
@@ -1842,21 +1945,21 @@ async function handleSaveComposee(payload: ComposePayload) {
   color: rgba(15, 23, 42, 0.86);
 }
 .menuItem:hover {
-  background: rgba(32, 184, 232, 0.10);
+  background: rgba(32, 184, 232, 0.1);
 }
 .menuSep {
   height: 1px;
-  background: rgba(16, 24, 40, 0.10);
+  background: rgba(16, 24, 40, 0.1);
   margin: 6px 0;
 }
 .menuItem.danger {
   color: rgba(185, 28, 28, 0.98);
 }
 .menuItem.danger:hover {
-  background: rgba(220, 38, 38, 0.10);
+  background: rgba(220, 38, 38, 0.1);
 }
 
-/* Modal (inchangé visuellement, compact) */
+/* Modal */
 .modalOverlay {
   position: fixed;
   inset: 0;
@@ -1871,7 +1974,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   width: min(760px, 100%);
   max-height: calc(100vh - 36px);
   background: #fff;
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
@@ -1898,7 +2001,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   font-weight: 800;
 }
 .xBtn {
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   border-radius: 12px;
   width: 34px;
@@ -2006,6 +2109,123 @@ async function handleSaveComposee(payload: ComposePayload) {
   font-size: 12px;
   color: rgba(15, 23, 42, 0.55);
   font-weight: 800;
+}
+
+/* ✅ Confirm/Info modal (custom) */
+.ovl {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  z-index: 10000; /* au-dessus */
+}
+.dlg {
+  width: min(520px, 100%);
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+.dlgHdr {
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.dlgTtl {
+  font-weight: 950;
+  color: #0f172a;
+}
+.x {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  cursor: pointer;
+}
+.x:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+.dlgBody {
+  padding: 12px;
+}
+.dlgMsg {
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.85);
+  line-height: 1.45;
+}
+.dlgFtr {
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+}
+.btn2 {
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  font-weight: 950;
+  cursor: pointer;
+}
+.btn2:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+.btn2.pri {
+  background: rgba(24, 64, 112, 0.12);
+  border-color: rgba(24, 64, 112, 0.28);
+  color: rgba(24, 64, 112, 1);
+}
+.btn2.pri:hover {
+  background: rgba(24, 64, 112, 0.18);
+  border-color: rgba(24, 64, 112, 0.38);
+}
+
+/* ✅ hard-fix: CTA dans le footer du modal EDIT (dernier bouton) */
+.modalFoot > button:last-child {
+  background: var(--holcim-navy) !important;
+  border-color: var(--holcim-navy) !important;
+  color: #ae1313 !important;
+}
+.modalFoot > button:last-child:hover {
+  background: #14345c !important;
+  border-color: #14345c !important;
+}
+.modalFoot > button:last-child:disabled {
+  opacity: 0.65;
+}
+
+/* ✅ deep-fix: CTA dans les modals enfants (VariantCreateModal / Wizard) */
+:deep(.chipBtn--primary),
+:deep(button.chipBtn--primary),
+:deep(button.pri),
+:deep(.pri),
+:deep(.primary),
+:deep(.btnPrimary),
+:deep(.btn-primary) {
+  background: var(--holcim-navy) !important;
+  border-color: var(--holcim-navy) !important;
+  color: #fff !important;
+}
+:deep(.chipBtn--primary:hover),
+:deep(button.chipBtn--primary:hover),
+:deep(button.pri:hover),
+:deep(.pri:hover),
+:deep(.primary:hover),
+:deep(.btnPrimary:hover),
+:deep(.btn-primary:hover) {
+  background: #14345c !important;
+  border-color: #14345c !important;
 }
 
 /* Responsive */

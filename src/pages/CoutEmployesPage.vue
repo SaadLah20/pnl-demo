@@ -10,6 +10,17 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   Squares2X2Icon,
+
+  // ✅ icônes par poste/charge (uniquement logo + label)
+  ClipboardDocumentCheckIcon,
+  CpuChipIcon,
+  BuildingOffice2Icon,
+  UserIcon,
+  BeakerIcon,
+  SparklesIcon,
+  ShieldCheckIcon,
+  WrenchScrewdriverIcon,
+  TruckIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -126,6 +137,25 @@ const EMP_GROUPS = [
   { key: "maintenancier", label: "Maintenancier" },
   { key: "panierRepas", label: "Panier repas" },
 ] as const;
+
+/* =========================
+   ✅ UI MAP (LOGO + LABEL SEULEMENT)
+   (aucune logique métier)
+========================= */
+const EMP_ICON: Record<(typeof EMP_GROUPS)[number]["key"], any> = {
+  responsable: ClipboardDocumentCheckIcon,
+  centralistes: CpuChipIcon,
+  manoeuvre: BuildingOffice2Icon,
+  coordinateurExploitation: UserIcon,
+  technicienLabo: BeakerIcon,
+  femmeMenage: SparklesIcon,
+  gardien: ShieldCheckIcon,
+  maintenancier: WrenchScrewdriverIcon,
+  panierRepas: TruckIcon,
+};
+function empIcon(key: string) {
+  return (EMP_ICON as any)[key] ?? UserIcon;
+}
 
 function loadFromVariant() {
   const s: any = (variant.value as any)?.employes ?? {};
@@ -331,7 +361,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </button>
 
           <!-- ✅ Toggle hide zero -->
-          <button class="btn" :disabled="saving || genBusy" @click="hideZero = !hideZero" :title="hideZero ? 'Afficher tout' : 'Masquer les blocs à 0'">
+          <button
+            class="btn"
+            :disabled="saving || genBusy"
+            @click="hideZero = !hideZero"
+            :title="hideZero ? 'Afficher tout' : 'Masquer les blocs à 0'"
+          >
             <span class="dot" :class="{ on: hideZero }"></span>
             {{ hideZero ? "Afficher tout" : "Masquer 0" }}
             <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
@@ -401,13 +436,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
         <div class="cards">
           <div v-for="g in empGroupsFiltered" :key="g.key" class="empCard">
-            <!-- ✅ TITRE + repère couleur (plus visible) -->
+            <!-- ✅ header minimal: icône + label uniquement -->
             <div class="empHdr">
               <div class="empTitleWrap">
-                <span class="empDot" />
+                <component :is="empIcon(g.key)" class="empIc" />
                 <div class="empTitle" :title="g.label">{{ g.label }}</div>
               </div>
-              <div class="empHint">Nb × C</div>
             </div>
 
             <div class="line">
@@ -750,32 +784,28 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 6px;
 }
 
-/* header renforcé */
+/* header minimal */
 .empHdr {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
   min-width: 0;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
 }
-
 .empTitleWrap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
-
-.empDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #0284c7, #22c55e);
+.empIc {
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
+  color: rgba(2, 132, 199, 0.95);
 }
-
 .empTitle {
   font-weight: 1000;
   font-size: 12.5px;
@@ -788,13 +818,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   white-space: nowrap;
 }
 
-.empHint {
-  font-size: 9.5px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.45);
-  white-space: nowrap;
-}
-
 /* inputs */
 .line {
   display: grid;
@@ -802,7 +825,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 6px;
   align-items: center;
 }
-
 .inNb,
 .inCout {
   height: 28px;
