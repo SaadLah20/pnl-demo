@@ -1,8 +1,17 @@
-<!-- src/pages/CoutM3Page.vue -->
+<!-- ✅ src/pages/CoutM3Page.vue (FICHIER COMPLET / look harmonisé + sticky subheader + KPIs + toast + generalize) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+
+// Heroicons
+import {
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  ArrowPathIcon,
+  Squares2X2Icon,
+  CurrencyDollarIcon,
+} from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
 
@@ -33,7 +42,7 @@ function money(v: number, digits = 2) {
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
-function clamp(x: any, min: number, max: number) {
+function clamp(x: any, min = 0, max = 1e15) {
   const v = toNum(x);
   return Math.max(min, Math.min(max, v));
 }
@@ -119,7 +128,21 @@ const coutM3ParMois = computed(() => (dureeMois.value > 0 ? coutM3Total.value / 
 const coutM3Pct = computed(() => (caTotal.value > 0 ? (coutM3Total.value / caTotal.value) * 100 : 0));
 
 /* =========================
-   MODAL
+   TOAST (non bloquant)
+========================= */
+const toastOpen = ref(false);
+const toastMsg = ref("");
+const toastKind = ref<"ok" | "err">("ok");
+
+function showToast(msg: string, kind: "ok" | "err" = "ok") {
+  toastMsg.value = msg;
+  toastKind.value = kind;
+  toastOpen.value = true;
+  window.setTimeout(() => (toastOpen.value = false), 2600);
+}
+
+/* =========================
+   MODAL (confirm/info)
 ========================= */
 const modal = reactive({
   open: false,
@@ -173,10 +196,10 @@ async function save() {
   saving.value = true;
   try {
     await (store as any).updateVariant(variant.value.id, { coutM3: buildPayload() });
-    openInfo("Enregistré", "Coût au m³ mis à jour.");
+    showToast("Coût au m³ enregistré.", "ok");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
-    openInfo("Erreur", String(err.value));
+    showToast(String(err.value), "err");
   } finally {
     saving.value = false;
   }
@@ -189,14 +212,15 @@ function askSave() {
   });
 }
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
     closeModal();
     loadDraftFromVariant();
+    showToast("Valeurs restaurées.", "ok");
   });
 }
 
 /* =========================
-   ✅ GENERALISER (AJOUT UNIQUEMENT)
+   GENERALISER
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
@@ -217,10 +241,10 @@ async function generalizeTo(variantIds: string[]) {
 
       await (store as any).updateVariant(targetId, { coutM3: payload });
     }
-    openInfo("Généralisé", "La section Coût au m³ a été généralisée sur les variantes ciblées.");
+    showToast("Section Coût au m³ généralisée.", "ok");
   } catch (e: any) {
     genErr.value = e?.message ?? String(e);
-    openInfo("Erreur", String(genErr.value ?? e?.message ?? e));
+    showToast(String(genErr.value), "err");
   } finally {
     genBusy.value = false;
   }
@@ -241,128 +265,149 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     if (!genErr.value) genOpen.value = false;
   });
 }
+
+/* =========================
+   UI labels
+========================= */
+const variantLabel = computed(() => {
+  const v = variant.value;
+  if (!v) return "—";
+  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
+});
 </script>
 
 <template>
   <div class="page">
-    <div class="top">
-      <div class="tleft">
-        <div class="titleRow">
-          <div class="h1">Coût au m³</div>
-          <span class="badge" v-if="variant">Variante active</span>
+    <!-- ✅ Sticky subheader under HeaderDashboard -->
+    <div class="subhdr">
+      <div class="row">
+        <div class="left">
+          <div class="ttlRow">
+            <div class="ttl">Coûts au m³</div>
+            <span v-if="variant" class="badge">Variante active</span>
+          </div>
+
+          <div class="meta" v-if="variant">
+            <span class="clip"><b>{{ variantLabel }}</b></span>
+            <span class="sep" v-if="dureeMois">•</span>
+            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
+          </div>
+          <div class="meta" v-else>Aucune variante active.</div>
         </div>
 
-        <div class="muted tiny" v-if="variant">
-          <b class="clip">{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="contract?.dureeMois" class="sep">•</span>
-          <span v-if="contract?.dureeMois">Durée <b>{{ contract.dureeMois }}</b> mois</span>
+        <div class="actions">
+          <button class="btn" :disabled="!variant || saving" @click="askReset()">
+            <ArrowPathIcon class="ic" />
+            Reset
+          </button>
+
+          <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
+            <Squares2X2Icon class="ic" />
+            {{ genBusy ? "…" : "Généraliser" }}
+          </button>
+
+          <button class="btn pri" :disabled="!variant || saving" @click="askSave()">
+            <CheckCircleIcon class="ic" />
+            {{ saving ? "…" : "Enregistrer" }}
+          </button>
         </div>
-        <div class="muted tiny" v-else>Aucune variante active.</div>
       </div>
 
-      <div class="actions">
-        <button class="btn" :disabled="!variant || saving" @click="askReset()">Reset</button>
+      <!-- ✅ KPIs (sans Volume total + CA estimé) -->
+      <div class="kpis" v-if="variant">
+        <div class="kpi main">
+          <div class="kLbl">Prix / m³</div>
+          <div class="kVal mono">
+            {{ n(coutM3ParM3, 2) }}
+            <span class="unit">DH/m³</span>
+          </div>
+        </div>
 
-        <!-- ✅ AJOUT: bouton Généraliser -->
-        <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
-          {{ genBusy ? "…" : "Généraliser" }}
-        </button>
+        <div class="kpi">
+          <div class="kLbl">Total</div>
+          <div class="kVal mono">{{ money(coutM3Total, 2) }}</div>
+        </div>
 
-        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
-          {{ saving ? "…" : "Enregistrer" }}
-        </button>
+        <div class="kpi">
+          <div class="kLbl">/ mois</div>
+          <div class="kVal mono">{{ money(coutM3ParMois, 2) }}</div>
+        </div>
+
+        <div class="kpi">
+          <div class="kLbl">%</div>
+          <div class="kVal mono">{{ n(coutM3Pct, 2) }}<span class="unit">%</span></div>
+        </div>
+      </div>
+
+      <div v-if="err" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="genErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Généralisation :</b> {{ genErr }}</div>
+      </div>
+
+      <div v-if="(store as any).loading" class="alert">
+        <div>Chargement…</div>
+      </div>
+
+      <div v-else-if="(store as any).error" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Erreur :</b> {{ (store as any).error }}</div>
       </div>
     </div>
 
-    <div v-if="(store as any).loading" class="alert">Chargement…</div>
-    <div v-else-if="(store as any).error" class="alert error"><b>Erreur :</b> {{ (store as any).error }}</div>
+    <div v-if="!variant" class="card">
+      <div class="empty">Sélectionne une variante puis reviens ici.</div>
+    </div>
 
     <template v-else>
-      <div v-if="err" class="alert error"><b>Erreur :</b> {{ err }}</div>
+      <div class="card">
+        <div class="cardHdr">
+          <div class="cardTtl">
+            <CurrencyDollarIcon class="ic3" />
+            <div>
+              <div class="h">Saisie des coûts unitaires</div>
+              <div class="p">Ces valeurs sont exprimées en DH/m³.</div>
+            </div>
+          </div>
+        </div>
 
-      <!-- ✅ AJOUT: feedback généralisation (non intrusif) -->
-      <div v-if="genErr" class="alert error"><b>Généralisation :</b> {{ genErr }}</div>
-      <div v-if="genBusy" class="alert"><b>Généralisation :</b> traitement…</div>
+        <div class="formGrid">
+          <div class="field">
+            <div class="label">Eau</div>
+            <div class="inputLine">
+              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.eau" />
+              <span class="u">DH/m³</span>
+            </div>
+          </div>
 
-      <div v-if="!variant" class="card">
-        <div class="muted">Sélectionne une variante puis reviens ici.</div>
+          <div class="field">
+            <div class="label">Qualité</div>
+            <div class="inputLine">
+              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.qualite" />
+              <span class="u">DH/m³</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="label">Déchets</div>
+            <div class="inputLine">
+              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.dechets" />
+              <span class="u">DH/m³</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="note">
+          Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (formules).
+        </div>
       </div>
-
-      <template v-else>
-        <!-- ✅ KPIs -->
-        <div class="kpis">
-          <div class="kpi kpiSpecial">
-            <div class="kLbl kLblSpecial">Prix / m³</div>
-            <div class="kVal mono kValSpecial">
-              {{ n(coutM3ParM3, 2) }}
-              <span class="unitSpecial">DH/m³</span>
-            </div>
-          </div>
-
-          <div class="kpi">
-            <div class="kLbl">Total</div>
-            <div class="kVal mono">{{ money(coutM3Total, 2) }}</div>
-          </div>
-
-          <div class="kpi">
-            <div class="kLbl">/ mois</div>
-            <div class="kVal mono">{{ money(coutM3ParMois, 2) }}</div>
-          </div>
-
-          <div class="kpi">
-            <div class="kLbl">%</div>
-            <div class="kVal mono">{{ n(coutM3Pct, 2) }} <span>%</span></div>
-          </div>
-        </div>
-
-        <!-- ✅ Inputs alignés label + input (gauche) comme Maintenance -->
-        <div class="card">
-          <div class="formGrid">
-            <div class="field">
-              <div class="label">Eau</div>
-              <div class="inputLine">
-                <input class="inputSm mono inputMonthLike" type="number" step="0.01" min="0" v-model.number="draft.eau" />
-                <span class="unit unitMonthLike">DH/m³</span>
-              </div>
-            </div>
-
-            <div class="field">
-              <div class="label">Qualité</div>
-              <div class="inputLine">
-                <input
-                  class="inputSm mono inputMonthLike"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  v-model.number="draft.qualite"
-                />
-                <span class="unit unitMonthLike">DH/m³</span>
-              </div>
-            </div>
-
-            <div class="field">
-              <div class="label">Déchets</div>
-              <div class="inputLine">
-                <input
-                  class="inputSm mono inputMonthLike"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  v-model.number="draft.dechets"
-                />
-                <span class="unit unitMonthLike">DH/m³</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="note muted tiny">
-            Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (formules).
-          </div>
-        </div>
-      </template>
     </template>
 
-    <!-- ✅ AJOUT: MODAL GENERALISATION -->
+    <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       sectionLabel="Coût au m³"
@@ -370,58 +415,84 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @apply="onApplyGeneralize"
     />
 
-    <!-- MODAL -->
-    <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
-      <div class="modal">
-        <div class="modalTitle">{{ modal.title }}</div>
-        <div class="modalMsg">{{ modal.message }}</div>
+    <!-- ✅ Modal confirm/info -->
+    <teleport to="body">
+      <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
+        <div class="dlg">
+          <div class="dlgHdr">
+            <div class="dlgTtl">{{ modal.title }}</div>
+            <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
+          </div>
 
-        <div class="modalActions">
-          <button class="btn" @click="closeModal()">Fermer</button>
-          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
-            Confirmer
-          </button>
+          <div class="dlgBody">
+            <div class="dlgMsg">{{ modal.message }}</div>
+          </div>
+
+          <div class="dlgFtr">
+            <button class="btn2" type="button" @click="closeModal()">Fermer</button>
+            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
+              Confirmer
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </teleport>
+
+    <!-- ✅ Toast -->
+    <teleport to="body">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+        <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
+        <ExclamationTriangleIcon v-else class="tic" />
+        <div class="tmsg">{{ toastMsg }}</div>
+      </div>
+    </teleport>
   </div>
 </template>
 
 <style scoped>
-/* compact page */
 .page {
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+/* sticky subheader under HeaderDashboard */
+.subhdr {
+  position: sticky;
+  top: var(--hdrdash-h, -15px);
+  z-index: 50;
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 16px;
   padding: 10px;
 }
 
-/* top */
-.top {
+.row {
   display: flex;
-  justify-content: space-between;
   align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 260px;
+}
+
+.ttlRow {
+  display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
-.tleft {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 260px;
-}
-.titleRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.h1 {
+.ttl {
   font-size: 16px;
   font-weight: 950;
-  line-height: 1.05;
-  margin: 0;
-  color: #111827;
+  color: #0f172a;
 }
 .badge {
   font-size: 10px;
@@ -429,144 +500,176 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: #065f46;
   background: #ecfdf5;
   border: 1px solid #a7f3d0;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
 }
-.muted {
-  color: #6b7280;
+
+.meta {
   font-size: 11px;
-}
-.tiny {
-  font-size: 10px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.55);
 }
 .clip {
   display: inline-block;
-  max-width: 420px;
+  max-width: 520px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .sep {
-  margin: 0 6px;
-  color: #9ca3af;
+  margin: 0 8px;
+  color: rgba(15, 23, 42, 0.35);
 }
+
 .actions {
   display: flex;
-  gap: 6px;
   align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-/* alerts */
-.alert {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  padding: 8px 10px;
-  font-size: 12px;
-}
-.alert.error {
-  border-color: #ef4444;
-  background: #fff5f5;
-}
-
-/* buttons */
 .btn {
-  border: 1px solid #d1d5db;
-  background: #fff;
+  height: 34px;
   border-radius: 12px;
-  padding: 7px 9px;
-  font-size: 11px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  color: #0f172a;
   font-weight: 950;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
-  line-height: 1;
 }
 .btn:hover {
-  background: #f9fafb;
-}
-.btn.primary {
-  background: #007a33;
-  border-color: #007a33;
-  color: #fff;
-}
-.btn.primary:hover {
-  filter: brightness(0.95);
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
 }
 .btn:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
+}
+.btn.pri {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+.btn.pri:hover {
+  background: rgba(2, 132, 199, 0.18);
+}
+.ic {
+  width: 18px;
+  height: 18px;
+}
+.ic3 {
+  width: 18px;
+  height: 18px;
+  color: rgba(15, 23, 42, 0.75);
 }
 
 .mono {
   font-variant-numeric: tabular-nums;
-}
-
-/* cards */
-.card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* KPIs */
 .kpis {
+  margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
   gap: 8px;
 }
 @media (max-width: 900px) {
   .kpis {
-    grid-template-columns: repeat(2, minmax(150px, 1fr));
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
 }
+
 .kpi {
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 14px;
-  padding: 8px 9px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
+.kpi.main {
+  border-color: rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.06);
+}
+
 .kLbl {
   font-size: 10px;
-  color: #6b7280;
   font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 .kVal {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 950;
+  color: #0f172a;
   white-space: nowrap;
-  color: #111827;
 }
-.kVal span {
-  font-weight: 900;
-  color: #6b7280;
-  margin-left: 6px;
+.unit {
+  margin-left: 8px;
   font-size: 10.5px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.55);
 }
 
-/* KPI spécial (Prix / m³) */
-.kpiSpecial {
-  border-color: rgba(59, 130, 246, 0.55);
-  background: rgba(239, 246, 255, 0.9);
+/* alerts */
+.alert {
+  margin-top: 10px;
+  border-radius: 14px;
+  padding: 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
 }
-.kLblSpecial {
-  color: rgba(29, 78, 216, 0.95);
+.alert.err {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.22);
 }
-.kValSpecial {
-  color: #111827;
-}
-.unitSpecial {
-  color: rgba(29, 78, 216, 0.95) !important;
-  font-weight: 950 !important;
+.aic {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
-/* ✅ Form aligné label + input (gauche) */
+/* main card */
+.card {
+  border-radius: 16px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: #fff;
+  overflow: hidden;
+}
+.cardHdr {
+  padding: 10px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.cardTtl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.h {
+  font-weight: 950;
+  color: #0f172a;
+  font-size: 13px;
+}
+.p {
+  font-weight: 750;
+  color: rgba(15, 23, 42, 0.55);
+  font-size: 12px;
+}
+
+/* form */
 .formGrid {
+  padding: 12px;
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap: 10px;
@@ -582,92 +685,143 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 6px;
 }
 .label {
-  font-size: 11px;
-  color: #6b7280;
-  font-weight: 950;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.65);
 }
-
-/* ligne input similaire à Maintenance */
 .inputLine {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-
-/* même base inputSm que Maintenance */
-.inputSm {
-  border: 1px solid #d1d5db;
+.in {
+  width: 140px;
+  height: 34px;
   border-radius: 12px;
-  font-size: 11px;
-  padding: 6px 7px;
-  background: #fff;
-  width: 120px; /* ✅ compact, pas énorme */
+  border: 1px solid rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 10px;
+  font-weight: 950;
+  color: #0f172a;
+  outline: none;
   text-align: right;
 }
-
-/* ✅ même style "mensuel" (bleu) de Maintenance */
-.inputMonthLike {
-  border-color: rgba(59, 130, 246, 0.55);
-  background: rgba(239, 246, 255, 0.9);
+.in:focus {
+  border-color: rgba(2, 132, 199, 0.55);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+.u {
+  font-size: 11px;
   font-weight: 950;
-}
-.inputMonthLike:focus {
-  outline: none;
-  border-color: rgba(29, 78, 216, 0.85);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
-}
-
-.unit {
-  color: #6b7280;
-  font-size: 10.5px;
-  font-weight: 900;
+  color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
-}
-.unitMonthLike {
-  color: rgba(29, 78, 216, 0.95);
-  font-weight: 950;
 }
 
 .note {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed #e5e7eb;
+  padding: 10px 12px;
+  border-top: 1px dashed rgba(16, 24, 40, 0.14);
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.empty {
+  padding: 14px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.6);
 }
 
 /* modal */
-.modalMask {
+.ovl {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(2, 6, 23, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 50;
+  z-index: 80;
 }
-.modal {
+.dlg {
   width: min(520px, 100%);
   background: #fff;
-  border: 1px solid #e5e7eb;
   border-radius: 16px;
-  padding: 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  overflow: hidden;
 }
-.modalTitle {
-  font-weight: 950;
-  font-size: 13px;
-  margin-bottom: 6px;
-  color: #111827;
-}
-.modalMsg {
-  color: #374151;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-.modalActions {
+.dlgHdr {
+  padding: 10px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.dlgTtl {
+  font-weight: 950;
+  color: #0f172a;
+}
+.x {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  cursor: pointer;
+}
+.dlgBody {
+  padding: 12px;
+}
+.dlgMsg {
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.8);
+  line-height: 1.45;
+}
+.dlgFtr {
+  padding: 10px;
+  display: flex;
   gap: 8px;
-  margin-top: 10px;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+}
+.btn2 {
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  font-weight: 950;
+  cursor: pointer;
+}
+.btn2.pri {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+
+/* toast */
+.toast {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
+}
+.toast.err {
+  border-color: rgba(239, 68, 68, 0.22);
+}
+.tic {
+  width: 18px;
+  height: 18px;
+}
+.tmsg {
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.85);
 }
 </style>

@@ -1,13 +1,23 @@
-<!-- src/pages/CoutOccasionnelPage.vue -->
+<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
+// Heroicons
+import {
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  ArrowPathIcon,
+  Squares2X2Icon,
+} from "@heroicons/vue/24/outline";
+
 const store = usePnlStore();
 
 onMounted(async () => {
-  if ((store as any).pnls?.length === 0) await (store as any).loadPnls();
+  if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
+    await (store as any).loadPnls();
+  }
 });
 
 /* =========================
@@ -18,10 +28,7 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
 function money(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -39,12 +46,18 @@ function clamp(v: any, min = 0, max = 1e15) {
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => (store as any).activeVariant);
-const contract = computed<any>(() => (store as any).activeContract);
-const dureeMois = computed(() => clamp(contract.value?.dureeMois));
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
+const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
+
+const variantLabel = computed(() => {
+  const v = variant.value;
+  if (!v) return "—";
+  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
+});
 
 /* =========================
-   VOLUME + CA (for %)
+   VOLUME + CA (pour perM3 / %)
 ========================= */
 type DraftForm = { volumeM3: number; momd: number };
 const formDrafts = reactive<Record<string, DraftForm>>({});
@@ -69,18 +82,16 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
-);
-
+const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
-  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find(
-    (x: any) => String(x.mpId) === String(mpId)
-  );
+  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
+
   if (vmp?.prix != null) return clamp(vmp.prix);
+  if (vmp?.prixOverride != null) return clamp(vmp.prixOverride);
+
   return clamp(vmp?.mp?.prix);
 }
 function cmpParM3For(vf: any): number {
@@ -131,23 +142,25 @@ const draft = reactive<Draft>({
   installation: 0,
 });
 
-function loadFromVariant() {
-  const s: any = (variant.value as any)?.coutOccasionnel ?? {};
-  draft.genieCivil = clamp(s.genieCivil);
-  draft.installationCab = clamp(s.installationCab);
-  draft.demontage = clamp(s.demontage);
-  draft.remisePointCentrale = clamp(s.remisePointCentrale);
-  draft.transport = clamp(s.transport);
-  draft.silots = clamp(s.silots);
-  draft.localAdjuvant = clamp(s.localAdjuvant);
-  draft.bungalows = clamp(s.bungalows);
-  draft.installation = clamp(s.installation); // legacy
-}
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
+watch(
+  () => variant.value?.id,
+  () => {
+    const s: any = (variant.value as any)?.coutOccasionnel ?? {};
+    draft.genieCivil = clamp(s.genieCivil);
+    draft.installationCab = clamp(s.installationCab);
+    draft.demontage = clamp(s.demontage);
+    draft.remisePointCentrale = clamp(s.remisePointCentrale);
+    draft.transport = clamp(s.transport);
+    draft.silots = clamp(s.silots);
+    draft.localAdjuvant = clamp(s.localAdjuvant);
+    draft.bungalows = clamp(s.bungalows);
+    draft.installation = clamp(s.installation); // legacy
+  },
+  { immediate: true }
+);
 
 /* =========================
-   KPI (Occasionnel)
-   ✅ KPI spécial = TOTAL (en haut à gauche)
+   KPI
 ========================= */
 const total = computed(() => {
   return (
@@ -162,19 +175,16 @@ const total = computed(() => {
     clamp(draft.installation)
   );
 });
-
 const monthly = computed(() => {
   const d = dureeMois.value;
   if (d <= 0) return 0;
   return total.value / d;
 });
-
 const perM3 = computed(() => {
   const vol = volumeTotal.value;
   if (vol <= 0) return 0;
   return total.value / vol;
 });
-
 const pct = computed(() => {
   const ca = caTotal.value;
   if (ca <= 0) return 0;
@@ -182,7 +192,21 @@ const pct = computed(() => {
 });
 
 /* =========================
-   MODAL
+   TOAST
+========================= */
+const toastOpen = ref(false);
+const toastMsg = ref("");
+const toastKind = ref<"ok" | "err">("ok");
+
+function showToast(msg: string, kind: "ok" | "err" = "ok") {
+  toastMsg.value = msg;
+  toastKind.value = kind;
+  toastOpen.value = true;
+  window.setTimeout(() => (toastOpen.value = false), 2600);
+}
+
+/* =========================
+   MODAL (confirm/info)
 ========================= */
 const modal = reactive({
   open: false,
@@ -223,14 +247,14 @@ function buildPayload() {
   return {
     category: existing.category ?? "COUTS_CHARGES",
     genieCivil: Number(clamp(draft.genieCivil)),
+    installationCab: Number(clamp(draft.installationCab)),
+    demontage: Number(clamp(draft.demontage)),
+    remisePointCentrale: Number(clamp(draft.remisePointCentrale)),
     transport: Number(clamp(draft.transport)),
     silots: Number(clamp(draft.silots)),
     localAdjuvant: Number(clamp(draft.localAdjuvant)),
     bungalows: Number(clamp(draft.bungalows)),
-    demontage: Number(clamp(draft.demontage)),
-    remisePointCentrale: Number(clamp(draft.remisePointCentrale)),
-    installationCab: Number(clamp(draft.installationCab)),
-    installation: Number(clamp(draft.installation)), // legacy compat
+    installation: Number(clamp(draft.installation)), // legacy
   };
 }
 
@@ -240,17 +264,17 @@ async function save() {
   saving.value = true;
   try {
     await (store as any).updateVariant(variant.value.id, { coutOccasionnel: buildPayload() });
-    openInfo("Enregistré", "Coûts occasionnels mis à jour.");
+    showToast("Coûts occasionnels enregistrés.", "ok");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
-    openInfo("Erreur", String(err.value));
+    showToast(String(err.value), "err");
   } finally {
     saving.value = false;
   }
 }
 
 function askSave() {
-  openConfirm("Enregistrer", "Confirmer l’enregistrement ?", async () => {
+  openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts occasionnels ?", async () => {
     closeModal();
     await save();
   });
@@ -258,12 +282,23 @@ function askSave() {
 function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
-    loadFromVariant();
+    // reload from variant
+    const s: any = (variant.value as any)?.coutOccasionnel ?? {};
+    draft.genieCivil = clamp(s.genieCivil);
+    draft.installationCab = clamp(s.installationCab);
+    draft.demontage = clamp(s.demontage);
+    draft.remisePointCentrale = clamp(s.remisePointCentrale);
+    draft.transport = clamp(s.transport);
+    draft.silots = clamp(s.silots);
+    draft.localAdjuvant = clamp(s.localAdjuvant);
+    draft.bungalows = clamp(s.bungalows);
+    draft.installation = clamp(s.installation);
+    showToast("Valeurs restaurées.", "ok");
   });
 }
 
 /* =========================
-   ✅ GENERALISER (AJOUT UNIQUEMENT)
+   GENERALISER
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
@@ -281,13 +316,12 @@ async function generalizeTo(variantIds: string[]) {
     for (const targetIdRaw of variantIds ?? []) {
       const targetId = String(targetIdRaw ?? "").trim();
       if (!targetId || targetId === sourceId) continue;
-
       await (store as any).updateVariant(targetId, { coutOccasionnel: payload });
     }
-    openInfo("Généralisé", "La section Coûts occasionnels a été généralisée sur les variantes ciblées.");
+    showToast("Section Coûts occasionnels généralisée.", "ok");
   } catch (e: any) {
     genErr.value = e?.message ?? String(e);
-    openInfo("Erreur", String(genErr.value ?? e?.message ?? e));
+    showToast(String(genErr.value), "err");
   } finally {
     genBusy.value = false;
   }
@@ -302,464 +336,578 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       ? "Confirmer la généralisation de la section Coûts occasionnels sur TOUTES les variantes ?"
       : `Confirmer la généralisation de la section Coûts occasionnels sur ${ids.length} variante(s) ?`;
 
-  openConfirm("Généraliser Coûts occasionnels", msg, async () => {
+  openConfirm("Généraliser", msg, async () => {
     closeModal();
     await generalizeTo(ids);
     if (!genErr.value) genOpen.value = false;
   });
 }
+
+/* =========================
+   UI (liste champs)
+========================= */
+const COSTS = [
+  { key: "genieCivil", label: "Génie civil" },
+  { key: "installationCab", label: "Installation CAB" },
+  { key: "demontage", label: "Démontage" },
+  { key: "remisePointCentrale", label: "Remise point centrale" },
+  { key: "transport", label: "Transport" },
+  { key: "silots", label: "Silots" },
+  { key: "localAdjuvant", label: "Local adjuvant" },
+  { key: "bungalows", label: "Bungalows" },
+] as const;
+
+type CostKey = (typeof COSTS)[number]["key"];
 </script>
 
 <template>
   <div class="page">
-    <div class="top">
-      <div class="title">
-        <div class="h1">Coûts occasionnels</div>
-        <div class="muted" v-if="variant">
-          Variante active : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="dureeMois"> — Durée {{ dureeMois }} mois</span>
-        </div>
-        <div class="muted" v-else>Aucune variante active.</div>
-      </div>
-
-      <div class="actions">
-        <button class="btn" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
-
-        <!-- ✅ AJOUT: bouton Généraliser -->
-        <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
-          {{ genBusy ? "..." : "Généraliser" }}
-        </button>
-
-        <button class="btn primary" :disabled="!variant || saving" @click="askSave()">
-          {{ saving ? "..." : "Enregistrer" }}
-        </button>
-      </div>
-    </div>
-
-    <div v-if="(store as any).loading" class="panel">Chargement…</div>
-    <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
-
-    <template v-else>
-      <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
-
-      <!-- ✅ AJOUT: feedback généralisation -->
-      <div v-if="genErr" class="panel error"><b>Généralisation :</b> {{ genErr }}</div>
-      <div v-if="genBusy" class="panel"><b>Généralisation :</b> traitement…</div>
-
-      <div v-if="!variant" class="panel"><div class="muted">Sélectionne une variante.</div></div>
-
-      <template v-else>
-        <!-- ✅ KPIs "comme coût au mois" + KPI spécial en premier = TOTAL -->
-        <div class="kpis">
-          <div class="kpi kpiMain">
-            <div class="kLbl">Total coûts occasionnels</div>
-            <div class="kVal mono">{{ money(total, 2) }}</div>
+    <!-- ✅ Sticky subheader -->
+    <div class="subhdr">
+      <div class="row">
+        <div class="left">
+          <div class="ttlRow">
+            <div class="ttl">Coûts occasionnels</div>
+            <span v-if="variant" class="badge">Variante active</span>
           </div>
 
-          <div class="kpi">
-            <div class="kLbl">Prix / m³</div>
-            <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+          <div class="meta" v-if="variant">
+            <span class="clip"><b>{{ variantLabel }}</b></span>
+            <span class="sep" v-if="dureeMois">•</span>
+            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
           </div>
-
-          <div class="kpi kpiMonth">
-            <div class="kLbl">/ mois</div>
-            <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
-          </div>
-
-          <div class="kpi">
-            <div class="kLbl">%</div>
-            <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
-          </div>
+          <div class="meta" v-else>Aucune variante active.</div>
         </div>
 
-        <!-- ✅ inputs style compact, unités contenues, responsif -->
-        <div class="panel">
-          <div class="gridCards">
-            <div class="costCard">
-              <div class="cardTitle">Génie civil</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.genieCivil" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
+        <div class="actions" v-if="variant">
+          <button class="btn" :disabled="saving || genBusy" @click="askReset()">
+            <ArrowPathIcon class="ic" />
+            Reset
+          </button>
 
-            <div class="costCard">
-              <div class="cardTitle">Installation CAB</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.installationCab" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
+          <button class="btn" :disabled="saving || genBusy" @click="genOpen = true">
+            <Squares2X2Icon class="ic" />
+            {{ genBusy ? "…" : "Généraliser" }}
+          </button>
 
-            <div class="costCard">
-              <div class="cardTitle">Démontage</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.demontage" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="costCard">
-              <div class="cardTitle">Remise point centrale</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.remisePointCentrale" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="costCard">
-              <div class="cardTitle">Transport</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.transport" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="costCard">
-              <div class="cardTitle">Silots</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.silots" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="costCard">
-              <div class="cardTitle">Local adjuvant</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.localAdjuvant" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="costCard">
-              <div class="cardTitle">Bungalows</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.bungalows" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="costCard legacy">
-              <div class="cardTitle muted">DB: installation (legacy)</div>
-              <div class="field">
-                <div class="label">Montant</div>
-                <div class="inCell">
-                  <input class="inputMoney" type="number" step="0.01" min="0" v-model.number="draft.installation" />
-                  <span class="unit">DH</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
-    </template>
-
-    <!-- ✅ AJOUT: MODAL GENERALISATION -->
-    <SectionTargetsGeneralizeModal
-      v-model="genOpen"
-      sectionLabel="Coûts occasionnels"
-      :sourceVariantId="variant?.id ?? null"
-      @apply="onApplyGeneralize"
-    />
-
-    <!-- MODAL -->
-    <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
-      <div class="modal">
-        <div class="modalTitle">{{ modal.title }}</div>
-        <div class="modalMsg">{{ modal.message }}</div>
-        <div class="modalActions">
-          <button class="btn" @click="closeModal()">Fermer</button>
-          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
-            Confirmer
+          <button class="btn pri" :disabled="saving || genBusy" @click="askSave()">
+            <CheckCircleIcon class="ic" />
+            {{ saving ? "…" : "Enregistrer" }}
           </button>
         </div>
       </div>
+
+      <!-- ✅ KPIs en haut -->
+      <div class="kpis" v-if="variant">
+        <div class="kpi kpiMain">
+          <div class="kLbl">Total</div>
+          <div class="kVal mono">{{ money(total, 2) }}</div>
+        </div>
+
+        <div class="kpi">
+          <div class="kLbl">Prix / m³</div>
+          <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+        </div>
+
+        <div class="kpi kpiMonth">
+          <div class="kLbl">/ mois</div>
+          <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
+        </div>
+
+        <div class="kpi">
+          <div class="kLbl">%</div>
+          <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
+        </div>
+      </div>
+
+      <div v-if="err" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="genErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Généralisation :</b> {{ genErr }}</div>
+      </div>
+
+      <div v-if="(store as any).loading" class="alert">
+        <div>Chargement…</div>
+      </div>
+
+      <div v-else-if="(store as any).error" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Erreur :</b> {{ (store as any).error }}</div>
+      </div>
     </div>
+
+    <div v-if="!variant" class="card">
+      <div class="empty">Sélectionne une variante puis reviens ici.</div>
+    </div>
+
+    <template v-else>
+      <div class="card">
+        <!-- ✅ ultra compact grid -->
+        <div class="cards">
+          <div v-for="c in COSTS" :key="c.key" class="costCard">
+            <div class="hdr">
+              <div class="t" :title="c.label">{{ c.label }}</div>
+              <div class="h">DH</div>
+            </div>
+
+            <div class="line">
+              <input
+                class="inCout mono"
+                type="number"
+                step="0.01"
+                min="0"
+                :value="(draft as any)[c.key]"
+                @input="(draft as any)[c.key] = clamp(($event.target as HTMLInputElement).value)"
+              />
+            </div>
+          </div>
+
+          <!-- legacy -->
+          <div class="costCard legacy">
+            <div class="hdr">
+              <div class="t muted" title="DB legacy">installation (legacy)</div>
+              <div class="h">DH</div>
+            </div>
+            <div class="line">
+              <input
+                class="inCout mono"
+                type="number"
+                step="0.01"
+                min="0"
+                :value="draft.installation"
+                @input="draft.installation = clamp(($event.target as HTMLInputElement).value)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="note muted">
+          Saisie en <b>DH</b>. Le <b>Total</b> inclut aussi <span class="mono">installation (legacy)</span>.
+        </div>
+      </div>
+    </template>
+
+    <!-- ✅ GENERALISATION -->
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      section-label="Coûts occasionnels"
+      :source-variant-id="String((store as any).activeVariantId ?? (variant?.id ?? '')) || null"
+      @apply="onApplyGeneralize"
+      @close="() => {}"
+    />
+
+    <!-- ✅ Modal confirm/info -->
+    <teleport to="body">
+      <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
+        <div class="dlg">
+          <div class="dlgHdr">
+            <div class="dlgTtl">{{ modal.title }}</div>
+            <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
+          </div>
+
+          <div class="dlgBody">
+            <div class="dlgMsg">{{ modal.message }}</div>
+          </div>
+
+          <div class="dlgFtr">
+            <button class="btn2" type="button" @click="closeModal()">Fermer</button>
+            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
+              Confirmer
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
+    <!-- ✅ Toast -->
+    <teleport to="body">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+        <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
+        <ExclamationTriangleIcon v-else class="tic" />
+        <div class="tmsg">{{ toastMsg }}</div>
+      </div>
+    </teleport>
   </div>
 </template>
 
 <style scoped>
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  max-width: 100%;
-}
-* {
-  box-sizing: border-box;
-}
-
-.top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-}
-.title {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.h1 {
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1.1;
-  margin: 0;
-}
-.muted {
-  color: #6b7280;
-  font-size: 12px;
-}
-.actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.panel {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
   padding: 10px;
-  max-width: 100%;
-}
-.panel.error {
-  border-color: #ef4444;
-  background: #fff5f5;
-}
-
-.btn {
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 10px;
-  padding: 7px 10px;
-  font-size: 13px;
-  cursor: pointer;
-}
-.btn:hover {
-  background: #f9fafb;
-}
-.btn.primary {
-  background: #007a33;
-  border-color: #007a33;
-  color: #fff;
-}
-.btn.primary:hover {
-  background: #046a2f;
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .mono {
   font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+.muted {
+  color: rgba(15, 23, 42, 0.55);
+}
+
+/* sticky subheader */
+.subhdr {
+  position: sticky;
+  top: var(--hdrdash-h, -15px);
+  z-index: 50;
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 16px;
+  padding: 8px 10px;
+}
+.row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+}
+.ttlRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ttl {
+  font-size: 15px;
+  font-weight: 950;
+  color: #0f172a;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.meta {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.55);
+}
+.clip {
+  display: inline-block;
+  max-width: 520px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  margin: 0 8px;
+  color: rgba(15, 23, 42, 0.35);
+}
+
+/* actions */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn {
+  height: 32px;
+  border-radius: 12px;
+  padding: 0 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  color: #0f172a;
+  font-weight: 950;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.btn:hover {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn.pri {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+.btn.pri:hover {
+  background: rgba(2, 132, 199, 0.18);
+}
+.ic {
+  width: 18px;
+  height: 18px;
 }
 
 /* KPIs */
 .kpis {
+  margin-top: 8px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
-@media (max-width: 1050px) {
+@media (max-width: 980px) {
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .kpi {
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  background: #fff;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 14px;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: #fff;
   min-width: 0;
 }
 .kLbl {
-  font-size: 11px;
-  color: #6b7280;
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 .kVal {
   font-size: 13px;
-  font-weight: 900;
+  font-weight: 950;
+  color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .kVal span {
-  font-weight: 700;
-  color: #6b7280;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.55);
   margin-left: 6px;
+  font-size: 11px;
 }
-
-/* ✅ KPI spécial = TOTAL */
+.kpiMonth {
+  border-color: rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.06);
+}
 .kpiMain {
-  border: 1px solid rgba(16, 185, 129, 0.45);
+  border-color: rgba(16, 185, 129, 0.42);
   background: rgba(236, 253, 245, 0.9);
 }
-.kpiMain .kLbl {
-  color: #065f46;
-  font-weight: 950;
-}
-.kpiMain .kVal {
-  font-size: 14px;
-}
 
-/* /mois distingué */
-.kpiMonth {
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  background: rgba(239, 246, 255, 0.9);
-}
-.kpiMonth .kLbl {
-  color: #1d4ed8;
-  font-weight: 900;
-}
-.kpiMonth .kVal span {
-  color: #1d4ed8;
-  font-weight: 900;
-}
-
-/* Cards grid - jamais de débordement */
-.gridCards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 10px;
-  max-width: 100%;
-}
-
-.costCard {
-  border: 1px solid #e5e7eb;
+/* alerts */
+.alert {
+  margin-top: 8px;
   border-radius: 14px;
-  padding: 10px;
-  background: #fff;
+  padding: 9px 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
   display: flex;
-  flex-direction: column;
   gap: 10px;
-  min-width: 0;
-  max-width: 100%;
+  align-items: flex-start;
 }
-.costCard.legacy {
-  background: #fcfcfd;
+.alert.err {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.22);
 }
-
-.cardTitle {
-  font-weight: 950;
-  font-size: 13px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.aic {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
-/* Maintenance-like input row */
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.label {
-  font-size: 11px;
-  color: #6b7280;
-  white-space: nowrap;
+/* card */
+.card {
+  border-radius: 16px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: #fff;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
-.inCell {
+.empty {
+  padding: 12px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+/* ✅ ultra compact grid */
+.cards {
+  padding: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
   gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
-.unit {
-  color: #6b7280;
-  font-size: 11px;
-  white-space: nowrap;
-  max-width: 84px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* inputs compacts */
-.inputMoney {
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  font-size: 12px;
-  padding: 5px 7px;
-  width: 100%;
-  max-width: 140px; /* 6 chiffres OK */
-  text-align: right;
-  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 @media (max-width: 520px) {
-  .inputMoney {
-    max-width: 100%;
+  .cards {
+    grid-template-columns: 1fr;
   }
 }
 
+.costCard {
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 12px;
+  padding: 6px;
+  background: #fff;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.costCard.legacy {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+.hdr {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.t {
+  font-weight: 950;
+  font-size: 11px;
+  color: #0f172a;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.h {
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.5);
+  white-space: nowrap;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.inCout {
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(2, 132, 199, 0.26);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 8px;
+  font-weight: 950;
+  color: #0f172a;
+  outline: none;
+  text-align: right;
+  min-width: 0;
+  font-size: 12px;
+}
+.inCout:focus {
+  border-color: rgba(2, 132, 199, 0.55);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+
+.note {
+  padding: 8px 10px;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
 /* modal */
-.modalMask {
+.ovl {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(2, 6, 23, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  z-index: 50;
+  padding: 12px;
+  z-index: 80;
 }
-.modal {
+.dlg {
   width: min(520px, 100%);
   background: #fff;
-  border: 1px solid #e5e7eb;
   border-radius: 16px;
-  padding: 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  overflow: hidden;
 }
-.modalTitle {
-  font-weight: 900;
-  font-size: 14px;
-  margin-bottom: 6px;
-}
-.modalMsg {
-  color: #374151;
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-.modalActions {
+.dlgHdr {
+  padding: 10px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.dlgTtl {
+  font-weight: 950;
+  color: #0f172a;
+}
+.x {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  cursor: pointer;
+}
+.dlgBody {
+  padding: 12px;
+}
+.dlgMsg {
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.8);
+  line-height: 1.45;
+}
+.dlgFtr {
+  padding: 10px;
+  display: flex;
   gap: 8px;
-  margin-top: 12px;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+}
+.btn2 {
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  font-weight: 950;
+  cursor: pointer;
+}
+.btn2.pri {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+
+/* toast */
+.toast {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
+}
+.toast.err {
+  border-color: rgba(239, 68, 68, 0.22);
+}
+.tic {
+  width: 18px;
+  height: 18px;
+}
+.tmsg {
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.85);
 }
 </style>
