@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize) -->
+<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize + ✅ masquer 0) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -28,7 +28,9 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(
+    toNum(v)
+  );
 }
 function money(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -41,6 +43,9 @@ function money(v: number, digits = 2) {
 function clamp(v: any, min = 0, max = 1e15) {
   const x = toNum(v);
   return Math.max(min, Math.min(max, x));
+}
+function isZero(v: any) {
+  return clamp(v) === 0;
 }
 
 /* =========================
@@ -82,7 +87,9 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
+const volumeTotal = computed(() =>
+  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
+);
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
@@ -190,6 +197,11 @@ const pct = computed(() => {
   if (ca <= 0) return 0;
   return (total.value / ca) * 100;
 });
+
+/* =========================
+   ✅ MASQUER 0 (UI uniquement)
+========================= */
+const hideZeros = ref(false);
 
 /* =========================
    TOAST
@@ -380,6 +392,11 @@ type CostKey = (typeof COSTS)[number]["key"];
         </div>
 
         <div class="actions" v-if="variant">
+          <!-- ✅ bouton Masquer 0 -->
+          <button class="btn" :disabled="saving || genBusy" @click="hideZeros = !hideZeros">
+            {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
+          </button>
+
           <button class="btn" :disabled="saving || genBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
@@ -448,26 +465,29 @@ type CostKey = (typeof COSTS)[number]["key"];
       <div class="card">
         <!-- ✅ ultra compact grid -->
         <div class="cards">
-          <div v-for="c in COSTS" :key="c.key" class="costCard">
-            <div class="hdr">
-              <div class="t" :title="c.label">{{ c.label }}</div>
-              <div class="h">DH</div>
-            </div>
+<template v-for="c in COSTS" :key="c.key">
+  <div class="costCard" v-if="!hideZeros || !isZero((draft as any)[c.key])">
+    <div class="hdr">
+      <div class="t" :title="c.label">{{ c.label }}</div>
+      <div class="h">DH</div>
+    </div>
 
-            <div class="line">
-              <input
-                class="inCout mono"
-                type="number"
-                step="0.01"
-                min="0"
-                :value="(draft as any)[c.key]"
-                @input="(draft as any)[c.key] = clamp(($event.target as HTMLInputElement).value)"
-              />
-            </div>
-          </div>
+    <div class="line">
+      <input
+        class="inCout mono"
+        type="number"
+        step="0.01"
+        min="0"
+        :value="(draft as any)[c.key]"
+        @input="(draft as any)[c.key] = clamp(($event.target as HTMLInputElement).value)"
+      />
+    </div>
+  </div>
+</template>
+
 
           <!-- legacy -->
-          <div class="costCard legacy">
+          <div class="costCard legacy" v-if="!hideZeros || !isZero(draft.installation)">
             <div class="hdr">
               <div class="t muted" title="DB legacy">installation (legacy)</div>
               <div class="h">DH</div>

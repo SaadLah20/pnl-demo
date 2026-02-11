@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize) -->
+<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize + ✅ masquer 0) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -44,6 +44,9 @@ function money(v: number, digits = 2) {
 function clamp(v: any, min = 0, max = 1e15) {
   const x = toNum(v);
   return Math.max(min, Math.min(max, x));
+}
+function isZero(v: any) {
+  return clamp(v) === 0;
 }
 
 /* =========================
@@ -191,6 +194,11 @@ const monthly = computed(() => {
 const total = computed(() => monthly.value * clamp(dureeMois.value));
 const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
+
+/* =========================
+   ✅ MASQUER 0 (UI uniquement)
+========================= */
+const hideZeros = ref(false);
 
 /* =========================
    TOAST (non bloquant)
@@ -359,6 +367,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <div class="actions">
+          <!-- ✅ bouton Masquer 0 -->
+          <button class="btn" :disabled="!variant || saving" @click="hideZeros = !hideZeros">
+            {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
+          </button>
+
           <button class="btn" :disabled="!variant || saving" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
@@ -443,7 +456,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
         <!-- ✅ compact grid -->
         <div class="grid6">
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.electricite)">
             <div class="label">Électricité</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.electricite" />
@@ -452,7 +465,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
 
           <!-- ✅ Location groupes = DB legacy: location -->
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.location)">
             <div class="label">Location groupes</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.location" />
@@ -460,7 +473,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.gasoil)">
             <div class="label">Gasoil</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.gasoil" />
@@ -468,7 +481,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.hebergements)">
             <div class="label">Hébergements</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.hebergements" />
@@ -476,7 +489,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.locationTerrain)">
             <div class="label">Location terrain</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationTerrain" />
@@ -484,7 +497,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.telephone)">
             <div class="label">Téléphone</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.telephone" />
@@ -492,7 +505,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.troisG)">
             <div class="label">3G</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.troisG" />
@@ -500,7 +513,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.taxeProfessionnelle)">
             <div class="label">Taxe prof.</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.taxeProfessionnelle" />
@@ -508,7 +521,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.securite)">
             <div class="label">Sécurité</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.securite" />
@@ -516,7 +529,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.locationVehicule)">
             <div class="label">Loc. véhicule</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationVehicule" />
@@ -524,7 +537,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.locationAmbulance)">
             <div class="label">Loc. ambulance</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationAmbulance" />
@@ -532,7 +545,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.locationBungalows)">
             <div class="label">Loc. bungalows</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationBungalows" />
@@ -540,7 +553,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="!hideZeros || !isZero(draft.epi)">
             <div class="label">EPI</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.epi" />

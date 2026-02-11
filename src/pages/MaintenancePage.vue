@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize) -->
+<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize + hide zeros) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -181,6 +181,19 @@ const lines = computed<Line[]>(() => {
 });
 
 /* =========================
+   ✅ MASQUER 0 (UI only)
+========================= */
+const hideZeros = ref(false);
+function isZero(v: any) {
+  return Math.abs(toNum(v)) <= 0;
+}
+const visibleLines = computed(() => {
+  const arr = lines.value ?? [];
+  if (!hideZeros.value) return arr;
+  return arr.filter((ln) => !isZero((edit as any)[ln.key]));
+});
+
+/* =========================
    TOAST (non bloquant)
 ========================= */
 const toastOpen = ref(false);
@@ -348,6 +361,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             Reset
           </button>
 
+          <!-- ✅ NEW: Masquer 0 -->
+          <button class="btn" :disabled="!variant" @click="hideZeros = !hideZeros" :class="{ on: hideZeros }">
+            <span class="dot" aria-hidden="true"></span>
+            {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
+          </button>
+
           <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
@@ -447,7 +466,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </thead>
 
             <tbody>
-              <tr v-for="ln in lines" :key="String(ln.key)">
+              <tr v-for="ln in visibleLines" :key="String(ln.key)">
                 <td class="labelCell"><b>{{ ln.label }}</b></td>
 
                 <td class="r">
@@ -635,6 +654,22 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .btn.pri:hover {
   background: rgba(2, 132, 199, 0.18);
 }
+
+/* ✅ Masquer 0 button state */
+.btn.on {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.35);
+}
+.btn.on .dot {
+  background: rgba(2, 132, 199, 0.9);
+}
+
 .ic {
   width: 18px;
   height: 18px;

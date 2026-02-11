@@ -1,13 +1,24 @@
-<!-- src/pages/AutresCoutsPage.vue (REFONTE / Frais généraux non supprimable + anti-dup + alerte <=4% + colonnes ordre fixe) -->
+<!-- ✅ src/pages/AutresCoutsPage.vue (FICHIER COMPLET / charte “subheader sticky” + KPIs en haut + actions compactes + inputs bleu unité/valeur) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
+// Heroicons (charte pages)
+import {
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  ArrowPathIcon,
+  Squares2X2Icon,
+  PlusCircleIcon,
+} from "@heroicons/vue/24/outline";
+
 const store = usePnlStore();
 
 onMounted(async () => {
-  if ((store as any).pnls?.length === 0) await (store as any).loadPnls();
+  if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
+    await (store as any).loadPnls();
+  }
 });
 
 /* =========================
@@ -50,9 +61,15 @@ const FG_NORM = normLabel("Frais généraux");
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => (store as any).activeVariant);
-const contract = computed<any>(() => (store as any).activeContract);
-const dureeMois = computed(() => toNum(contract.value?.dureeMois));
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
+const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
+
+const variantLabel = computed(() => {
+  const v = variant.value;
+  if (!v) return "—";
+  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
+});
 
 /* =========================
    KPIs requis (Volume / CA)
@@ -138,13 +155,10 @@ function ensureFraisGeneraux() {
     });
     return;
   }
-  // le garder en première ligne (confort UX)
-// le garder en première ligne (confort UX)
-if (idx > 0) {
-  const [fg] = rows.value.splice(idx, 1);
-  if (fg) rows.value.unshift(fg);
-}
-
+  if (idx > 0) {
+    const [fg] = rows.value.splice(idx, 1);
+    if (fg) rows.value.unshift(fg);
+  }
 }
 
 function loadFromVariant() {
@@ -168,7 +182,6 @@ const fgRow = computed<DraftRow | null>(() => {
   return r ?? null;
 });
 const displayRows = computed(() => {
-  // ordre stable: Frais généraux d'abord, puis le reste
   const fg = rows.value.find((r) => isFraisGenerauxRow(r));
   const rest = rows.value.filter((r) => !isFraisGenerauxRow(r));
   return fg ? [fg, ...rest] : rest;
@@ -187,14 +200,9 @@ function totalFor(r: DraftRow): number {
 function monthlyFor(r: DraftRow): number {
   const d = clamp(dureeMois.value);
   if (d <= 0) return 0;
-
-  // si l'unité est déjà mensuelle
   if (r.unite === "MOIS") return clamp(r.valeur);
-
-  // sinon on ramène tout en total puis / durée
   return totalFor(r) / d;
 }
-
 function perM3For(r: DraftRow): number {
   const vol = clamp(volumeTotal.value);
   if (vol <= 0) return 0;
@@ -227,10 +235,23 @@ const pctGlobal = computed(() => {
 const fgPct = computed<number>(() => (fgRow.value ? pctFor(fgRow.value) : 0));
 const fgLow = computed<boolean>(() => {
   if (!fgRow.value) return false;
-  // si CA=0 => pct=0, on ne veut pas fausse alerte
   if (clamp(caTotal.value) <= 0) return false;
   return fgPct.value <= 4;
 });
+
+/* =========================
+   TOAST (charte pages)
+========================= */
+const toastOpen = ref(false);
+const toastMsg = ref("");
+const toastKind = ref<"ok" | "err">("ok");
+
+function showToast(msg: string, kind: "ok" | "err" = "ok") {
+  toastMsg.value = msg;
+  toastKind.value = kind;
+  toastOpen.value = true;
+  window.setTimeout(() => (toastOpen.value = false), 2600);
+}
 
 /* =========================
    ACTIONS
@@ -243,11 +264,10 @@ function addRow() {
     valeur: 0,
   });
 }
-
 function removeRowById(id: string) {
   const idx = rows.value.findIndex((r) => r._id === id);
   if (idx < 0) return;
-  if (isFraisGenerauxRow(rows.value[idx])) return; // ✅ non supprimable
+  if (isFraisGenerauxRow(rows.value[idx])) return;
   rows.value.splice(idx, 1);
 }
 
@@ -259,18 +279,14 @@ function validateRows(): string | null {
 
   const norms = rows.value.map((r) => normLabel(r.label));
   const fgCount = norms.filter((x) => x === FG_NORM).length;
-  if (fgCount !== 1) {
-    return 'Le coût "Frais généraux" doit exister une seule fois (pas de doublon).';
-  }
+  if (fgCount !== 1) return 'Le coût "Frais généraux" doit exister une seule fois (pas de doublon).';
 
-  // interdire doublons de libellés (optionnel mais utile)
   const seen = new Set<string>();
   for (const x of norms) {
     if (!x) continue;
     if (seen.has(x)) return "Libellés en doublon : merci de les rendre uniques.";
     seen.add(x);
   }
-
   return null;
 }
 
@@ -312,11 +328,9 @@ const saving = ref(false);
 const err = ref<string | null>(null);
 
 function buildPayload() {
-  // ✅ garantir l’ordre (FG 1er)
   ensureFraisGeneraux();
   const fg = rows.value.find((r) => isFraisGenerauxRow(r));
   const rest = rows.value.filter((r) => !isFraisGenerauxRow(r));
-
   const all = fg ? [fg, ...rest] : rest;
 
   return all.map((r) => ({
@@ -334,6 +348,7 @@ async function save() {
   const validation = validateRows();
   if (validation) {
     err.value = validation;
+    showToast(validation, "err");
     openInfo("Erreur", validation);
     return;
   }
@@ -343,9 +358,10 @@ async function save() {
     await (store as any).updateVariant(variant.value.id, {
       autresCouts: { items: buildPayload() },
     });
-    openInfo("Enregistré", "Autres coûts mis à jour.");
+    showToast("Autres coûts enregistrés.", "ok");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
+    showToast(String(err.value), "err");
     openInfo("Erreur", String(err.value));
   } finally {
     saving.value = false;
@@ -363,6 +379,7 @@ function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
     loadFromVariant();
+    showToast("Valeurs restaurées.", "ok");
   });
 }
 
@@ -374,12 +391,13 @@ const genBusy = ref(false);
 const genErr = ref<string | null>(null);
 
 async function generalizeTo(variantIds: string[]) {
-  const sourceVariantId = String((store as any).activeVariantId ?? (variant.value as any)?.id ?? "").trim();
+  const sourceVariantId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceVariantId) return;
 
   const validation = validateRows();
   if (validation) {
     genErr.value = validation;
+    showToast(validation, "err");
     openInfo("Erreur", validation);
     return;
   }
@@ -397,9 +415,10 @@ async function generalizeTo(variantIds: string[]) {
         autresCouts: { items: payload },
       });
     }
-    openInfo("Généralisé", "La section Autres coûts a été généralisée sur les variantes ciblées.");
+    showToast("Section Autres coûts généralisée.", "ok");
   } catch (e: any) {
     genErr.value = e?.message ?? String(e);
+    showToast(String(genErr.value), "err");
     openInfo("Erreur", String(genErr.value ?? e?.message ?? e));
   } finally {
     genBusy.value = false;
@@ -415,7 +434,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       ? "Confirmer la généralisation de la section Autres coûts sur TOUTES les variantes ?"
       : `Confirmer la généralisation de la section Autres coûts sur ${ids.length} variante(s) ?`;
 
-  openConfirm("Généraliser Autres coûts", msg, async () => {
+  openConfirm("Généraliser", msg, async () => {
     closeModal();
     await generalizeTo(ids);
     if (!genErr.value) genOpen.value = false;
@@ -439,72 +458,108 @@ function valuePlaceholder(u: Unite): string {
 
 <template>
   <div class="page">
-    <!-- HEADER compact (style dashboard-like) -->
-    <div class="head">
-      <div class="hLeft">
-        <div class="hTitle">Autres coûts</div>
-        <div class="hSub muted" v-if="variant">
-          Variante : <b>{{ variant.title ?? variant.id?.slice?.(0, 6) }}</b>
-          <span v-if="dureeMois"> • {{ dureeMois }} mois</span>
-          <span v-if="volumeTotal"> • Vol {{ n(volumeTotal, 0) }} m³</span>
-          <span v-if="caTotal"> • CA {{ money(caTotal, 0) }}</span>
-          <span v-if="pvMoy"> • PV moy {{ money(pvMoy, 2) }}/m³</span>
+    <!-- ✅ Sticky subheader (charte) -->
+    <div class="subhdr">
+      <div class="rowTop">
+        <div class="left">
+          <div class="ttlRow">
+            <div class="ttl">Autres coûts</div>
+            <span v-if="variant" class="badge">Variante active</span>
+          </div>
+
+          <div class="meta" v-if="variant">
+            <span class="clip"><b>{{ variantLabel }}</b></span>
+            <span class="sep" v-if="dureeMois">•</span>
+            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
+
+            <span class="sep" v-if="volumeTotal">•</span>
+            <span v-if="volumeTotal">Vol <b>{{ n(volumeTotal, 0) }}</b> m³</span>
+
+            <span class="sep" v-if="caTotal">•</span>
+            <span v-if="caTotal">CA <b>{{ money(caTotal, 0) }}</b></span>
+
+            <span class="sep" v-if="pvMoy">•</span>
+            <span v-if="pvMoy">PV moy <b>{{ money(pvMoy, 2) }}</b>/m³</span>
+          </div>
+
+          <div class="meta" v-else>Aucune variante active.</div>
         </div>
-        <div class="hSub muted" v-else>Aucune variante active.</div>
+
+        <div class="actions" v-if="variant">
+          <button class="btn" :disabled="saving || genBusy" @click="addRow()">
+            <PlusCircleIcon class="ic" />
+            Ajouter
+          </button>
+
+          <button class="btn" :disabled="saving || genBusy" @click="askReset()">
+            <ArrowPathIcon class="ic" />
+            Reset
+          </button>
+
+          <button class="btn" :disabled="saving || genBusy" @click="genOpen = true">
+            <Squares2X2Icon class="ic" />
+            {{ genBusy ? "…" : "Généraliser" }}
+          </button>
+
+          <button class="btn pri" :disabled="saving || genBusy" @click="askSave()">
+            <CheckCircleIcon class="ic" />
+            {{ saving ? "…" : "Enregistrer" }}
+          </button>
+        </div>
       </div>
 
-      <div class="hRight">
-        <button class="btn" type="button" :disabled="!variant || genBusy" @click="genOpen = true">Généraliser</button>
-        <button class="btn" type="button" :disabled="!variant || saving" @click="addRow()">+ Ajouter</button>
-        <button class="btn" type="button" :disabled="!variant || saving" @click="askReset()">Réinitialiser</button>
-        <button class="btn primary" type="button" :disabled="!variant || saving" @click="askSave()">
-          {{ saving ? "..." : "Enregistrer" }}
-        </button>
+      <!-- ✅ KPIs en haut (charte) -->
+      <div class="kpis" v-if="variant">
+        <div class="kpi kpiMain">
+          <div class="kLbl">Total</div>
+          <div class="kVal mono">{{ money(totalGlobal, 2) }}</div>
+        </div>
+
+        <div class="kpi">
+          <div class="kLbl">/ m³</div>
+          <div class="kVal mono">{{ n(perM3Global, 2) }} <span>DH/m³</span></div>
+        </div>
+
+        <div class="kpi kpiMonth">
+          <div class="kLbl">/ mois</div>
+          <div class="kVal mono">{{ money(monthlyGlobal, 2) }} <span>DH/mois</span></div>
+        </div>
+
+        <div class="kpi" :class="{ warn: fgLow }" :title="fgLow ? 'Frais généraux <= 4%' : ''">
+          <div class="kLbl">% FG</div>
+          <div class="kVal mono">
+            {{ n(fgPct, 2) }} <span>%</span>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="err" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="genErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Généralisation :</b> {{ genErr }}</div>
+      </div>
+
+      <div v-if="(store as any).loading" class="alert">
+        <div>Chargement…</div>
+      </div>
+
+      <div v-else-if="(store as any).error" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Erreur :</b> {{ (store as any).error }}</div>
       </div>
     </div>
 
-    <div v-if="genErr" class="panel error"><b>Généralisation :</b> {{ genErr }}</div>
-    <div v-if="genBusy" class="panel">Généralisation…</div>
-
-    <div v-if="(store as any).loading" class="panel">Chargement…</div>
-    <div v-else-if="(store as any).error" class="panel error"><b>Erreur :</b> {{ (store as any).error }}</div>
+    <div v-if="!variant" class="card">
+      <div class="empty">Sélectionne une variante puis reviens ici.</div>
+    </div>
 
     <template v-else>
-      <div v-if="err" class="panel error"><b>Erreur :</b> {{ err }}</div>
-
-      <div v-if="!variant" class="panel">
-        <div class="muted">Sélectionne une variante puis reviens ici.</div>
-      </div>
-
-      <template v-else>
-        <!-- KPIs -->
-        <div class="kpis">
-          <div class="kpi">
-            <div class="kLbl">Autres coûts /m³</div>
-            <div class="kVal">{{ n(perM3Global, 2) }} <span class="kUnit">DH/m³</span></div>
-          </div>
-          <div class="kpi">
-            <div class="kLbl">Autres coûts /mois</div>
-            <div class="kVal">{{ money(monthlyGlobal, 2) }}</div>
-          </div>
-          <div class="kpi">
-            <div class="kLbl">Autres coûts total</div>
-            <div class="kVal">{{ money(totalGlobal, 2) }}</div>
-          </div>
-          <div class="kpi" :class="{ warn: fgLow }" :title="fgLow ? 'Frais généraux <= 4%' : ''">
-            <div class="kLbl">
-              % Frais généraux
-              <span v-if="fgLow" class="dot" aria-hidden="true"></span>
-            </div>
-            <div class="kVal">
-              {{ n(fgPct, 2) }} <span class="kUnit">%</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- LIST -->
-        <div class="panel list">
-          <!-- ordre demandé: Libellé | /m3 | /mois | Total | % -->
+      <div class="card">
+        <div class="listWrap">
           <div class="listHead">
             <div class="cLabel">Libellé</div>
             <div class="cPm3 r">/m³</div>
@@ -516,8 +571,7 @@ function valuePlaceholder(u: Unite): string {
 
           <div v-if="displayRows.length === 0" class="empty muted">Aucun autre coût.</div>
 
-          <div v-for="r0 in displayRows" :key="r0._id" class="row" :class="{ fg: isFraisGenerauxRow(r0) }">
-            <!-- Libellé + unité + valeur (inline, propre, sans chevauchement) -->
+          <div v-for="r0 in displayRows" :key="r0._id" class="rowLine" :class="{ fg: isFraisGenerauxRow(r0) }">
             <div class="cell cLabel">
               <div class="labelWrap">
                 <input
@@ -528,7 +582,7 @@ function valuePlaceholder(u: Unite): string {
                 />
 
                 <div class="inlineRight">
-                  <select class="in inSel" v-model="r0.unite" :title="'Unité'">
+                  <select class="in inSel inBlue" v-model="r0.unite" title="Unité">
                     <option value="FORFAIT">FORFAIT</option>
                     <option value="MOIS">MOIS</option>
                     <option value="M3">M3</option>
@@ -537,7 +591,7 @@ function valuePlaceholder(u: Unite): string {
 
                   <div class="valWrap">
                     <input
-                      class="in inSm r"
+                      class="in inSm r inBlue"
                       type="number"
                       step="0.01"
                       min="0"
@@ -549,9 +603,7 @@ function valuePlaceholder(u: Unite): string {
                 </div>
               </div>
 
-              <div v-if="isFraisGenerauxRow(r0) && fgLow" class="fgHint">
-                ⚠ Frais généraux ≤ <b>4%</b>
-              </div>
+              <div v-if="isFraisGenerauxRow(r0) && fgLow" class="fgHint">⚠ Frais généraux ≤ <b>4%</b></div>
             </div>
 
             <div class="cell cPm3 r mono">{{ n(perM3For(r0), 2) }}</div>
@@ -573,29 +625,14 @@ function valuePlaceholder(u: Unite): string {
             </div>
           </div>
 
-          <div class="foot muted">
-            Unité <b>M3</b> et <b>%CA</b> calculées sur le volume total et le CA total de la variante. (<b>/mois</b> = 0 pour M3/%CA par design)
+          <div class="note muted">
+            Unité <b>M3</b> et <b>%CA</b> calculées sur le volume total et le CA total. (<b>/mois</b> = 0 pour M3/%CA par design)
           </div>
         </div>
-      </template>
+      </div>
     </template>
 
-    <!-- MODAL confirm/info -->
-    <div v-if="modal.open" class="modalMask" @click.self="closeModal()">
-      <div class="modal">
-        <div class="modalTitle">{{ modal.title }}</div>
-        <div class="modalMsg">{{ modal.message }}</div>
-
-        <div class="modalActions">
-          <button class="btn" @click="closeModal()">Fermer</button>
-          <button v-if="modal.mode === 'confirm'" class="btn primary" @click="modal.onConfirm && modal.onConfirm()">
-            Confirmer
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ✅ MODAL GENERALISATION -->
+    <!-- ✅ GENERALISATION -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       section-label="Autres coûts"
@@ -603,280 +640,560 @@ function valuePlaceholder(u: Unite): string {
       @apply="onApplyGeneralize"
       @close="() => {}"
     />
+
+    <!-- ✅ Modal confirm/info (charte) -->
+    <teleport to="body">
+      <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
+        <div class="dlg">
+          <div class="dlgHdr">
+            <div class="dlgTtl">{{ modal.title }}</div>
+            <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
+          </div>
+
+          <div class="dlgBody">
+            <div class="dlgMsg">{{ modal.message }}</div>
+          </div>
+
+          <div class="dlgFtr">
+            <button class="btn2" type="button" @click="closeModal()">Fermer</button>
+            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
+              Confirmer
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
+    <!-- ✅ Toast -->
+    <teleport to="body">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+        <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
+        <ExclamationTriangleIcon v-else class="tic" />
+        <div class="tmsg">{{ toastMsg }}</div>
+      </div>
+    </teleport>
   </div>
 </template>
 
 <style scoped>
-/* anti-overflow global + typo pro */
-.page, .panel, .head, .kpis, .row, .listHead { min-width: 0; }
-* { box-sizing: border-box; }
-.page{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  padding:12px;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+.page {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.muted{ color: rgba(107,114,128,1); font-weight: 800; }
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+.muted {
+  color: rgba(15, 23, 42, 0.55);
+}
 
-/* Header */
-.head{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
-  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 55%);
-  border: 1px solid rgba(16, 24, 40, 0.12);
+/* ✅ sticky subheader (charte) */
+.subhdr {
+  position: sticky;
+  top: var(--hdrdash-h, -15px);
+  z-index: 50;
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 16px;
   padding: 8px 10px;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
 }
-.hLeft{ display:flex; flex-direction:column; gap:2px; min-width:0; }
-.hTitle{ font-size:14px; font-weight:950; color:#0f172a; line-height:1.1; }
-.hSub{ font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:1100px; }
-.hRight{ margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.rowTop {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+}
+.ttlRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ttl {
+  font-size: 15px;
+  font-weight: 950;
+  color: #0f172a;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
 
-/* panel */
-.panel{
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:14px;
-  padding:10px;
+/* ✅ meta: 1 ligne, ellipsis comme tes pages */
+.meta {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
-.panel.error{
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.08);
+.clip {
+  display: inline-block;
+  max-width: 520px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  margin: 0 6px;
+  color: rgba(15, 23, 42, 0.35);
 }
 
-/* buttons */
-.btn{
-  height:34px;
-  border:1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.85);
-  border-radius:14px;
-  padding:0 12px;
-  font-weight:950;
-  font-size:12px;
-  cursor:pointer;
-  white-space:nowrap;
+/* actions */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.btn:hover{ background: rgba(32, 184, 232, 0.10); border-color: rgba(32, 184, 232, 0.18); }
-.btn.primary{
-  background: rgba(24, 64, 112, 0.92);
-  border-color: rgba(24, 64, 112, 0.6);
-  color:#fff;
+.btn {
+  height: 32px;
+  border-radius: 12px;
+  padding: 0 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  color: #0f172a;
+  font-weight: 950;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
 }
-.btn.primary:hover{ background: rgba(24, 64, 112, 1); }
-.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.btn:hover {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn.pri {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+.btn.pri:hover {
+  background: rgba(2, 132, 199, 0.18);
+}
+.ic {
+  width: 18px;
+  height: 18px;
+}
 
-/* KPI row */
-.kpis{
-  display:grid;
+/* KPIs */
+.kpis {
+  margin-top: 8px;
+  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap:8px;
+  gap: 8px;
 }
-@media (max-width: 980px){ .kpis{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.kpi{
-  border:1px solid rgba(16, 24, 40, 0.12);
-  border-radius:14px;
-  background: rgba(255,255,255,0.9);
-  padding:8px 10px;
-  min-width:0;
+@media (max-width: 980px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
-.kpi.warn{
-  border-color: rgba(239, 68, 68, 0.35);
+.kpi {
+  background: #fff;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 14px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.kLbl {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.kVal {
+  font-size: 13px;
+  font-weight: 950;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kVal span {
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.55);
+  margin-left: 6px;
+  font-size: 11px;
+}
+.kpiMonth {
+  border-color: rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.06);
+}
+.kpiMain {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(236, 253, 245, 0.9);
+}
+.kpi.warn {
+  border-color: rgba(239, 68, 68, 0.22);
   background: rgba(239, 68, 68, 0.06);
 }
-.kLbl{ font-size:10.8px; font-weight:950; color: rgba(15, 23, 42, 0.6); display:flex; align-items:center; gap:6px; }
-.dot{ width:8px; height:8px; border-radius:999px; background: rgba(239, 68, 68, 0.9); }
-.kVal{
-  margin-top:2px;
-  font-size:13px;
-  font-weight:950;
-  color:#0f172a;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.kUnit{ font-size:11px; font-weight:900; color: rgba(107,114,128,1); margin-left:6px; }
 
-/* list */
-.list{ padding:8px; }
-.listHead{
-  display:grid;
-  grid-template-columns: 1fr 120px 130px 150px 90px 40px; /* libellé | /m3 | /mois | total | % | act */
-  gap:8px;
-  align-items:center;
-  padding:6px 8px;
-  border:1px solid rgba(16, 24, 40, 0.10);
-  background: rgba(24, 64, 112, 0.05);
-  border-radius:12px;
-  font-size:11px;
-  font-weight:950;
-  color: rgba(55,65,81,1);
+/* alerts */
+.alert {
+  margin-top: 8px;
+  border-radius: 14px;
+  padding: 9px 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
 }
-.row{
-  display:grid;
+.alert.err {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.22);
+}
+.aic {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+/* card */
+.card {
+  border-radius: 16px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: #fff;
+  overflow: hidden;
+}
+.empty {
+  padding: 12px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+/* list/table (compact) */
+.listWrap {
+  padding: 8px;
+}
+.listHead {
+  display: grid;
   grid-template-columns: 1fr 120px 130px 150px 90px 40px;
-  gap:8px;
-  align-items:start;
-  padding:8px 8px;
-  border-bottom:1px solid rgba(16, 24, 40, 0.10);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: rgba(15, 23, 42, 0.02);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(55, 65, 81, 1);
 }
-.row:last-of-type{ border-bottom:0; }
-
-.cell{ min-width:0; }
-.r{ text-align:right; }
-.mono{ font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
-
-.in{
-  width:100%;
-  height:32px;
-  border-radius:12px;
-  border:1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.96);
-  padding:0 10px;
-  font-size:12px;
-  font-weight:850;
-  color:#0f172a;
-  outline:none;
-  min-width:0;
+.rowLine {
+  display: grid;
+  grid-template-columns: 1fr 120px 130px 150px 90px 40px;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
 }
-.in:focus{
-  border-color: rgba(32, 184, 232, 0.35);
-  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.12);
+.rowLine:last-of-type {
+  border-bottom: 0;
+}
+.rowLine.fg {
+  background: rgba(15, 23, 42, 0.02);
 }
 
-.labelWrap{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-  min-width:0;
+.cell {
+  min-width: 0;
 }
-.inlineRight{
-  display:grid;
+.r {
+  text-align: right;
+}
+
+/* inputs (charte) */
+.in {
+  width: 100%;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.02);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 900;
+  color: #0f172a;
+  outline: none;
+  min-width: 0;
+}
+.in:focus {
+  border-color: rgba(2, 132, 199, 0.5);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+.in.lock {
+  border-color: rgba(16, 24, 40, 0.18);
+  background: rgba(15, 23, 42, 0.02);
+}
+
+/* ✅ bleu uniquement pour unité + valeur (comme tes autres pages) */
+.inBlue {
+  border-color: rgba(2, 132, 199, 0.26);
+  background: rgba(2, 132, 199, 0.06);
+}
+.inBlue:focus {
+  border-color: rgba(2, 132, 199, 0.55);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+
+.labelWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.inlineRight {
+  display: grid;
   grid-template-columns: 140px minmax(140px, 220px);
-  gap:8px;
-  align-items:center;
-  justify-content:end;
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
 }
-.inSel{ max-width: 180px; }
+.inSel {
+  max-width: 180px;
+}
 
-.valWrap{
-  display:flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:6px;
-  min-width:0;
+.valWrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
 }
-.inSm{ width:100%; max-width: 160px; }
-.unit{
-  font-size:11px;
-  font-weight:950;
-  color: rgba(107,114,128,1);
+.inSm {
+  width: 100%;
+  max-width: 160px;
+}
+.unit {
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.5);
   min-width: 56px;
-  text-align:right;
-  white-space:nowrap;
+  text-align: right;
+  white-space: nowrap;
 }
 
-.fgHint{
-  font-size:11.5px;
-  font-weight:900;
+.fgHint {
+  font-size: 11.5px;
+  font-weight: 900;
   color: rgba(185, 28, 28, 0.95);
-  margin-top:2px;
+  margin-top: 2px;
 }
-.red{ color: rgba(185, 28, 28, 0.95); font-weight: 950; }
-
-.row.fg{
-  background: rgba(24, 64, 112, 0.03);
-}
-.in.lock{
-  border-color: rgba(24, 64, 112, 0.18);
-  background: rgba(255,255,255,0.96);
+.red {
+  color: rgba(185, 28, 28, 0.95);
+  font-weight: 950;
 }
 
 /* delete icon */
-.icon{
-  width:34px;
-  height:34px;
-  border-radius:12px;
-  border:1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255,255,255,0.9);
-  cursor:pointer;
-  font-weight:950;
+.icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  cursor: pointer;
+  font-weight: 950;
 }
-.icon:hover{ background: rgba(32, 184, 232, 0.10); border-color: rgba(32, 184, 232, 0.18); }
-.icon.danger{
+.icon.danger {
   border-color: rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.08);
   color: rgba(127, 29, 29, 0.95);
 }
-.icon.danger:hover{ background: rgba(239, 68, 68, 0.14); }
-.icon.disabled{
-  opacity: .45;
+.icon.disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.empty{
-  padding:10px 8px;
-  border-bottom:1px dashed rgba(16, 24, 40, 0.18);
-}
-.foot{
-  padding:8px 8px 2px;
-  font-size:11.5px;
+/* note */
+.note {
+  padding: 8px 10px;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  font-size: 11.5px;
+  font-weight: 800;
 }
 
-/* responsive: pas de scroll horizontal */
-@media (max-width: 1100px){
-  .listHead, .row{
+/* responsive */
+@media (max-width: 1100px) {
+  .listHead,
+  .rowLine {
     grid-template-columns: 1fr 110px 120px 140px 80px 40px;
   }
-  .inlineRight{ grid-template-columns: 130px minmax(140px, 1fr); }
-  .unit{ min-width: 48px; }
+  .inlineRight {
+    grid-template-columns: 130px minmax(140px, 1fr);
+  }
+  .unit {
+    min-width: 48px;
+  }
+  .clip {
+    max-width: 420px;
+  }
 }
-@media (max-width: 920px){
-  .listHead{ display:none; }
-  .row{
-    grid-template-columns: 1fr 1fr;
-    gap:10px;
-    padding:10px 8px;
-    border-radius:12px;
-    margin-bottom:8px;
-    background: rgba(255,255,255,0.92);
+@media (max-width: 920px) {
+  .listHead {
+    display: none;
   }
-  .row.fg{ background: rgba(24, 64, 112, 0.04); }
+  .rowLine {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 10px 8px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.92);
+  }
+  .rowLine.fg {
+    background: rgba(15, 23, 42, 0.03);
+  }
 
-  .cLabel{ grid-column: 1 / -1; }
-  .cPm3, .cMonth, .cTot, .cPct{ text-align:left; }
-  .cAct{ grid-column: 2; justify-self:end; }
-  .inlineRight{
+  .cLabel {
+    grid-column: 1 / -1;
+  }
+  .cPm3,
+  .cMonth,
+  .cTot,
+  .cPct {
+    text-align: left;
+  }
+  .cAct {
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .inlineRight {
     grid-template-columns: 1fr 1fr;
   }
-  .inSel{ max-width: 100%; }
-  .inSm{ max-width: 100%; }
-  .unit{ min-width: 36px; }
+  .inSel {
+    max-width: 100%;
+  }
+  .inSm {
+    max-width: 100%;
+  }
+  .unit {
+    min-width: 36px;
+  }
+  .meta {
+    flex-wrap: wrap; /* mobile ok */
+  }
+  .clip {
+    max-width: 92vw;
+  }
 }
 
 /* modal */
-.modalMask{
-  position:fixed;
-  inset:0;
-  background: rgba(2, 6, 23, 0.55);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding:16px;
-  z-index:99999;
+.ovl {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  z-index: 80;
 }
-.modal{
-  width:min(520px, 96vw);
-  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 40%);
-  border:1px solid rgba(16, 24, 40, 0.14);
-  border-radius:18px;
-  padding:14px;
-  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.35);
+.dlg {
+  width: min(520px, 100%);
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  overflow: hidden;
 }
-.modalTitle{ font-weight:950; font-size:14px; margin-bottom:6px; color:#0f172a; }
-.modalMsg{ color: rgba(55, 65, 81, 1); font-size:13px; white-space: pre-wrap; font-weight:850; }
-.modalActions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.dlgHdr {
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+}
+.dlgTtl {
+  font-weight: 950;
+  color: #0f172a;
+}
+.x {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  cursor: pointer;
+}
+.dlgBody {
+  padding: 12px;
+}
+.dlgMsg {
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.8);
+  line-height: 1.45;
+}
+.dlgFtr {
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+}
+.btn2 {
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  font-weight: 950;
+  cursor: pointer;
+}
+.btn2.pri {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+
+/* toast */
+.toast {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
+}
+.toast.err {
+  border-color: rgba(239, 68, 68, 0.22);
+}
+.tic {
+  width: 18px;
+  height: 18px;
+}
+.tmsg {
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.85);
+}
 </style>
