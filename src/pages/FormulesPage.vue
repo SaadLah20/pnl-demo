@@ -1,8 +1,14 @@
-<!-- src/pages/Variante/Sections/Formules/FormulesPage.vue -->
+<!-- src/pages/Variante/Sections/Formules/FormulesPage.vue
+     (FICHIER COMPLET / ✅ Import en “preview” visible avant save + cancel restore immédiat + save séparé
+      + options copy + modal sous HeaderDashboard + confirm modals internes)
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionGeneralizeModal, { type CopyPreset } from "@/components/SectionGeneralizeModal.vue";
+
+// Heroicons
+import { ArrowDownTrayIcon } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
 
@@ -70,48 +76,99 @@ watch(
    ROWS (variant formules)
 ========================= */
 type FormuleRow = {
-  id: string; // variantFormuleId
+  id: string; // variantFormuleId (or preview id)
   formuleId: string;
   label: string;
   resistance: string;
   city: string;
   region: string;
-  volumeM3: number;      // "quantité" (m³)
-  momd: number;          // marge
-  cmpOverride: number | null; // DH
+  volumeM3: number;
+  momd: number;
+  cmpOverride: number | null;
   raw: any;
 };
+
+function mapItemToRow(it: any, idPrefix = ""): FormuleRow {
+  const f = it?.formule ?? {};
+  const fid = String(it?.formuleId ?? f?.id ?? "");
+  const rid = String(it?.id ?? "");
+  return {
+    id: idPrefix ? `${idPrefix}${fid || rid || crypto?.randomUUID?.() || Math.random()}` : rid,
+    formuleId: String(fid),
+    label: String(f?.label ?? ""),
+    resistance: String(f?.resistance ?? ""),
+    city: String(f?.city ?? ""),
+    region: String(f?.region ?? ""),
+    volumeM3: toNum(it?.volumeM3 ?? 0),
+    momd: toNum(it?.momd ?? 0),
+    cmpOverride: it?.cmpOverride == null ? null : toNum(it?.cmpOverride),
+    raw: it,
+  };
+}
 
 const rows = computed<FormuleRow[]>(() => {
   const v: any = variant.value ?? null;
 
-  const items =
-    v?.formules?.items ??
-    v?.variantFormules ??
-    [];
-
+  const items = v?.formules?.items ?? v?.variantFormules ?? [];
   if (!Array.isArray(items)) return [];
 
-  return items.map((it: any) => {
-    const f = it?.formule ?? {};
-    return {
-      id: String(it?.id ?? ""),
-      formuleId: String(it?.formuleId ?? f?.id ?? ""),
-      label: String(f?.label ?? ""),
-      resistance: String(f?.resistance ?? ""),
-      city: String(f?.city ?? ""),
-      region: String(f?.region ?? ""),
-      volumeM3: toNum(it?.volumeM3 ?? 0),
-      momd: toNum(it?.momd ?? 0),
-      cmpOverride: it?.cmpOverride == null ? null : toNum(it?.cmpOverride),
-      raw: it,
-    };
-  });
+  return items.map((it: any) => mapItemToRow(it));
 });
 
 function getItemsRaw(r: FormuleRow): any[] {
   return r?.raw?.formule?.items ?? [];
 }
+
+/* =========================
+   ✅ IMPORT PREVIEW (visible avant save)
+========================= */
+type SnapshotItem = { formuleId: string; volumeM3: number; momd: number; cmpOverride: number | null };
+
+const importDraft = reactive<{
+  ready: boolean;
+  sourceVariantId: string;
+  copy: CopyPreset;
+  // preview: on stocke les items RAW de la source (avec formule/items) pour afficher la section
+  previewRawItems: any[];
+  // snapshot light (pour save)
+  items: SnapshotItem[];
+}>({
+  ready: false,
+  sourceVariantId: "",
+  copy: "QTY_MOMD",
+  previewRawItems: [],
+  items: [],
+});
+
+function clearImportDraft() {
+  importDraft.ready = false;
+  importDraft.sourceVariantId = "";
+  importDraft.copy = "QTY_MOMD";
+  importDraft.previewRawItems = [];
+  importDraft.items = [];
+
+  // reset expand map (propre)
+  for (const k of Object.keys(open)) delete open[k];
+}
+
+/** ✅ Rows affichées: si preview actif => on montre les formules importées (non enregistrées) */
+const rowsShown = computed<FormuleRow[]>(() => {
+  if (!importDraft.ready) return rows.value;
+
+  const items = importDraft.previewRawItems ?? [];
+  if (!Array.isArray(items)) return [];
+
+  // id preview stable par formuleId
+  return items.map((it: any) => {
+    const f = it?.formule ?? {};
+    const fid = String(it?.formuleId ?? f?.id ?? "").trim();
+    const clone = {
+      ...it,
+      id: `__preview__${fid || String(it?.id ?? "")}`,
+    };
+    return mapItemToRow(clone, "");
+  });
+});
 
 /* =========================
    ✅ AJOUT FORMULE (UI + anti-doublon)
@@ -121,7 +178,7 @@ const addQ = ref("");
 const addBusy = ref(false);
 const addErr = ref<string | null>(null);
 
-const existingFormuleIds = computed(() => new Set(rows.value.map((r) => String(r.formuleId))));
+const existingFormuleIds = computed(() => new Set(rowsShown.value.map((r) => String(r.formuleId))));
 const catalogue = computed<any[]>(() => (store.formulesCatalogue ?? []) as any[]);
 
 const filteredCatalogue = computed(() => {
@@ -143,6 +200,7 @@ function isAlreadyInVariant(formuleId: string) {
 
 async function addFormule(formuleId: string) {
   if (!variant.value) return;
+  if (importDraft.ready) return;
   if (isAlreadyInVariant(formuleId)) return;
 
   addBusy.value = true;
@@ -152,6 +210,8 @@ async function addFormule(formuleId: string) {
     if (!variantId) return;
 
     await (store as any).addFormuleToVariant(variantId, String(formuleId));
+    // refresh
+    if ((store as any).loadVariantDeep) await (store as any).loadVariantDeep(variantId);
   } catch (e: any) {
     addErr.value = e?.message ?? String(e);
   } finally {
@@ -160,23 +220,41 @@ async function addFormule(formuleId: string) {
 }
 
 /* =========================
-   ✅ SUPPRIMER FORMULE (variant)
+   ✅ SUPPRIMER FORMULE (variant) + confirm modal interne
 ========================= */
 const delBusy = reactive<Record<string, boolean>>({});
 const delErr = ref<string | null>(null);
 
+const delConfirm = reactive({
+  open: false,
+  variantFormuleId: "",
+  label: "",
+});
+
+function openDeleteConfirm(vfId: string, label: string) {
+  if (importDraft.ready) return;
+  delConfirm.variantFormuleId = String(vfId ?? "");
+  delConfirm.label = String(label ?? "");
+  delConfirm.open = true;
+}
+function closeDeleteConfirm() {
+  delConfirm.open = false;
+  delConfirm.variantFormuleId = "";
+  delConfirm.label = "";
+}
+
 async function deleteFormule(variantFormuleId: string) {
+  if (importDraft.ready) return;
+
   const variantId = String((variant.value as any)?.id ?? store.activeVariantId ?? "").trim();
   const vfId = String(variantFormuleId ?? "").trim();
   if (!variantId || !vfId) return;
-
-  const ok = window.confirm("Supprimer cette formule de la variante ? Cette action est définitive.");
-  if (!ok) return;
 
   delErr.value = null;
   delBusy[vfId] = true;
   try {
     await (store as any).deleteVariantFormule(variantId, vfId);
+    if ((store as any).loadVariantDeep) await (store as any).loadVariantDeep(variantId);
   } catch (e: any) {
     delErr.value = e?.message ?? String(e);
   } finally {
@@ -185,7 +263,7 @@ async function deleteFormule(variantFormuleId: string) {
 }
 
 /* =========================
-   Sorting MP: Ciment -> Granulas -> Adjuvant -> Others
+   Sorting MP
 ========================= */
 function normKey(v: any) {
   return String(v ?? "")
@@ -224,7 +302,7 @@ function sortedItems(r: FormuleRow) {
 }
 
 /* =========================
-   CMP (composition)
+   CMP
 ========================= */
 function cmpPerM3(r: FormuleRow): number {
   let total = 0;
@@ -345,17 +423,420 @@ function toggle(r: FormuleRow) {
   open[r.id] = !open[r.id];
 }
 function openAll() {
-  for (const r of rows.value) open[r.id] = true;
+  for (const r of rowsShown.value) open[r.id] = true;
 }
 function closeAll() {
-  for (const r of rows.value) open[r.id] = false;
+  for (const r of rowsShown.value) open[r.id] = false;
 }
 function isOpen(r: FormuleRow) {
   return !!open[r.id];
 }
 
 /* =========================
-   ✅ GENERALISER SECTION (Formules)
+   ✅ IMPORT MODAL (prepare preview)
+========================= */
+type ImportRow = {
+  pnlId: string;
+  pnlTitle: string;
+  contractId: string;
+  contractLabel: string;
+  variantId: string;
+  variantTitle: string;
+  variantStatus: string;
+  hasFormules: boolean;
+};
+
+type TreeContract = {
+  contractId: string;
+  contractLabel: string;
+  variants: ImportRow[];
+};
+type TreePnl = {
+  pnlId: string;
+  pnlTitle: string;
+  contracts: TreeContract[];
+};
+
+const importUi = reactive({
+  open: false,
+  q: "",
+  sourceVariantId: "",
+  onlyActivePnl: false,
+  copy: "QTY_MOMD" as CopyPreset,
+});
+
+const openPnl = reactive<Record<string, boolean>>({});
+const openContract = reactive<Record<string, boolean>>({});
+
+const importBusy = ref(false);
+const importErr = ref<string | null>(null);
+
+function pnlTitleOf(p: any) {
+  return String(p?.title ?? p?.name ?? `PNL #${String(p?.id ?? "").slice(0, 6)}`);
+}
+function contractLabelOf(c: any) {
+  const d = (c as any)?.dureeMois ?? null;
+  const id = String((c as any)?.id ?? "");
+  return d != null ? `Contrat #${id.slice(0, 6)} — ${d} mois` : `Contrat #${id.slice(0, 6)}`;
+}
+function hasFormules(v: any) {
+  const items = (v?.formules?.items ?? v?.variantFormules ?? []) as any[];
+  return Array.isArray(items) && items.length > 0;
+}
+
+function getPnlsForImport(): any[] {
+  const all = (store as any).pnls ?? [];
+  if (!Array.isArray(all)) return [];
+  if (!importUi.onlyActivePnl) return all;
+
+  const activeId = String((store as any).activePnl?.id ?? "");
+  if (!activeId) return all;
+  return all.filter((p: any) => String(p?.id ?? "") === activeId);
+}
+
+const importRows = computed<ImportRow[]>(() => {
+  const pnls = getPnlsForImport();
+  const out: ImportRow[] = [];
+
+  for (const p of pnls) {
+    const pid = String(p?.id ?? "");
+    const pTitle = pnlTitleOf(p);
+
+    const contracts = p?.contracts ?? [];
+    for (const c of contracts) {
+      const cid = String(c?.id ?? "");
+      if (!cid) continue;
+
+      const cLabel = contractLabelOf(c);
+
+      const vars = c?.variants ?? [];
+      for (const v of vars) {
+        const vid = String(v?.id ?? "");
+        if (!vid) continue;
+
+        // ne pas proposer la variante active comme source
+        if (variant.value?.id && vid === String(variant.value.id)) continue;
+
+        out.push({
+          pnlId: pid,
+          pnlTitle: pTitle,
+          contractId: cid,
+          contractLabel: cLabel,
+          variantId: vid,
+          variantTitle: String(v?.title ?? "—"),
+          variantStatus: String(v?.status ?? "—"),
+          hasFormules: hasFormules(v),
+        });
+      }
+    }
+  }
+
+  return out;
+});
+
+const importTree = computed<TreePnl[]>(() => {
+  const needle = String(importUi.q ?? "").trim().toLowerCase();
+
+  const byPnl: Record<
+    string,
+    {
+      pnlId: string;
+      pnlTitle: string;
+      contracts: Record<string, { contractId: string; contractLabel: string; variants: ImportRow[] }>;
+    }
+  > = {};
+
+  for (const r of importRows.value) {
+    const hay = `${r.pnlTitle} ${r.contractLabel} ${r.variantTitle} ${r.variantStatus} ${r.variantId}`.toLowerCase();
+    if (needle && !hay.includes(needle)) continue;
+
+    const p =
+      (byPnl[r.pnlId] ??= {
+        pnlId: r.pnlId,
+        pnlTitle: r.pnlTitle,
+        contracts: {},
+      });
+
+    const c =
+      (p.contracts[r.contractId] ??= {
+        contractId: r.contractId,
+        contractLabel: r.contractLabel,
+        variants: [],
+      });
+
+    c.variants.push(r);
+  }
+
+  return Object.values(byPnl)
+    .sort((a, b) => a.pnlTitle.localeCompare(b.pnlTitle))
+    .map((p) => ({
+      pnlId: p.pnlId,
+      pnlTitle: p.pnlTitle,
+      contracts: Object.values(p.contracts)
+        .map((c) => ({
+          contractId: c.contractId,
+          contractLabel: c.contractLabel,
+          variants: (c.variants ?? []).slice().sort((a, b) => a.variantTitle.localeCompare(b.variantTitle)),
+        }))
+        .sort((a, b) => a.contractLabel.localeCompare(b.contractLabel)),
+    }));
+});
+
+function togglePnl(pnlId: string) {
+  openPnl[pnlId] = !openPnl[pnlId];
+}
+function toggleContract(pnlId: string, contractId: string) {
+  const k = `${pnlId}::${contractId}`;
+  openContract[k] = !openContract[k];
+}
+function contractIsOpen(pnlId: string, contractId: string) {
+  const k = `${pnlId}::${contractId}`;
+  return Boolean(openContract[k]);
+}
+
+function openAllImport() {
+  for (const p of importTree.value) {
+    openPnl[p.pnlId] = true;
+    for (const c of p.contracts) openContract[`${p.pnlId}::${c.contractId}`] = true;
+  }
+}
+function closeAllImport() {
+  for (const p of importTree.value) {
+    openPnl[p.pnlId] = false;
+    for (const c of p.contracts) openContract[`${p.pnlId}::${c.contractId}`] = false;
+  }
+}
+
+function openImport() {
+  importErr.value = null;
+  importUi.q = "";
+  importUi.sourceVariantId = "";
+  importUi.copy = "QTY_MOMD";
+  importUi.open = true;
+
+  const pnls = getPnlsForImport();
+  for (const p of pnls) {
+    const pid = String(p?.id ?? "");
+    if (pid) openPnl[pid] = true;
+
+    for (const c of p?.contracts ?? []) {
+      const cid = String(c?.id ?? "");
+      if (!cid) continue;
+      openContract[`${pid}::${cid}`] = false;
+    }
+  }
+
+  const first = importTree.value?.[0]?.contracts?.[0]?.variants?.[0];
+  if (first?.variantId) importUi.sourceVariantId = first.variantId;
+}
+function closeImport() {
+  importUi.open = false;
+}
+
+function copyLabel(copy: CopyPreset) {
+  if (copy === "ZERO") return "Formules seulement (tout à 0)";
+  if (copy === "QTY_ONLY") return "Formules + Quantités (MOMD=0)";
+  if (copy === "MOMD_ONLY") return "Formules + MOMD (m³=0)";
+  return "Formules + Quantités + MOMD";
+}
+
+function extractSourceSnapshot(srcVariant: any) {
+  const items = (srcVariant?.formules?.items ?? srcVariant?.variantFormules ?? []) as any[];
+  const seen = new Set<string>();
+  const out: SnapshotItem[] = [];
+
+  if (!Array.isArray(items)) return out;
+
+  for (const it of items) {
+    const f = it?.formule ?? {};
+    const fid = String(it?.formuleId ?? f?.id ?? "").trim();
+    if (!fid) continue;
+    if (seen.has(fid)) continue;
+    seen.add(fid);
+
+    out.push({
+      formuleId: fid,
+      volumeM3: toNum(it?.volumeM3 ?? 0),
+      momd: toNum(it?.momd ?? 0),
+      cmpOverride: it?.cmpOverride == null ? null : toNum(it?.cmpOverride),
+    });
+  }
+
+  return out;
+}
+
+function makePatchFor(copy: CopyPreset, s: SnapshotItem) {
+  if (copy === "ZERO") return { volumeM3: 0, momd: 0, cmpOverride: 0 };
+  if (copy === "QTY_ONLY") return { volumeM3: Number(s.volumeM3 ?? 0), momd: 0, cmpOverride: 0 };
+  if (copy === "MOMD_ONLY") return { volumeM3: 0, momd: Number(s.momd ?? 0), cmpOverride: 0 };
+  return {
+    volumeM3: Number(s.volumeM3 ?? 0),
+    momd: Number(s.momd ?? 0),
+    cmpOverride: s.cmpOverride == null ? 0 : s.cmpOverride,
+  };
+}
+
+/* =========================
+   ✅ CONFIRM IMPORT PREPARE (modal interne)
+========================= */
+const importConfirm = reactive({
+  open: false,
+  msg: "",
+});
+
+function openImportConfirm() {
+  if (!variant.value) return;
+  if (!importUi.sourceVariantId) return;
+
+  importConfirm.msg =
+    `Importer les Formules depuis la variante source vers la variante active ?\n` +
+    `• Affiche un preview (non enregistré)\n` +
+    `• Mode: ${copyLabel(importUi.copy)}\n\n` +
+    `Confirmer l'import (preview) ?`;
+
+  importConfirm.open = true;
+}
+function closeImportConfirm() {
+  importConfirm.open = false;
+}
+
+/**
+ * ✅ Import PREVIEW (non enregistré):
+ * - Charge source en deep
+ * - Stocke les items RAW pour preview (UI)
+ * - Stocke snapshot light pour le save
+ * - Restore variante active (target) derrière (contexte)
+ */
+async function doImportPrepare() {
+  if (!variant.value) return;
+
+  const targetId = String(store.activeVariantId ?? "").trim();
+  const srcId = String(importUi.sourceVariantId ?? "").trim();
+  if (!targetId || !srcId) return;
+
+  importBusy.value = true;
+  importErr.value = null;
+
+  try {
+    // 1) snapshot source (deep)
+    let srcVariant: any = null;
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(srcId);
+      srcVariant = store.activeVariant as any;
+    }
+    if (!srcVariant || String(srcVariant?.id ?? "") !== srcId) {
+      throw new Error("Impossible de charger la variante source (deep).");
+    }
+
+    const rawItems = (srcVariant?.formules?.items ?? srcVariant?.variantFormules ?? []) as any[];
+    const snap = extractSourceSnapshot(srcVariant);
+
+    // 2) restore target (on n'écrit rien)
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(targetId);
+    }
+
+    // 3) stage preview
+    importDraft.ready = true;
+    importDraft.sourceVariantId = srcId;
+    importDraft.copy = importUi.copy ?? "QTY_MOMD";
+    importDraft.previewRawItems = Array.isArray(rawItems) ? rawItems.slice() : [];
+    importDraft.items = snap;
+
+    // close confirm + modal
+    closeImportConfirm();
+    closeImport();
+
+    // reset expand map (propre)
+    for (const k of Object.keys(open)) delete open[k];
+  } catch (e: any) {
+    importErr.value = e?.message ?? String(e);
+  } finally {
+    importBusy.value = false;
+  }
+}
+
+/**
+ * ✅ Save séparé:
+ * - Supprime toutes les formules existantes de la variante active
+ * - Ajoute les formules du snapshot
+ * - Applique patch selon CopyPreset
+ * - Reload deep final
+ * - Clear preview
+ */
+async function saveImportedDraft() {
+  if (!variant.value) return;
+
+  const targetId = String(store.activeVariantId ?? "").trim();
+  if (!targetId) return;
+
+  if (!importDraft.ready || !importDraft.items?.length) return;
+
+  importBusy.value = true;
+  importErr.value = null;
+
+  try {
+    const copy = importDraft.copy ?? "QTY_MOMD";
+    const src = importDraft.items.slice();
+
+    // ensure target loaded
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(targetId);
+    }
+
+    // delete all existing target items
+    const targetVariant = store.activeVariant as any;
+    const targetItems = (targetVariant?.formules?.items ?? targetVariant?.variantFormules ?? []) as any[];
+
+    if (Array.isArray(targetItems) && targetItems.length) {
+      for (const it of targetItems) {
+        const vfId = String(it?.id ?? "").trim();
+        if (!vfId) continue;
+        await (store as any).deleteVariantFormule(targetId, vfId);
+      }
+    }
+
+    // add all formuleIds
+    for (const s of src) {
+      await (store as any).addFormuleToVariant(targetId, s.formuleId);
+    }
+
+    // reload target deep and apply patches
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(targetId);
+    }
+
+    const refreshed = store.activeVariant as any;
+    const its = (refreshed?.formules?.items ?? refreshed?.variantFormules ?? []) as any[];
+
+    for (const s of src) {
+      const created = Array.isArray(its)
+        ? its.find((x: any) => String(x?.formuleId ?? x?.formule?.id ?? "") === String(s.formuleId))
+        : null;
+
+      const createdId = String(created?.id ?? "").trim();
+      if (!createdId) continue;
+
+      const patch = makePatchFor(copy, s);
+      await (store as any).updateVariantFormule(targetId, createdId, patch);
+    }
+
+    // final refresh
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(targetId);
+    }
+
+    // clear preview => UI devient “figée” sur la DB (car on vient de sauver)
+    clearImportDraft();
+  } catch (e: any) {
+    importErr.value = e?.message ?? String(e);
+  } finally {
+    importBusy.value = false;
+  }
+}
+
+/* =========================
+   ✅ GENERALISER SECTION (Formules) (inchangé)
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
@@ -380,11 +861,10 @@ function getVariantById(variantId: string): any | null {
   return list.find((x) => x.id === String(variantId))?.raw ?? null;
 }
 
-function makePatchFor(copy: CopyPreset, s: any) {
+function makePatchForGeneralize(copy: CopyPreset, s: any) {
   if (copy === "ZERO") return { volumeM3: 0, momd: 0, cmpOverride: 0 };
   if (copy === "QTY_ONLY") return { volumeM3: Number(s.volumeM3 ?? 0), momd: 0, cmpOverride: 0 };
   if (copy === "MOMD_ONLY") return { volumeM3: 0, momd: Number(s.momd ?? 0), cmpOverride: 0 };
-  // QTY_MOMD
   return {
     volumeM3: Number(s.volumeM3 ?? 0),
     momd: Number(s.momd ?? 0),
@@ -396,7 +876,6 @@ async function generalizeFormulesTo(variantIds: string[], copy: CopyPreset) {
   const sourceVariantId = String(store.activeVariantId ?? "").trim();
   if (!sourceVariantId) return;
 
-  // source snapshot
   const src = rows.value
     .filter((r) => r.formuleId)
     .map((r) => ({
@@ -414,7 +893,6 @@ async function generalizeFormulesTo(variantIds: string[], copy: CopyPreset) {
       const targetId = String(targetIdRaw ?? "").trim();
       if (!targetId || targetId === sourceVariantId) continue;
 
-      // 1) delete existing target items
       const target = getVariantById(targetId) as any;
       const targetItems = (target?.formules?.items ?? target?.variantFormules ?? []) as any[];
       if (Array.isArray(targetItems) && targetItems.length) {
@@ -425,7 +903,6 @@ async function generalizeFormulesTo(variantIds: string[], copy: CopyPreset) {
         }
       }
 
-      // 2) add all formuleIds + patch fields depending on choice
       for (const s of src) {
         await (store as any).addFormuleToVariant(targetId, s.formuleId);
 
@@ -437,7 +914,7 @@ async function generalizeFormulesTo(variantIds: string[], copy: CopyPreset) {
 
         const createdId = String(created?.id ?? "").trim();
         if (createdId) {
-          const patch = makePatchFor(copy, s);
+          const patch = makePatchForGeneralize(copy, s);
           await (store as any).updateVariantFormule(targetId, createdId, patch);
         }
       }
@@ -480,6 +957,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         <div class="titleRow">
           <div class="h1">Formules — Composition & CMP</div>
           <span class="badge">Variante active</span>
+          <span v-if="importDraft.ready" class="badge" style="border-color:#c7d2fe;background:#eef2ff;color:#1e3a8a">
+            Preview import
+          </span>
         </div>
 
         <div class="meta">
@@ -506,23 +986,62 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
 
       <div class="topActions">
-        <button class="btnPrimary" @click="addOpen = true" :disabled="!variant || addBusy">
+        <button class="btnPrimary" @click="addOpen = true" :disabled="!variant || addBusy || importBusy || importDraft.ready">
           + Ajouter
         </button>
 
-        <button class="btn" @click="genOpen = true" :disabled="!variant || genBusy">
+        <button class="btn" @click="openImport()" :disabled="!variant || importBusy">
+          <ArrowDownTrayIcon class="ic" />
+          Importer
+        </button>
+
+        <!-- ✅ Save séparé (uniquement si preview prêt) -->
+        <button
+          v-if="importDraft.ready"
+          class="btnPrimary"
+          style="background:#0f172a;border-color:#0f172a"
+          :disabled="importBusy || !variant"
+          @click="saveImportedDraft()"
+          title="Enregistrer l'import (commit DB)"
+        >
+          Enregistrer
+        </button>
+
+        <button
+          v-if="importDraft.ready"
+          class="btn"
+          :disabled="importBusy"
+          @click="clearImportDraft()"
+          title="Annuler le preview (retour immédiat)"
+        >
+          Annuler
+        </button>
+
+        <button class="btn" @click="genOpen = true" :disabled="!variant || genBusy || importBusy || importDraft.ready">
           Généraliser
         </button>
 
-        <button class="btn" @click="store.loadPnls()">Recharger</button>
+        <button class="btn" @click="store.loadPnls()" :disabled="importBusy">Recharger</button>
         <button class="btn xs" @click="openAll()" :disabled="!variant">Ouvrir</button>
         <button class="btn xs" @click="closeAll()" :disabled="!variant">Fermer</button>
       </div>
     </div>
 
+    <!-- ✅ Bandeau preview -->
+    <div v-if="importDraft.ready" class="alert" style="border-color:#c7d2fe;background:#eef2ff;color:#1e3a8a">
+      <b>Preview import (non enregistré)</b> — Source #{{ String(importDraft.sourceVariantId).slice(0, 8) }} • Mode:
+      {{ copyLabel(importDraft.copy) }} • Formules: {{ rowsShown.length }}
+      <span class="muted" style="margin-left:8px;color:rgba(30,58,138,.78)">
+        → Quitter la page = perdu • Annuler = revient comme avant • Enregistrer = commit.
+      </span>
+    </div>
+
     <div v-if="delErr" class="alert error"><b>Erreur :</b> {{ delErr }}</div>
     <div v-if="genErr" class="alert error"><b>Généralisation :</b> {{ genErr }}</div>
     <div v-if="genBusy" class="alert"><b>Généralisation :</b> traitement…</div>
+
+    <div v-if="importErr" class="alert error"><b>Import :</b> {{ importErr }}</div>
+    <div v-if="importBusy" class="alert"><b>Import :</b> traitement…</div>
 
     <div v-if="store.loading" class="alert">Chargement…</div>
     <div v-else-if="store.error" class="alert error"><b>Erreur :</b> {{ store.error }}</div>
@@ -536,7 +1055,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         <div class="card slim">
           <div class="bar">
             <div class="barLeft">
-              <div class="h2">Formules ({{ rows.length }})</div>
+              <div class="h2">Formules ({{ rowsShown.length }})</div>
               <div class="muted tiny">
                 CMP = Σ((kg/m³ ÷ 1000) × DH/t) • Volume = Σ(kg/ρ) + Eau(C×0,5) + 15L
               </div>
@@ -544,12 +1063,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <div class="card" v-if="rows.length === 0">
+        <div class="card" v-if="rowsShown.length === 0">
           <div class="muted">Aucune formule dans la variante.</div>
         </div>
 
         <div v-else class="cards">
-          <div v-for="r in rows" :key="r.id" class="card">
+          <div v-for="r in rowsShown" :key="r.id" class="card">
             <button class="rowHead" @click="toggle(r)">
               <div class="left">
                 <span class="chev">{{ isOpen(r) ? "▾" : "▸" }}</span>
@@ -565,8 +1084,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 <button
                   class="iconDanger"
                   title="Supprimer la formule"
-                  @click.stop="deleteFormule(r.id)"
-                  :disabled="delBusy[r.id]"
+                  @click.stop="openDeleteConfirm(r.id, r.label)"
+                  :disabled="delBusy[r.id] || importBusy || importDraft.ready"
                 >
                   🗑
                 </button>
@@ -579,7 +1098,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 <template v-if="getItemsRaw(r).length">
                   <div class="pills">
                     <span class="pill mono">V <b>{{ liters(compositionStatsFor(r).vTotal) }}</b>L</span>
-                    <span class="pill" :class="compositionStatsFor(r).isOk ? 'ok' : compositionStatsFor(r).isLow ? 'bad' : 'warn'">
+                    <span
+                      class="pill"
+                      :class="compositionStatsFor(r).isOk ? 'ok' : compositionStatsFor(r).isLow ? 'bad' : 'warn'"
+                    >
                       {{ compositionStatsFor(r).statusLabel }}
                     </span>
                   </div>
@@ -662,8 +1184,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <!-- MODAL AJOUT (inchangé) -->
-        <div v-if="addOpen" class="modalOverlay" @click.self="addOpen = false">
+        <!-- MODAL AJOUT -->
+        <div v-if="addOpen" class="modalOverlay underDash" @click.self="addOpen = false">
           <div class="modal">
             <div class="modalHead">
               <div class="modalTitle">Ajouter une formule</div>
@@ -696,7 +1218,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                   <button
                     v-else
                     class="btnPrimary xs"
-                    :disabled="addBusy"
+                    :disabled="addBusy || importBusy || importDraft.ready"
                     @click="addFormule(String(f?.id ?? ''))"
                   >
                     Ajouter
@@ -707,6 +1229,187 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
             <div class="modalFoot">
               <button class="btn" @click="addOpen = false">Fermer</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ✅ MODAL IMPORT -->
+        <div v-if="importUi.open" class="modalOverlay underDash" @click.self="closeImport()">
+          <div class="modal">
+            <div class="modalHead">
+              <div class="modalTitle">Importer — Formules</div>
+              <button class="x" @click="closeImport()">✕</button>
+            </div>
+
+            <div class="importTop">
+              <div class="importControls">
+                <label class="chk">
+                  <input type="checkbox" v-model="importUi.onlyActivePnl" />
+                  <span>P&L active uniquement</span>
+                </label>
+
+                <div class="importBtns">
+                  <button class="btn xs" type="button" @click="openAllImport()">Tout ouvrir</button>
+                  <button class="btn xs" type="button" @click="closeAllImport()">Tout fermer</button>
+                </div>
+              </div>
+
+              <div class="modalSearch" style="padding: 10px 14px 0; border-bottom: 0">
+                <input
+                  v-model="importUi.q"
+                  class="in"
+                  placeholder="Rechercher… (PNL / contrat / variante / status / id)"
+                />
+              </div>
+
+              <div class="importCopy">
+                <div class="copyTitle">Mode d’import (valeurs)</div>
+                <div class="copyGrid">
+                  <label class="radio">
+                    <input type="radio" v-model="importUi.copy" value="QTY_MOMD" />
+                    <span><b>Formules + Quantités + MOMD</b></span>
+                  </label>
+                  <label class="radio">
+                    <input type="radio" v-model="importUi.copy" value="QTY_ONLY" />
+                    <span><b>Formules + Quantités</b> (MOMD=0)</span>
+                  </label>
+                  <label class="radio">
+                    <input type="radio" v-model="importUi.copy" value="MOMD_ONLY" />
+                    <span><b>Formules + MOMD</b> (m³=0)</span>
+                  </label>
+                  <label class="radio">
+                    <input type="radio" v-model="importUi.copy" value="ZERO" />
+                    <span><b>Formules seulement</b> (tout à 0)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="importHint muted tiny">
+                Import = affiche un <b>preview</b> (non enregistré). Enregistrer est séparé.
+              </div>
+            </div>
+
+            <div class="modalList importList">
+              <div
+                v-if="importTree.length === 0"
+                class="modalErr"
+                style="border-color:#e5e7eb;background:#f9fafb;color:#374151"
+              >
+                Aucune variante trouvée (filtre trop strict ?).
+              </div>
+
+              <div v-else class="importTree">
+                <div v-for="p in importTree" :key="p.pnlId" class="pnlBlock">
+                  <button class="treeRow pnlRow" type="button" @click="togglePnl(p.pnlId)">
+                    <span class="caret" :class="{ on: openPnl[p.pnlId] }">▾</span>
+                    <span class="treeTitle ell">{{ p.pnlTitle }}</span>
+                    <span class="muted tiny mono">#{{ String(p.pnlId).slice(0, 8) }}</span>
+                  </button>
+
+                  <div v-if="openPnl[p.pnlId]" class="pnlBody">
+                    <div v-for="c in p.contracts" :key="c.contractId" class="contractBlock">
+                      <button class="treeRow contractRow" type="button" @click="toggleContract(p.pnlId, c.contractId)">
+                        <span class="caret" :class="{ on: contractIsOpen(p.pnlId, c.contractId) }">▾</span>
+                        <span class="treeTitle ell">{{ c.contractLabel }}</span>
+                        <span class="muted tiny mono">#{{ String(c.contractId).slice(0, 8) }}</span>
+                      </button>
+
+                      <div v-if="contractIsOpen(p.pnlId, c.contractId)" class="contractBody">
+                        <button
+                          v-for="v in c.variants"
+                          :key="v.variantId"
+                          class="treeRow varRow"
+                          type="button"
+                          :class="{ active: importUi.sourceVariantId === v.variantId }"
+                          @click="importUi.sourceVariantId = v.variantId"
+                        >
+                          <span class="dotVar" :class="{ ok: v.hasFormules }"></span>
+                          <span class="treeTitle ell">{{ v.variantTitle }}</span>
+                          <span class="statusPill">{{ v.variantStatus }}</span>
+                          <span class="muted tiny mono">#{{ String(v.variantId).slice(0, 8) }}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="muted tiny" style="margin-top: 10px">
+                  Indicateur: <span class="dotLeg ok"></span> a des formules • <span class="dotLeg"></span> vide
+                </div>
+              </div>
+            </div>
+
+            <div class="modalFoot">
+              <button class="btn" @click="closeImport()">Annuler</button>
+              <button
+                class="btnPrimary"
+                :disabled="!importUi.sourceVariantId || !variant || importBusy"
+                @click="openImportConfirm()"
+              >
+                Importer (preview)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ✅ MODAL CONFIRM IMPORT (preview only) -->
+        <div v-if="importConfirm.open" class="modalOverlay underDash" @click.self="closeImportConfirm()">
+          <div class="modal confirmModal">
+            <div class="modalHead">
+              <div class="modalTitle">Confirmer l’import</div>
+              <button class="x" @click="closeImportConfirm()">✕</button>
+            </div>
+
+            <div class="confirmBody">
+              <div class="confirmText">{{ importConfirm.msg }}</div>
+
+              <div class="confirmMini muted tiny">
+                Note : tu verras les formules importées dans la section, mais rien n’est écrit tant que tu n’enregistres pas.
+              </div>
+            </div>
+
+            <div class="modalFoot">
+              <button class="btn" :disabled="importBusy" @click="closeImportConfirm()">Annuler</button>
+              <button
+                class="btnPrimary"
+                :disabled="importBusy || !variant || !importUi.sourceVariantId"
+                @click="doImportPrepare()"
+              >
+                {{ importBusy ? "..." : "Confirmer & afficher" }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ✅ MODAL CONFIRM DELETE -->
+        <div v-if="delConfirm.open" class="modalOverlay underDash" @click.self="closeDeleteConfirm()">
+          <div class="modal confirmModal">
+            <div class="modalHead">
+              <div class="modalTitle">Supprimer la formule</div>
+              <button class="x" @click="closeDeleteConfirm()">✕</button>
+            </div>
+
+            <div class="confirmBody">
+              <div class="confirmText">
+                Supprimer cette formule de la variante ?
+                <span class="muted" style="display:block;margin-top:6px;font-weight:900;">{{ delConfirm.label || "—" }}</span>
+              </div>
+
+              <div class="confirmMini muted tiny">
+                Cette action est définitive.
+              </div>
+            </div>
+
+            <div class="modalFoot">
+              <button class="btn" :disabled="delBusy[delConfirm.variantFormuleId]" @click="closeDeleteConfirm()">Annuler</button>
+              <button
+                class="btnPrimary"
+                style="background:#b91c1c;border-color:#b91c1c"
+                :disabled="delBusy[delConfirm.variantFormuleId] || importBusy || importDraft.ready"
+                @click="closeDeleteConfirm(); deleteFormule(delConfirm.variantFormuleId);"
+              >
+                Confirmer la suppression
+              </button>
             </div>
           </div>
         </div>
@@ -725,11 +1428,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
-/* styles identiques à ta version précédente (inchangés) */
+/* styles identiques à ta version + z-index overlay haut + underDash sous HeaderDashboard */
 .page { display:flex; flex-direction:column; gap:8px; padding:10px; }
 .top { display:flex; justify-content:space-between; align-items:flex-end; gap:8px; flex-wrap:wrap; }
 .tleft { display:flex; flex-direction:column; gap:2px; min-width:260px; }
-.titleRow { display:flex; align-items:center; gap:8px; }
+.titleRow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .h1 { font-weight:950; font-size:14px; }
 .badge { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#374151; font-weight:900; }
 .meta { display:flex; flex-direction:column; gap:1px; }
@@ -740,8 +1443,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .sep { opacity:.5; }
 .tright { display:flex; align-items:flex-end; flex:1 1 auto; min-width:220px; }
 .hint { font-size:10.5px; color:#6b7280; line-height:1.2; }
-.topActions { display:flex; gap:6px; align-items:center; flex:0 0 auto; }
-.btn, .btnPrimary { border:1px solid #e5e7eb; background:#fff; padding:7px 10px; border-radius:12px; cursor:pointer; font-weight:900; font-size:12px; }
+.topActions { display:flex; gap:6px; align-items:center; flex:0 0 auto; flex-wrap:wrap; }
+.btn, .btnPrimary { border:1px solid #e5e7eb; background:#fff; padding:7px 10px; border-radius:12px; cursor:pointer; font-weight:900; font-size:12px; display:inline-flex; align-items:center; gap:8px; }
 .btn:hover { background:#f9fafb; }
 .btnPrimary { border-color:#111827; background:#111827; color:#fff; }
 .btnPrimary:hover { filter:brightness(1.05); }
@@ -798,9 +1501,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .okTxt { color:#166534; font-weight:950; }
 .warnTxt { color:#92400e; font-weight:950; }
 .badTxt { color:#7f1d1d; font-weight:950; }
-.modalOverlay { position:fixed; inset:0; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; padding:18px; z-index:50; }
+
+/* ✅ IMPORTANT: z-index haut + underDash sous HeaderDashboard */
+.modalOverlay { position:fixed; inset:0; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; padding:18px; z-index:99999; }
+.modalOverlay.underDash{ align-items:flex-start; padding-top: 82px; } /* ✅ sous HeaderDashboard */
 .modal { width:min(900px, 96vw); max-height:82vh; overflow:auto; background:#fff; border-radius:18px; border:1px solid #e5e7eb; box-shadow:0 25px 50px rgba(0,0,0,.15); }
-.modalHead { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #eef2f7; }
+.modalHead { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #eef2f7; position:sticky; top:0; background:#fff; z-index:2; }
 .modalTitle { font-weight:950; font-size:13px; }
 .x { border:1px solid #e5e7eb; background:#fff; width:34px; height:32px; border-radius:12px; cursor:pointer; font-weight:900; }
 .x:hover { background:#f9fafb; }
@@ -818,5 +1524,52 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .miSub { font-size:11px; }
 .miRight { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
 .tag { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#6b7280; font-weight:900; }
-.modalFoot { border-top:1px solid #eef2f7; padding:12px 14px; display:flex; justify-content:flex-end; gap:8px; }
+.modalFoot { border-top:1px solid #eef2f7; padding:12px 14px; display:flex; justify-content:flex-end; gap:8px; position:sticky; bottom:0; background:#fff; }
+.ic{ width:14px; height:14px; }
+
+.importTop{ padding: 10px 0 8px; border-bottom: 1px solid #eef2f7; }
+.importControls{ padding: 0 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.chk{ display:flex; align-items:center; gap:8px; font-size:12px; font-weight:900; color:#111827; user-select:none; }
+.chk input{ width:16px; height:16px; }
+.importBtns{ display:flex; gap:8px; align-items:center; }
+.importHint{ padding: 6px 14px 0; }
+.importList{ padding-top: 8px; }
+
+.importCopy{ padding: 10px 14px 0; }
+.copyTitle{ font-size:11.5px; font-weight:950; color:#111827; margin-bottom:8px; }
+.copyGrid{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+@media (max-width: 820px){ .copyGrid{ grid-template-columns:1fr; } }
+.radio{ display:flex; gap:8px; align-items:flex-start; border:1px solid #eef2f7; background:#fcfcfd; padding:8px 10px; border-radius:12px; font-size:12px; font-weight:900; color:#111827; }
+.radio input{ margin-top:2px; }
+
+.importTree{ border:1px solid #eef2f7; border-radius:14px; background:#fcfcfd; padding:10px; }
+.treeRow{ width:100%; text-align:left; border:1px solid #eef2f7; background:#fff; border-radius:12px; padding:9px 10px; display:flex; gap:10px; align-items:center; cursor:pointer; }
+.treeRow + .treeRow{ margin-top: 8px; }
+.treeRow:hover{ background:#f9fafb; }
+
+.pnlRow{ font-weight: 950; font-size: 12px; padding: 10px 10px; }
+.contractRow{ margin-top: 8px; font-weight: 950; font-size: 11.5px; background:#fff; opacity:.96; }
+.varRow{ margin-top: 8px; font-weight: 900; font-size: 11.25px; background:#fff; opacity:.98; }
+.varRow.active{ border-color: rgba(17,24,39,.22); box-shadow: 0 0 0 3px rgba(17,24,39,.10); }
+
+.caret{ width: 18px; display:inline-flex; justify-content:center; color: #6b7280; transform: rotate(-90deg); transition: transform .12s ease; flex: 0 0 auto; }
+.caret.on{ transform: rotate(0deg); }
+
+.treeTitle{ flex:1; min-width:0; }
+.ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pnlBody{ margin-left: 18px; margin-top: 8px; display:flex; flex-direction:column; gap:8px; }
+.contractBody{ margin-left: 18px; margin-top: 8px; display:flex; flex-direction:column; gap:8px; }
+
+.dotVar{ width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid #e5e7eb; flex: 0 0 auto; }
+.dotVar.ok{ background: #22c55e; border-color: #bbf7d0; }
+.dotLeg{ display:inline-block; width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid #e5e7eb; transform: translateY(1px); }
+.dotLeg.ok{ background: #22c55e; border-color: #bbf7d0; }
+
+.statusPill{ border:1px solid #e5e7eb; background:#fafafa; border-radius:999px; padding:2px 8px; font-size:10.5px; font-weight:900; color:#6b7280; white-space:nowrap; flex:0 0 auto; }
+
+/* ✅ Confirm modal */
+.confirmModal { width: min(620px, 96vw); }
+.confirmBody { padding: 12px 14px; }
+.confirmText{ white-space: pre-line; font-size: 12px; font-weight: 950; color:#111827; line-height: 1.35; }
+.confirmMini{ margin-top: 8px; }
 </style>

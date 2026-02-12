@@ -128,8 +128,14 @@ function isRowTouched(r: any): boolean {
 /* =========================
    LOAD persisted devis.* (surcharges + content)
 ========================= */
-type LineItem = { label: string; value?: string; locked?: boolean };
+type LineItem = { label: string; value?: string; locked?: boolean }; // locked=true => piloté contrat (non éditable)
 type PriceExtra = { label: string; unit?: string; value: number; note?: string };
+
+const DELAY_PENALTY_LABEL = "Pénalité de dépassement de délai (selon conditions contractuelles)";
+
+function dropDelayPenalty(extras: PriceExtra[]): PriceExtra[] {
+  return (extras ?? []).filter((x) => String(x?.label ?? "").trim() !== DELAY_PENALTY_LABEL);
+}
 
 const content = reactive({
   meta: {
@@ -195,93 +201,218 @@ function normalizePriceExtras(x: any, fallback: PriceExtra[]): PriceExtra[] {
   return out.length ? out : fallback;
 }
 
-/* ===== charge mapping helpers ===== */
-function normalizeChargeSide(v: any): "CLIENT" | "LHM" | null {
+/* =========================
+   ✅ Répartition depuis le contrat (source-of-truth) MAIS :
+   - Seules les phrases liées DIRECTEMENT au contrat sont "locked"
+   - Les phrases standard Word restent éditables (non locked) et ne sont pas régénérées
+========================= */
+type Side = "CLIENT" | "LHM";
+
+function normalizeChargeSide(v: any): Side | null {
   const s = String(v ?? "").toLowerCase().trim();
   if (!s) return null;
-  if (s.includes("client")) return "CLIENT";
-  if (s.includes("lhm") || s.includes("holcim") || s.includes("lafarge")) return "LHM";
-  if (s === "oui" || s === "true") return "CLIENT";
-  if (s === "non" || s === "false") return "LHM";
+
+  if (s === "client" || s.includes("client")) return "CLIENT";
+  if (s === "lhm" || s.includes("lhm") || s.includes("holcim") || s.includes("lafarge")) return "LHM";
+
+  if (s === "c") return "CLIENT";
+  if (s === "f" || s === "four" || s.includes("fourn")) return "LHM";
+
   return null;
 }
 
-function buildCentralTransportInstallItems() {
-  const c = contract.value ?? {};
+// ✅ si champ vide / non reconnu => LHM
+function decideSideFromContractField(fieldVal: any): Side {
+  return normalizeChargeSide(fieldVal) ?? "LHM";
+}
 
-  const sideTransport = normalizeChargeSide((c as any)?.transport);
-  const sideInstall = normalizeChargeSide((c as any)?.installation);
-  const sideCab = normalizeChargeSide((c as any)?.cab);
+function normLabel(s: any): string {
+  return String(s ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
-  const groupPhrase: LineItem = {
-    label: "Transport et installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
-  };
+function dedupeAcrossSides(
+  lhm: LineItem[],
+  client: LineItem[],
+  templateSideByLabel: Record<string, Side>
+) {
+  const mapL = new Map<string, LineItem>();
+  const mapC = new Map<string, LineItem>();
 
-  const pTransport: LineItem = { label: "Transport sur site d’une centrale à béton de capacité de malaxeur de 2m3;" };
-  const pInstall: LineItem = { label: "Installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;" };
-  const pCab: LineItem = { label: "Mise à disposition d’une centrale à béton de capacité de malaxeur de 2m3;" };
-
-  if (sideTransport && sideInstall && sideCab && sideTransport === sideInstall && sideInstall === sideCab) {
-    return {
-      lhm: sideTransport === "LHM" ? [groupPhrase] : [],
-      client: sideTransport === "CLIENT" ? [groupPhrase] : [],
-      usedGrouped: true,
-    };
+  for (const it of lhm ?? []) {
+    const k = normLabel(it?.label);
+    if (!k) continue;
+    if (!mapL.has(k)) mapL.set(k, it);
+  }
+  for (const it of client ?? []) {
+    const k = normLabel(it?.label);
+    if (!k) continue;
+    if (!mapC.has(k)) mapC.set(k, it);
   }
 
+  const allKeys = new Set([...mapL.keys(), ...mapC.keys()]);
+  const outL: LineItem[] = [];
+  const outC: LineItem[] = [];
+
+  for (const k of allKeys) {
+    const inL = mapL.get(k);
+    const inC = mapC.get(k);
+
+    if (inL && inC) {
+      const target = templateSideByLabel[k] ?? "LHM";
+      if (target === "CLIENT") outC.push(inC);
+      else outL.push(inL);
+      continue;
+    }
+
+    if (inL) outL.push(inL);
+    if (inC) outC.push(inC);
+  }
+
+  return { lhm: outL, client: outC };
+}
+
+function buildContractTemplateLocked() {
+  const c: any = contract.value ?? {};
+
+  const LABELS = {
+    groupTransportInstall:
+      "Transport et installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
+    transportOnly: "Transport sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
+    installOnly: "Installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
+    cabOnly: "Mise à disposition d’une centrale à béton de capacité de malaxeur de 2m3;",
+
+    genieCivil:
+      "Travaux de génie civil de la centrale à béton et ses annexes (bassins de décantation, casiers, clôture…)",
+    mp: "Fourniture des matières premières nécessaires à la fabrication des bétons ;",
+    consoEau: "Consommation d’eau pour les besoins des centrales à béton ;",
+    consoElec: "Consommation d’électricité pour les besoins des centrales à béton ;",
+    chargeuse:
+      "Mise à disposition d’une chargeuse de capacité suffisante pour l’alimentation de la centrale à béton ;",
+    maintenance: "Maintenance (pièces et main d’œuvre) des centrales et chargeurs ;",
+    terrain:
+      "Mise à disposition d’un terrain plane et compacté pour l’installation de la centrale à béton. La superficie minimale du terrain est 4.000m².",
+
+    branchements: "Branchement en Eau et Electricité aux pieds des centrales à béton ;",
+    branchementEauOnly: "Branchement en Eau aux pieds des centrales à béton ;",
+    branchementElecOnly: "Branchement en Electricité aux pieds des centrales à béton ;",
+  };
+
+  const templateSideByLabel: Record<string, Side> = {};
   const lhm: LineItem[] = [];
   const client: LineItem[] = [];
 
-  const pushBySide = (side: "CLIENT" | "LHM" | null, item: LineItem) => {
-    const s = side ?? "LHM";
-    if (s === "CLIENT") client.push(item);
+  const pushLocked = (label: string, side: Side) => {
+    const item: LineItem = { label, locked: true }; // ✅ piloté contrat => non éditable
+    if (side === "CLIENT") client.push(item);
     else lhm.push(item);
+    templateSideByLabel[normLabel(label)] = side;
   };
 
-  pushBySide(sideTransport, pTransport);
-  pushBySide(sideInstall, pInstall);
-  pushBySide(sideCab, pCab);
+  // ====== CAB / INSTALL / TRANSPORT (grouping si tous indiqués + identiques)
+  const sideTransport = normalizeChargeSide(c.transport);
+  const sideInstall = normalizeChargeSide(c.installation);
+  const sideCab = normalizeChargeSide(c.cab);
 
-  return { lhm, client, usedGrouped: false };
+  const allDefined = sideTransport != null && sideInstall != null && sideCab != null;
+  const allSame = allDefined && sideTransport === sideInstall && sideInstall === sideCab;
+
+  if (allSame) {
+    pushLocked(LABELS.groupTransportInstall, sideTransport as Side);
+  } else {
+    pushLocked(LABELS.transportOnly, decideSideFromContractField(c.transport));
+    pushLocked(LABELS.installOnly, decideSideFromContractField(c.installation));
+    pushLocked(LABELS.cabOnly, decideSideFromContractField(c.cab));
+  }
+
+  // ====== Lignes pilotées par contrat
+  pushLocked(LABELS.genieCivil, decideSideFromContractField(c.genieCivil));
+  pushLocked(LABELS.mp, decideSideFromContractField(c.matierePremiere));
+  pushLocked(LABELS.consoEau, decideSideFromContractField(c.consoEau));
+  pushLocked(LABELS.consoElec, decideSideFromContractField(c.consoElec));
+  pushLocked(LABELS.chargeuse, decideSideFromContractField(c.chargeuse));
+  pushLocked(LABELS.maintenance, decideSideFromContractField(c.maintenance));
+  pushLocked(LABELS.terrain, decideSideFromContractField(c.terrain));
+
+  // ✅ Branchement Eau/Elec : groupé si même côté explicite, sinon séparé
+  const sEau = normalizeChargeSide(c.branchementEau);
+  const sElec = normalizeChargeSide(c.branchementElec);
+
+  if (sEau && sElec && sEau === sElec) {
+    pushLocked(LABELS.branchements, sEau);
+  } else {
+    pushLocked(LABELS.branchementEauOnly, decideSideFromContractField(c.branchementEau));
+    pushLocked(LABELS.branchementElecOnly, decideSideFromContractField(c.branchementElec));
+  }
+
+  const tplSet = new Set(Object.keys(templateSideByLabel));
+
+  return { lhm, client, templateSideByLabel, tplSet };
 }
 
-function buildStandardCharges() {
-  const lhmStandard: LineItem[] = [
-    { label: "Travaux de génie civil de la centrale à béton et ses annexes (bassins de décantation, casiers, clôture…)" },
-    { label: "Fourniture des matières premières nécessaires à la fabrication des bétons ;" },
-    { label: "Consommation d’électricité pour les besoins des centrales à béton ;" },
-    { label: "Personnels d’exploitation et de conduite de la centrale : 24 mois maximum sur un poste de 10 heures hors Dimanche et jours fériés." },
-    { label: "Mise à disposition d’une chargeuse de capacité suffisante pour l’alimentation de la centrale à béton ;" },
-    { label: "Maintenance (pièces et main d’œuvre) des centrales et chargeurs ;" },
-    { label: "Réception des commandes et organisation des livraisons ;" },
-    { label: "Etudes formulations et de convenances des bétons objets de cette offre par notre laboratoire interne (une gâchée de 2m3 par formule) ;" },
-    { label: "Autocontrôles de fabrication selon les normes Marocaines ;" },
-    { label: "Gestion automatisée et informatisée du système de fabrication." },
+function buildWordDefaultsEditable() {
+  // ✅ Ces lignes viennent du devis Word : elles restent éditables
+  // (et ne sont pas recalculées depuis contrat)
+  const L = {
+    personnel:
+      "Personnels d’exploitation et de conduite de la centrale : 24 mois maximum sur un poste de 10 heures hors Dimanche et jours fériés.",
+    reception: "Réception des commandes et organisation des livraisons ;",
+    etudes:
+      "Etudes formulations et de convenances des bétons objets de cette offre par notre laboratoire interne (une gâchée de 2m3 par formule) ;",
+    autocontroles: "Autocontrôles de fabrication selon les normes Marocaines ;",
+    gestion: "Gestion automatisée et informatisée du système de fabrication.",
+
+    programme: "Programme mensuel et hebdomadaire de la semaine suivante confirmé tous les Jeudis avant 16h ;",
+    confirmation: "Confirmation journalière des commandes la veille avant 16h ;",
+    receptionControle: "Réception, contrôle du béton et du déchargement des camions-malaxeurs ;",
+    autorisationsES:
+      "Prise en charge des autorisations d’entrée et de sortie au site pour le personnel, les camions malaxeurs et les pompes ;",
+    entretienVoies:
+      "Entretien des voies d’accès des camions malaxeurs et camions de la matière première ;",
+    autorisationsCoulage: "Prise en charge des autorisations pour le coulage des bétons.",
+    labo:
+      "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP.",
+  };
+
+  // ✅ placements “Word” (comme ton devis de référence)
+  const lhm: LineItem[] = [
+    { label: L.personnel },
+    { label: L.reception },
+    { label: L.etudes },
+    { label: L.autocontroles },
+    { label: L.gestion },
   ];
 
-  const clientStandard: LineItem[] = [
-    { label: "Mise à disposition d’un terrain plane et compacté pour l’installation de la centrale à béton. La superficie minimale du terrain est 5.000m²." },
-    { label: "Branchement en Eau et Electricité aux pieds des centrales à béton ;" },
-    { label: "Consommation d’eau pour les besoins des centrales à béton ;" },
-    { label: "Programme mensuel et hebdomadaire de la semaine suivante confirmé tous les Jeudis avant 16h ;" },
-    { label: "Confirmation journalière des commandes la veille avant 16h ;" },
-    { label: "Réception, contrôle du béton et du déchargement des camions-malaxeurs ;" },
-    { label: "Prise en charge des autorisations d’entrée et de sortie au site pour le personnel, les camions malaxeurs et les pompes ;" },
-    { label: "Entretien des voies d’accès des camions malaxeurs et camions de la matière première ;" },
-    { label: "Prise en charge des autorisations pour le coulage des bétons." },
-    { label: "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP." },
+  const client: LineItem[] = [
+    { label: L.programme },
+    { label: L.confirmation },
+    { label: L.receptionControle },
+    { label: L.autorisationsES },
+    { label: L.entretienVoies },
+    { label: L.autorisationsCoulage },
+    { label: L.labo },
   ];
 
-  const central = buildCentralTransportInstallItems();
-  return { lhm: [...central.lhm, ...lhmStandard], client: [...clientStandard, ...central.client] };
+  return { lhm, client };
 }
 
 function buildDefaultPrixComplementaires(): PriceExtra[] {
   const c = contract.value ?? {};
   const extras: PriceExtra[] = [
-    { label: "Ouverture de centrale en dehors des horaires de travail (Poste de nuit, Jour férié & Dimanche)", unit: "DH HT / poste", value: n((c as any)?.sundayPrice) || 5000 },
-    { label: "Mise à disposition de la centrale à béton et son personnel d’exploitation au-delà de la durée contractuelle", unit: "DH HT / mois", value: 150000 },
+    {
+      label: "Ouverture de centrale en dehors des horaires de travail (Poste de nuit, Jour férié & Dimanche)",
+      unit: "DH HT / poste",
+      value: n((c as any)?.sundayPrice) || 5000,
+    },
+    {
+      label: "Mise à disposition de la centrale à béton et son personnel d’exploitation au-delà de la durée contractuelle",
+      unit: "DH HT / mois",
+      value: 150000,
+    },
   ];
+
   const chillerRent = n((c as any)?.chillerRent);
   if (chillerRent > 0) {
     extras.push({
@@ -291,14 +422,7 @@ function buildDefaultPrixComplementaires(): PriceExtra[] {
       value: chillerRent,
     });
   }
-  const delayPenalty = n((c as any)?.delayPenalty);
-  if (delayPenalty > 0) {
-    extras.push({
-      label: "Pénalité de dépassement de délai (selon conditions contractuelles)",
-      unit: "MAD HT",
-      value: delayPenalty,
-    });
-  }
+
   return extras;
 }
 
@@ -321,7 +445,8 @@ function loadPersistedAll() {
   const persistedRappel = safeParseJson((vDevis as any)?.rappel, {});
   const persistedSignature = safeParseJson((vDevis as any)?.signature, {});
 
-  const { lhm, client } = buildStandardCharges();
+  const tpl = buildContractTemplateLocked();
+  const wordDefaults = buildWordDefaultsEditable();
 
   const pnlTitle = String(pnl.value?.title ?? "").trim();
   content.meta.ville = String(persistedMeta?.ville ?? pnl.value?.city ?? "");
@@ -339,12 +464,41 @@ function loadPersistedAll() {
   content.rappel.demarrage = String(persistedRappel?.demarrage ?? formatDateFr(pnl.value?.startDate) ?? "");
   content.rappel.lieu = String(persistedRappel?.lieu ?? pnl.value?.city ?? "");
 
-  content.chargeFournisseur = normalizeLineItems(safeParseJson((vDevis as any)?.chargeFournisseur, null), lhm);
-  content.chargeClient = normalizeLineItems(safeParseJson((vDevis as any)?.chargeClient, null), client);
-  content.prixComplementaires = normalizePriceExtras(
-    safeParseJson((vDevis as any)?.prixComplementaires, null),
-    buildDefaultPrixComplementaires()
-  );
+  const persistedLhmRaw = safeParseJson((vDevis as any)?.chargeFournisseur, null);
+  const persistedClientRaw = safeParseJson((vDevis as any)?.chargeClient, null);
+  const persistedExtrasRaw = safeParseJson((vDevis as any)?.prixComplementaires, null);
+
+  const curLhm = normalizeLineItems(persistedLhmRaw, []);
+  const curClient = normalizeLineItems(persistedClientRaw, []);
+
+  // ✅ on supprime du persisted toute ligne qui correspond à un template contrat (car régénérée)
+  const keepLhm = curLhm.filter((it) => !tpl.tplSet.has(normLabel(it?.label)) && !it?.locked);
+  const keepClient = curClient.filter((it) => !tpl.tplSet.has(normLabel(it?.label)) && !it?.locked);
+
+  // ✅ si rien n’est enregistré, on injecte aussi les defaults Word (éditables)
+  const hasAnyPersisted = (curLhm.length + curClient.length) > 0;
+
+  const baseL = hasAnyPersisted ? [] : wordDefaults.lhm;
+  const baseC = hasAnyPersisted ? [] : wordDefaults.client;
+
+  const mergedL = [...tpl.lhm, ...baseL, ...keepLhm];
+  const mergedC = [...tpl.client, ...baseC, ...keepClient];
+
+  const dedup = dedupeAcrossSides(mergedL, mergedC, tpl.templateSideByLabel);
+  content.chargeFournisseur = dedup.lhm;
+  content.chargeClient = dedup.client;
+
+  const templateExtras = dropDelayPenalty(buildDefaultPrixComplementaires());
+  const curExtras = dropDelayPenalty(normalizePriceExtras(persistedExtrasRaw, templateExtras));
+  // ✅ extras: on garde template + customs, mais prix non éditable en UI
+  // (ici on fait juste un merge soft sans dupliquer les labels template)
+  const tset = new Set((templateExtras ?? []).map((x) => String(x?.label ?? "").trim()).filter(Boolean));
+  const keepCustomExtras = (curExtras ?? []).filter((x) => {
+    const lbl = String(x?.label ?? "").trim();
+    if (!lbl) return false;
+    return !tset.has(lbl);
+  });
+  content.prixComplementaires = [...templateExtras, ...keepCustomExtras];
 
   const q = content.rappel.quantiteM3;
   const d = content.rappel.dureeMois;
@@ -362,6 +516,34 @@ function loadPersistedAll() {
   content.signature.nom = String(persistedSignature?.nom ?? "Saad LAHLIMI");
   content.signature.poste = String(persistedSignature?.poste ?? "Commercial P&L");
   content.signature.telephone = String(persistedSignature?.telephone ?? "+212701888888");
+}
+
+function syncDevisFromContract() {
+  const tpl = buildContractTemplateLocked();
+
+  // ✅ on garde tout ce qui n'est PAS locked (word standard + custom)
+  const keepLhm = (content.chargeFournisseur ?? []).filter((it) => !it?.locked && !tpl.tplSet.has(normLabel(it?.label)));
+  const keepClient = (content.chargeClient ?? []).filter((it) => !it?.locked && !tpl.tplSet.has(normLabel(it?.label)));
+
+  const mergedL = [...tpl.lhm, ...keepLhm];
+  const mergedC = [...tpl.client, ...keepClient];
+
+  const dedup = dedupeAcrossSides(mergedL, mergedC, tpl.templateSideByLabel);
+  content.chargeFournisseur = dedup.lhm;
+  content.chargeClient = dedup.client;
+
+  const templateExtras = dropDelayPenalty(buildDefaultPrixComplementaires());
+  // on remplace la partie template (labels exacts) et on conserve les customs
+  const tset = new Set((templateExtras ?? []).map((x) => String(x?.label ?? "").trim()).filter(Boolean));
+  const keepCustom = (content.prixComplementaires ?? []).filter((x) => {
+    const lbl = String(x?.label ?? "").trim();
+    if (!lbl) return false;
+    return !tset.has(lbl);
+  });
+  content.prixComplementaires = [...templateExtras, ...keepCustom];
+
+  content.rappel.quantiteM3 = quantiteProjetM3.value;
+  content.rappel.dureeMois = dureeMois.value;
 }
 
 /* =========================
@@ -544,15 +726,47 @@ watch(
   () => loadPersistedAll()
 );
 
+// ✅ si on change de contrat (dans MesPnlPage) sans changer de variante
+watch(
+  () => {
+    const c: any = contract.value ?? null;
+    return JSON.stringify({
+      id: c?.id ?? null,
+      cab: c?.cab ?? null,
+      installation: c?.installation ?? null,
+      transport: c?.transport ?? null,
+      genieCivil: c?.genieCivil ?? null,
+      terrain: c?.terrain ?? null,
+      matierePremiere: c?.matierePremiere ?? null,
+      maintenance: c?.maintenance ?? null,
+      chargeuse: c?.chargeuse ?? null,
+      branchementEau: c?.branchementEau ?? null,
+      branchementElec: c?.branchementElec ?? null,
+      consoEau: c?.consoEau ?? null,
+      consoElec: c?.consoElec ?? null,
+      dureeMois: c?.dureeMois ?? null,
+      quantiteM3: c?.quantiteM3 ?? c?.volumeM3 ?? c?.volumeTotalM3 ?? null,
+      sundayPrice: c?.sundayPrice ?? null,
+      chillerRent: c?.chillerRent ?? null,
+    });
+  },
+  (nv, ov) => {
+    if (!nv || nv === ov) return;
+    syncDevisFromContract();
+  }
+);
+
 /* =========================
    UI helpers - content editing
 ========================= */
 function addLine(which: "lhm" | "client") {
   const target = which === "lhm" ? content.chargeFournisseur : content.chargeClient;
-  target.push({ label: "" });
+  target.push({ label: "" }); // custom (éditable)
 }
 function removeLine(which: "lhm" | "client", idx: number) {
   const target = which === "lhm" ? content.chargeFournisseur : content.chargeClient;
+  const it = target[idx];
+  if (it?.locked) return; // ✅ interdit suppression lignes contrat
   target.splice(idx, 1);
 }
 function addExtra() {
@@ -849,8 +1063,13 @@ function removeExtra(idx: number) {
 
             <div class="list">
               <div v-for="(it, i) in content.chargeFournisseur" :key="'lhm'+i" class="li">
-                <textarea class="ta small" v-model="it.label" rows="2"></textarea>
-                <button class="mini" type="button" @click="removeLine('lhm', i)">Suppr</button>
+                <template v-if="it.locked">
+                  <div class="roLine">{{ it.label }}</div>
+                </template>
+                <template v-else>
+                  <textarea class="ta small" v-model="it.label" rows="2"></textarea>
+                  <button class="mini" type="button" @click="removeLine('lhm', i)">Suppr</button>
+                </template>
               </div>
             </div>
 
@@ -862,8 +1081,13 @@ function removeExtra(idx: number) {
 
             <div class="list">
               <div v-for="(it, i) in content.chargeClient" :key="'cl'+i" class="li">
-                <textarea class="ta small" v-model="it.label" rows="2"></textarea>
-                <button class="mini" type="button" @click="removeLine('client', i)">Suppr</button>
+                <template v-if="it.locked">
+                  <div class="roLine">{{ it.label }}</div>
+                </template>
+                <template v-else>
+                  <textarea class="ta small" v-model="it.label" rows="2"></textarea>
+                  <button class="mini" type="button" @click="removeLine('client', i)">Suppr</button>
+                </template>
               </div>
             </div>
 
@@ -879,12 +1103,19 @@ function removeExtra(idx: number) {
           <div v-for="(x, i) in content.prixComplementaires" :key="'ex'+i" class="exRow">
             <input class="input" v-model="x.label" placeholder="Libellé" />
             <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
-            <input class="input exVal" type="number" step="1" v-model.number="x.value" />
+
+            <!-- ✅ prix non éditable -->
+            <input class="input exVal" type="number" step="1" :value="x.value" readonly />
+
             <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
           </div>
         </div>
 
         <button class="btn miniAdd" type="button" @click="addExtra">+ Ajouter prix complémentaire</button>
+
+        <div class="muted" style="margin-top:8px;">
+          (Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)
+        </div>
       </div>
 
       <div class="card">
@@ -1052,13 +1283,13 @@ function removeExtra(idx: number) {
   column-gap: 12px;
   align-items:center;
   grid-template-columns:
-    minmax(220px, 2.7fr) /* Désignation */
-    78px                 /* CMP */
-    78px                 /* MOMD */
-    90px                 /* PV pond */
-    78px                 /* Surcharge */
-    90px                 /* PV déf */
-    110px;               /* Total */
+    minmax(220px, 2.7fr)
+    78px
+    78px
+    90px
+    78px
+    90px
+    110px;
 }
 
 .tHead{
@@ -1075,14 +1306,11 @@ function removeExtra(idx: number) {
 .th{ min-width:0; text-align:left; }
 .th.r{ text-align:right; }
 
-/* ✅ séparation visuelle claire entre Désignation et CMP */
 .tHead > .th:first-child,
 .tRow  > .td:first-child{
   padding-right: 12px;
   border-right: 1px solid rgba(16,24,40,0.08);
 }
-
-/* ✅ CMP respire côté gauche */
 .tHead > .th:nth-child(2),
 .tRow  > .td:nth-child(2){
   padding-left: 8px;
@@ -1090,7 +1318,7 @@ function removeExtra(idx: number) {
 
 .tBody{ padding: 0; }
 .tRow{
-  padding: 6px 10px; /* ✅ plus bas */
+  padding: 6px 10px;
   border-bottom: 1px solid rgba(16,24,40,0.10);
 }
 .tRow:hover{ background: rgba(15,23,42,0.02); }
@@ -1102,16 +1330,13 @@ function removeExtra(idx: number) {
 
 .td{ min-width:0; }
 .td.r{ text-align:right; }
-
-/* ✅ chiffres plus petits */
 .val{ font-size: 12px; font-weight: 950; }
 
-/* ✅ volume compact et aligné sans “gonfler” la ligne */
 .mainLine{
   display:flex;
   align-items:center;
   gap: 8px;
-  min-height: 20px;     /* stabilise l’alignement vertical */
+  min-height: 20px;
 }
 .subTextLine{
   display:flex;
@@ -1125,7 +1350,6 @@ function removeExtra(idx: number) {
 
 .emptyRow{ padding: 12px 10px; color:#6b7280; font-size:12px; }
 
-/* ✅ pills plus “plates” */
 .pillStrong{
   display:inline-flex;
   align-items:center;
@@ -1155,7 +1379,6 @@ function removeExtra(idx: number) {
   font-size: 12px;
 }
 
-/* ✅ input surcharge plus petit + ne force pas de largeur */
 .numInput{
   width: 100%;
   max-width: 78px;
@@ -1167,7 +1390,6 @@ function removeExtra(idx: number) {
   font-size: 12px;
 }
 
-/* Tooltip (compact + sans impact hauteur) */
 .tipWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; flex: 0 0 auto; }
 .tipBtn{
   width: 22px; height: 22px;
@@ -1205,7 +1427,6 @@ function removeExtra(idx: number) {
 }
 .mutedLine{ display:block; margin-top: 5px; opacity: .85; }
 
-/* Footer résumé */
 .tFoot{
   padding: 8px 10px;
   background: rgba(15,23,42,0.02);
@@ -1253,7 +1474,6 @@ function removeExtra(idx: number) {
     padding: 10px 10px;
   }
   .tRow > .td:first-child{ grid-column: 1 / -1; border-right: 0; padding-right: 0; }
-
   .tRow > .td{
     display:flex;
     justify-content:space-between;
@@ -1276,7 +1496,6 @@ function removeExtra(idx: number) {
     text-align:left;
   }
   .tRow > .td.main::before{ content:""; display:none; }
-
   .numInput{ max-width: 160px; }
   .sumGrid{ grid-template-columns: 1fr; }
 }
@@ -1336,5 +1555,18 @@ function removeExtra(idx: number) {
   .grid2{ grid-template-columns: 1fr; }
   .grid3{ grid-template-columns: 1fr; }
   .exRow{ grid-template-columns: 1fr; }
+}
+
+/* ✅ lecture seule pour phrases pilotées par contrat */
+.roLine{
+  width: 100%;
+  border: 1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: #0f172a;
+  white-space: pre-wrap;
 }
 </style>

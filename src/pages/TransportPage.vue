@@ -1,8 +1,9 @@
-<!-- ✅ src/pages/TransportPage.vue (FICHIER COMPLET / moyenne + calculateur zones (UI only) + toast non bloquant) -->
+<!-- ✅ src/pages/TransportPage.vue (FICHIER COMPLET / moyenne + calculateur zones (UI only) + toast non bloquant + ✅ importer depuis autre variante (save séparé)) -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal from "@/components/SectionImportModal.vue";
 
 // Heroicons
 import {
@@ -13,6 +14,7 @@ import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
   Squares2X2Icon,
+  ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -344,6 +346,89 @@ async function save() {
 }
 
 /* =========================
+   ✅ IMPORTER (depuis autre variante / save séparé)
+========================= */
+const impOpen = ref(false);
+const impBusy = ref(false);
+const impErr = ref<string | null>(null);
+
+function findVariantById(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  // ✅ cherche dans toutes les variantes chargées
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return v;
+      }
+    }
+  }
+  return null;
+}
+
+function applyTransportFromVariant(srcVariant: any) {
+  const t = srcVariant?.transport ?? {};
+  const pm = toNum(t?.prixMoyen);
+
+  // ✅ Importer copie la section "persistée": moyenne + pompage (zones UI reset)
+  ui.calcOn = false;
+
+  manualPrixMoyen.value = pm;
+  edit.prixMoyen = pm;
+
+  const hasPompe = t?.volumePompePct != null || t?.prixAchatPompe != null || t?.prixVentePompe != null;
+  edit.includePompage =
+    Boolean(hasPompe) &&
+    (toNum(t?.volumePompePct) > 0 || toNum(t?.prixVentePompe) > 0 || toNum(t?.prixAchatPompe) > 0);
+
+  edit.volumePompePct = clamp(t?.volumePompePct, 0, 100);
+  edit.prixAchatPompe = clamp(t?.prixAchatPompe, 0, 1e9);
+  edit.prixVentePompe = clamp(t?.prixVentePompe, 0, 1e9);
+
+  edit.zones = DEFAULT_ZONES.map((z) => ({ ...z }));
+}
+
+async function onApplyImport(payload: { sourceVariantId: string }) {
+  if (!variant.value) return;
+
+  const sourceId = String(payload?.sourceVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  if (String(variant.value?.id ?? "") === sourceId) {
+    showToast("info", "La source est déjà la variante active.");
+    impOpen.value = false;
+    return;
+  }
+
+  impErr.value = null;
+  impBusy.value = true;
+  try {
+    const src = findVariantById(sourceId);
+
+    if (!src) {
+      // ✅ si jamais pas chargé (rare), on tente de recharger tout
+      await (store as any).loadPnls?.();
+    }
+
+    const src2 = src ?? findVariantById(sourceId);
+    if (!src2) {
+      showToast("err", "Variante source introuvable (données non chargées).");
+      return;
+    }
+
+    applyTransportFromVariant(src2);
+    showToast("ok", "Transport importé dans la variante active. Pense à enregistrer.");
+    impOpen.value = false;
+  } catch (e: any) {
+    impErr.value = e?.message ?? String(e);
+    showToast("err", String(impErr.value));
+  } finally {
+    impBusy.value = false;
+  }
+}
+
+/* =========================
    GENERALISER (inchangé)
 ========================= */
 const genOpen = ref(false);
@@ -407,6 +492,12 @@ function reset() {
         <button class="btn" type="button" :disabled="!variant || saving" @click="reset" title="Réinitialiser">
           <ArrowPathIcon class="ic" />
           Réinitialiser
+        </button>
+
+        <!-- ✅ NEW: Importer -->
+        <button class="btn" type="button" :disabled="!variant || impBusy || saving || genBusy" @click="impOpen = true" title="Importer">
+          <ArrowDownTrayIcon class="ic" />
+          {{ impBusy ? "..." : "Importer" }}
         </button>
 
         <button class="btn" type="button" :disabled="!variant || genBusy || saving" @click="genOpen = true" title="Généraliser">
@@ -634,6 +725,14 @@ function reset() {
         </div>
       </template>
     </template>
+
+    <!-- ✅ MODAL IMPORT -->
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="Transport"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
 
     <!-- ✅ MODAL GENERALISATION -->
     <SectionTargetsGeneralizeModal
