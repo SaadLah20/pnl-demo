@@ -9,6 +9,7 @@ import {
   ArrowPathIcon,
   CheckBadgeIcon,
   ArrowDownTrayIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -80,12 +81,7 @@ const volumeTotalFromFormules = computed(() => rows.value.reduce((s, r) => s + n
 
 const quantiteProjetM3 = computed(() => {
   const c = contract.value ?? {};
-  const maybe =
-    n((c as any)?.quantiteM3) ||
-    n((c as any)?.volumeM3) ||
-    n((c as any)?.volumeTotalM3) ||
-    0;
-
+  const maybe = n((c as any)?.quantiteM3) || n((c as any)?.volumeM3) || n((c as any)?.volumeTotalM3) || 0;
   return maybe > 0 ? maybe : volumeTotalFromFormules.value;
 });
 
@@ -233,11 +229,7 @@ function normLabel(s: any): string {
     .toLowerCase();
 }
 
-function dedupeAcrossSides(
-  lhm: LineItem[],
-  client: LineItem[],
-  templateSideByLabel: Record<string, Side>
-) {
+function dedupeAcrossSides(lhm: LineItem[], client: LineItem[], templateSideByLabel: Record<string, Side>) {
   const mapL = new Map<string, LineItem>();
   const mapC = new Map<string, LineItem>();
 
@@ -278,8 +270,7 @@ function buildContractTemplateLocked() {
   const c: any = contract.value ?? {};
 
   const LABELS = {
-    groupTransportInstall:
-      "Transport et installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
+    groupTransportInstall: "Transport et installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
     transportOnly: "Transport sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
     installOnly: "Installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
     cabOnly: "Mise à disposition d’une centrale à béton de capacité de malaxeur de 2m3;",
@@ -289,8 +280,7 @@ function buildContractTemplateLocked() {
     mp: "Fourniture des matières premières nécessaires à la fabrication des bétons ;",
     consoEau: "Consommation d’eau pour les besoins des centrales à béton ;",
     consoElec: "Consommation d’électricité pour les besoins des centrales à béton ;",
-    chargeuse:
-      "Mise à disposition d’une chargeuse de capacité suffisante pour l’alimentation de la centrale à béton ;",
+    chargeuse: "Mise à disposition d’une chargeuse de capacité suffisante pour l’alimentation de la centrale à béton ;",
     maintenance: "Maintenance (pièces et main d’œuvre) des centrales et chargeurs ;",
     terrain:
       "Mise à disposition d’un terrain plane et compacté pour l’installation de la centrale à béton. La superficie minimale du terrain est 4.000m².",
@@ -311,7 +301,7 @@ function buildContractTemplateLocked() {
     templateSideByLabel[normLabel(label)] = side;
   };
 
-  // ====== CAB / INSTALL / TRANSPORT (grouping si tous indiqués + identiques)
+  // ====== CAB / INSTALL / TRANSPORT
   const sideTransport = normalizeChargeSide(c.transport);
   const sideInstall = normalizeChargeSide(c.installation);
   const sideCab = normalizeChargeSide(c.cab);
@@ -336,7 +326,7 @@ function buildContractTemplateLocked() {
   pushLocked(LABELS.maintenance, decideSideFromContractField(c.maintenance));
   pushLocked(LABELS.terrain, decideSideFromContractField(c.terrain));
 
-  // ✅ Branchement Eau/Elec : groupé si même côté explicite, sinon séparé
+  // ✅ Branchement Eau/Elec
   const sEau = normalizeChargeSide(c.branchementEau);
   const sElec = normalizeChargeSide(c.branchementElec);
 
@@ -348,13 +338,11 @@ function buildContractTemplateLocked() {
   }
 
   const tplSet = new Set(Object.keys(templateSideByLabel));
-
   return { lhm, client, templateSideByLabel, tplSet };
 }
 
 function buildWordDefaultsEditable() {
   // ✅ Ces lignes viennent du devis Word : elles restent éditables
-  // (et ne sont pas recalculées depuis contrat)
   const L = {
     personnel:
       "Personnels d’exploitation et de conduite de la centrale : 24 mois maximum sur un poste de 10 heures hors Dimanche et jours fériés.",
@@ -372,19 +360,10 @@ function buildWordDefaultsEditable() {
     entretienVoies:
       "Entretien des voies d’accès des camions malaxeurs et camions de la matière première ;",
     autorisationsCoulage: "Prise en charge des autorisations pour le coulage des bétons.",
-    labo:
-      "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP.",
+    labo: "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP.",
   };
 
-  // ✅ placements “Word” (comme ton devis de référence)
-  const lhm: LineItem[] = [
-    { label: L.personnel },
-    { label: L.reception },
-    { label: L.etudes },
-    { label: L.autocontroles },
-    { label: L.gestion },
-  ];
-
+  const lhm: LineItem[] = [{ label: L.personnel }, { label: L.reception }, { label: L.etudes }, { label: L.autocontroles }, { label: L.gestion }];
   const client: LineItem[] = [
     { label: L.programme },
     { label: L.confirmation },
@@ -426,6 +405,67 @@ function buildDefaultPrixComplementaires(): PriceExtra[] {
   return extras;
 }
 
+/* =========================
+   ✅ Dirty tracking (export = version enregistrée)
+========================= */
+const lastSavedSnapshot = ref<string>("");
+
+function sortKeys(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(sortKeys);
+  if (obj && typeof obj === "object") {
+    const out: any = {};
+    for (const k of Object.keys(obj).sort()) out[k] = sortKeys(obj[k]);
+    return out;
+  }
+  return obj;
+}
+
+function makeSnapshot(): string {
+  const line = (it: any) => ({ label: String(it?.label ?? ""), locked: Boolean(it?.locked) });
+  const extra = (x: any) => ({
+    label: String(x?.label ?? ""),
+    unit: x?.unit != null ? String(x.unit) : "",
+    value: n(x?.value),
+    note: x?.note != null ? String(x.note) : "",
+  });
+
+  const snap = {
+    surcharges: { ...(draft.surcharges ?? {}) },
+    applyToDashboardOnSave: Boolean(draft.applyToDashboardOnSave),
+
+    meta: { ...content.meta },
+    intro: String(content.intro ?? ""),
+    rappel: { ...content.rappel },
+    chargeFournisseur: (content.chargeFournisseur ?? []).map(line),
+    chargeClient: (content.chargeClient ?? []).map(line),
+    prixComplementaires: (content.prixComplementaires ?? []).map(extra),
+    dureeQuantiteTexte: String(content.dureeQuantiteTexte ?? ""),
+    validiteTexte: String(content.validiteTexte ?? ""),
+    signature: { ...content.signature },
+  };
+
+  return JSON.stringify(sortKeys(snap));
+}
+
+const isDirty = computed(() => {
+  if (!lastSavedSnapshot.value) return false;
+  return makeSnapshot() !== lastSavedSnapshot.value;
+});
+
+const exportGuardOpen = ref(false);
+
+function openExportGuardIfNeeded() {
+  if (!isDirty.value) return false;
+  exportGuardOpen.value = true;
+  return true;
+}
+function closeExportGuard() {
+  exportGuardOpen.value = false;
+}
+
+/* =========================
+   Load / Sync
+========================= */
 function loadPersistedAll() {
   // surcharges
   draft.surcharges = {};
@@ -476,8 +516,7 @@ function loadPersistedAll() {
   const keepClient = curClient.filter((it) => !tpl.tplSet.has(normLabel(it?.label)) && !it?.locked);
 
   // ✅ si rien n’est enregistré, on injecte aussi les defaults Word (éditables)
-  const hasAnyPersisted = (curLhm.length + curClient.length) > 0;
-
+  const hasAnyPersisted = curLhm.length + curClient.length > 0;
   const baseL = hasAnyPersisted ? [] : wordDefaults.lhm;
   const baseC = hasAnyPersisted ? [] : wordDefaults.client;
 
@@ -490,8 +529,8 @@ function loadPersistedAll() {
 
   const templateExtras = dropDelayPenalty(buildDefaultPrixComplementaires());
   const curExtras = dropDelayPenalty(normalizePriceExtras(persistedExtrasRaw, templateExtras));
-  // ✅ extras: on garde template + customs, mais prix non éditable en UI
-  // (ici on fait juste un merge soft sans dupliquer les labels template)
+
+  // ✅ extras: template + customs (prix non éditable en UI)
   const tset = new Set((templateExtras ?? []).map((x) => String(x?.label ?? "").trim()).filter(Boolean));
   const keepCustomExtras = (curExtras ?? []).filter((x) => {
     const lbl = String(x?.label ?? "").trim();
@@ -516,6 +555,9 @@ function loadPersistedAll() {
   content.signature.nom = String(persistedSignature?.nom ?? "Saad LAHLIMI");
   content.signature.poste = String(persistedSignature?.poste ?? "Commercial P&L");
   content.signature.telephone = String(persistedSignature?.telephone ?? "+212701888888");
+
+  // ✅ snapshot = "dernière version enregistrée" (base export)
+  lastSavedSnapshot.value = makeSnapshot();
 }
 
 function syncDevisFromContract() {
@@ -533,7 +575,6 @@ function syncDevisFromContract() {
   content.chargeClient = dedup.client;
 
   const templateExtras = dropDelayPenalty(buildDefaultPrixComplementaires());
-  // on remplace la partie template (labels exacts) et on conserve les customs
   const tset = new Set((templateExtras ?? []).map((x) => String(x?.label ?? "").trim()).filter(Boolean));
   const keepCustom = (content.prixComplementaires ?? []).filter((x) => {
     const lbl = String(x?.label ?? "").trim();
@@ -622,9 +663,7 @@ const prixMoyenDefinitif = computed(() => {
   return total / vol;
 });
 
-const caDevisTotal = computed(() => {
-  return rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
-});
+const caDevisTotal = computed(() => rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0));
 
 /* =========================
    API
@@ -683,6 +722,9 @@ async function saveDevis() {
     });
 
     await (store as any).loadPnls();
+
+    // ✅ après save, la version "enregistrée" devient la base export
+    lastSavedSnapshot.value = makeSnapshot();
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -690,7 +732,7 @@ async function saveDevis() {
   }
 }
 
-async function exportWord() {
+async function doExportWord() {
   const v = variant.value;
   if (!v?.id) return;
 
@@ -703,6 +745,21 @@ async function exportWord() {
   } finally {
     busy.export = false;
   }
+}
+
+async function exportWord() {
+  if (busy.export || busy.save) return;
+  if (openExportGuardIfNeeded()) return; // ✅ bloque et explique
+  await doExportWord();
+}
+
+async function saveAndExport() {
+  if (busy.export || busy.save) return;
+  closeExportGuard();
+  await saveDevis();
+  // si save a échoué, error sera set => on n'exporte pas
+  if (error.value) return;
+  await doExportWord();
 }
 
 function resetSurcharges() {
@@ -810,15 +867,43 @@ function removeExtra(idx: number) {
           Appliquer au dashboard
         </button>
 
-        <button class="btn" @click="exportWord" :disabled="busy.export || !variant?.id" title="Exporter en Word">
+        <button
+          class="btn"
+          :class="{ warnBtn: isDirty }"
+          @click="exportWord"
+          :disabled="busy.export || !variant?.id"
+          :title="isDirty ? 'Modifications non enregistrées : export = dernière version enregistrée' : 'Exporter en Word'"
+        >
           <ArrowDownTrayIcon class="actIc" />
-          {{ busy.export ? "Export..." : "Exporter Word" }}
+          <span class="btnTxt">{{ busy.export ? "Export..." : "Exporter Word" }}</span>
+          <span v-if="isDirty" class="dot" aria-hidden="true"></span>
         </button>
 
         <button class="btn primary" @click="saveDevis" :disabled="busy.save || !variant?.id">
           <CheckBadgeIcon class="actIc" />
           {{ busy.save ? "Enregistrement..." : "Enregistrer" }}
         </button>
+      </div>
+    </div>
+
+    <!-- ✅ Warning “export = version enregistrée” -->
+    <div v-if="isDirty" class="alert warn">
+      <div class="warnLine">
+        <ExclamationTriangleIcon class="warnIc" />
+        <div class="warnText">
+          <b>Modifications non enregistrées.</b>
+          <span class="muted">
+            Si tu exportes maintenant, le Word utilisera <b>la dernière version enregistrée</b> (pas tes changements en
+            cours).
+          </span>
+        </div>
+
+        <div class="warnActions">
+          <button class="btn mini2" @click="saveDevis" :disabled="busy.save || !variant?.id">Enregistrer</button>
+          <button class="btn mini2" @click="exportGuardOpen = true" :disabled="busy.export || !variant?.id">
+            Exporter quand même
+          </button>
+        </div>
       </div>
     </div>
 
@@ -910,7 +995,7 @@ function removeExtra(idx: number) {
                 <div class="mainLine">
                   <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
 
-                  <!-- tooltip compact (ne change pas la hauteur) -->
+                  <!-- tooltip compact -->
                   <span class="tipWrap">
                     <button class="tipBtn" type="button" aria-label="Détails">
                       <InformationCircleIcon class="tipIc" />
@@ -930,7 +1015,6 @@ function removeExtra(idx: number) {
                   </span>
                 </div>
 
-                <!-- volume en ligne compacte (sans augmenter la hauteur) -->
                 <div class="subTextLine">
                   <span class="muted">Vol.</span>
                   <b class="mono">{{ int(r?.volumeM3) }}</b>
@@ -990,7 +1074,8 @@ function removeExtra(idx: number) {
           </div>
 
           <div class="muted" style="margin-top:6px;">
-            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après pondération.
+            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après
+            pondération.
           </div>
         </div>
       </div>
@@ -1062,7 +1147,7 @@ function removeExtra(idx: number) {
             <div class="lbl">À la charge de LafargeHolcim Maroc</div>
 
             <div class="list">
-              <div v-for="(it, i) in content.chargeFournisseur" :key="'lhm'+i" class="li">
+              <div v-for="(it, i) in content.chargeFournisseur" :key="'lhm' + i" class="li">
                 <template v-if="it.locked">
                   <div class="roLine">{{ it.label }}</div>
                 </template>
@@ -1080,7 +1165,7 @@ function removeExtra(idx: number) {
             <div class="lbl">À la charge du client</div>
 
             <div class="list">
-              <div v-for="(it, i) in content.chargeClient" :key="'cl'+i" class="li">
+              <div v-for="(it, i) in content.chargeClient" :key="'cl' + i" class="li">
                 <template v-if="it.locked">
                   <div class="roLine">{{ it.label }}</div>
                 </template>
@@ -1100,7 +1185,7 @@ function removeExtra(idx: number) {
         <div class="lbl">Prix complémentaires</div>
 
         <div class="extras">
-          <div v-for="(x, i) in content.prixComplementaires" :key="'ex'+i" class="exRow">
+          <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="exRow">
             <input class="input" v-model="x.label" placeholder="Libellé" />
             <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
 
@@ -1148,6 +1233,34 @@ function removeExtra(idx: number) {
         </div>
       </div>
     </template>
+
+    <!-- ✅ Export guard modal -->
+    <div v-if="exportGuardOpen" class="modalOverlay" @click.self="closeExportGuard">
+      <div class="modalCard" role="dialog" aria-modal="true" aria-label="Export Word">
+        <div class="modalTitle">
+          <ExclamationTriangleIcon class="warnIc" />
+          <div>
+            <div style="font-weight: 1000; color:#111827;">Exporter sans enregistrer ?</div>
+            <div class="muted" style="margin-top:2px;">
+              Le Word sera généré depuis <b>la dernière version enregistrée</b>. Tes changements en cours ne seront pas
+              inclus.
+            </div>
+          </div>
+        </div>
+
+        <div class="modalActions">
+          <button class="btn" type="button" @click="closeExportGuard" :disabled="busy.export || busy.save">Annuler</button>
+
+          <button class="btn" type="button" @click="doExportWord(); closeExportGuard();" :disabled="busy.export || !variant?.id">
+            Exporter quand même
+          </button>
+
+          <button class="btn primary" type="button" @click="saveAndExport" :disabled="busy.save || busy.export || !variant?.id">
+            Enregistrer & exporter
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1165,6 +1278,7 @@ function removeExtra(idx: number) {
 
 .alert { border:1px solid #e5e7eb; border-radius:14px; padding:8px 10px; background:#fff; color:#111827; font-size:12px; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
+.alert.warn { border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.08); }
 
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:8px 10px; }
 .cardTable { padding: 0; overflow: hidden; }
@@ -1181,10 +1295,22 @@ function removeExtra(idx: number) {
   display:inline-flex;
   align-items:center;
   gap:8px;
+  position: relative;
 }
 .btn:hover { background:#f9fafb; }
 .btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
 .btn.primary:hover { background: rgba(24,64,112,1); }
+
+.btn.warnBtn { border-color: rgba(245,158,11,0.55); }
+.dot{
+  width: 7px; height: 7px;
+  border-radius: 999px;
+  background: rgba(245,158,11,1);
+  display:inline-block;
+  margin-left: 2px;
+}
+
+.btnTxt{ display:inline-block; }
 
 .input { width:100%; padding:6px 8px; border:1px solid #d1d5db; border-radius:12px; font-size:12px; background:#fff; }
 .right { text-align:right; }
@@ -1194,6 +1320,17 @@ function removeExtra(idx: number) {
 .strong { font-weight: 950; }
 
 .actIc{ width:16px; height:16px; }
+
+/* warn bar */
+.warnLine{
+  display:flex;
+  align-items:flex-start;
+  gap: 10px;
+}
+.warnIc{ width: 18px; height: 18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
+.warnText{ display:flex; flex-direction:column; gap: 2px; min-width: 220px; }
+.warnActions{ margin-left:auto; display:flex; gap: 8px; flex-wrap:wrap; justify-content:flex-end; }
+.mini2{ padding: 6px 9px; border-radius: 12px; font-size: 11px; }
 
 /* =========================
    TABS segmented (pro) - compact
@@ -1270,14 +1407,13 @@ function removeExtra(idx: number) {
 ========================= */
 .tableWrap{
   width:100%;
-  overflow-x: auto; /* garde fallback */
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 .tableWrap::-webkit-scrollbar { height: 9px; }
 .tableWrap::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.18); border-radius: 999px; }
 .tableWrap::-webkit-scrollbar-track { background: rgba(15,23,42,0.04); border-radius: 999px; }
 
-/* ✅ colonnes plus serrées + désignation flexible */
 .tHead, .tRow{
   display:grid;
   column-gap: 12px;
@@ -1568,5 +1704,38 @@ function removeExtra(idx: number) {
   line-height: 1.25;
   color: #0f172a;
   white-space: pre-wrap;
+}
+
+/* ✅ Export guard modal */
+.modalOverlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(2,6,23,0.45);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index: 999999;
+  padding: 16px;
+}
+.modalCard{
+  width: min(560px, 100%);
+  background:#fff;
+  border: 1px solid rgba(16,24,40,0.12);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(2,6,23,0.35);
+  padding: 12px 12px;
+}
+.modalTitle{
+  display:flex;
+  align-items:flex-start;
+  gap: 10px;
+  padding: 6px 6px 10px 6px;
+}
+.modalActions{
+  display:flex;
+  justify-content:flex-end;
+  gap: 8px;
+  flex-wrap:wrap;
+  padding: 8px 6px 4px 6px;
 }
 </style>
