@@ -3,9 +3,11 @@ import path from "path";
 import fs from "fs";
 import {
   AlignmentType,
+  BorderStyle,
   Document,
   Footer,
   Header,
+  HeightRule,
   ImageRun,
   Packer,
   Paragraph,
@@ -13,9 +15,8 @@ import {
   TableCell,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
-  BorderStyle,
-  HeightRule,
 } from "docx";
 import { prisma } from "./db";
 
@@ -168,18 +169,24 @@ function sectionTitle(text: string) {
   });
 }
 
+// ✅ Puces cercle vide SANS décalage: numbering personnalisé (○) + indent fixe
+const HOLLOW_BULLET_REF = "HOLLOW_BULLET";
+
 function bulletsFromStrings(lines: string[]) {
   return (lines ?? [])
     .filter((x) => String(x ?? "").trim().length > 0)
     .map(
       (t) =>
         new Paragraph({
-          bullet: { level: 0 },
+          numbering: { reference: HOLLOW_BULLET_REF, level: 0 },
           children: [new TextRun({ text: String(t ?? ""), font: FONT, size: SIZE_9 })],
         })
     );
 }
 
+/**
+ * ✅ robuste contre: string[] OU object[]
+ */
 function normalizeLines(raw: any): string[] {
   const arr = safeJsonParse(raw, []);
   if (!Array.isArray(arr)) return [];
@@ -253,6 +260,30 @@ const TABLE_BORDERS = {
   insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
   insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
 };
+
+// ✅ Bordures "OFF" (pour masquer la zone colonnes 1-2 sur TVA/TTC)
+const NO_BORDERS = {
+  top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+  bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+  left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+  right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+};
+
+// ✅ helper cellule centrée verticalement
+function cell(
+  children: Paragraph[],
+  opts?: {
+    columnSpan?: number;
+    borders?: any;
+  }
+) {
+  return new TableCell({
+    children,
+    columnSpan: opts?.columnSpan,
+    verticalAlign: VerticalAlign.CENTER, // ✅ centrage vertical
+    borders: opts?.borders,
+  });
+}
 
 export async function buildDevisWordBuffer(variantId: string, opts?: BuildOptions): Promise<Buffer> {
   const useMajorations = opts?.useMajorations !== undefined ? !!opts.useMajorations : true;
@@ -374,15 +405,14 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
   // =========================
   // TABLE (4 colonnes)
-  // TVA/TTC en continuité sous colonnes 3-4
   // =========================
   const headerRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      new TableCell({ children: [pTxt("Désignation", { bold: true })] }),
-      new TableCell({ children: [pTxt("PU HT/m3", { bold: true, align: AlignmentType.RIGHT })] }),
-      new TableCell({ children: [pTxt("Volume", { bold: true, align: AlignmentType.RIGHT })] }),
-      new TableCell({ children: [pTxt("Montant HT", { bold: true, align: AlignmentType.RIGHT })] }),
+      cell([pTxt("Désignation", { bold: true })]),
+      cell([pTxt("PU HT/m3", { bold: true, align: AlignmentType.RIGHT })]),
+      cell([pTxt("Volume", { bold: true, align: AlignmentType.RIGHT })]),
+      cell([pTxt("Montant HT", { bold: true, align: AlignmentType.RIGHT })]),
     ],
   });
 
@@ -391,10 +421,10 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
       new TableRow({
         height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
         children: [
-          new TableCell({ children: [pTxtBody(x.label)] }),
-          new TableCell({ children: [pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })] }),
-          new TableCell({ children: [pTxtBody(fmtMoney2(x.vol), { align: AlignmentType.RIGHT })] }),
-          new TableCell({ children: [pTxtBody(fmtMoney2(x.total), { align: AlignmentType.RIGHT })] }),
+          cell([pTxtBody(x.label)]),
+          cell([pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })]),
+          cell([pTxtBody(fmtMoney2(x.vol), { align: AlignmentType.RIGHT })]),
+          cell([pTxtBody(fmtMoney2(x.total), { align: AlignmentType.RIGHT })]),
         ],
       })
   );
@@ -403,50 +433,29 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const totalRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      new TableCell({
-        columnSpan: 2,
-        children: [pTxtBody("Total :", { bold: true, align: AlignmentType.CENTER })],
-      }),
-      new TableCell({
-        children: [pTxtBody(fmtMoney2(volumeTotal), { bold: false, align: AlignmentType.RIGHT })],
-      }),
-      new TableCell({
-        children: [pTxtBody(fmtMoney2(totalHT), { bold: false, align: AlignmentType.RIGHT })],
-      }),
+      cell([pTxtBody("Total :", { bold: true, align: AlignmentType.CENTER })], { columnSpan: 2 }),
+      cell([pTxtBody(fmtMoney2(volumeTotal), { bold: false, align: AlignmentType.RIGHT })]),
+      cell([pTxtBody(fmtMoney2(totalHT), { bold: false, align: AlignmentType.RIGHT })]),
     ],
   });
 
-  // ✅ TVA : colonnes 1+2 fusionnées vides, label en col3, montant en col4
+  // ✅ TVA/TTC : continuité colonnes 3-4
+  // ✅ Et bordures supprimées sur la zone colonnes 1-2 (cellule fusionnée)
   const tvaRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      new TableCell({
-        columnSpan: 2,
-        children: [pTxtBody("", { bold: false })],
-      }),
-      new TableCell({
-        children: [pTxtBody("Montant TVA", { bold: true, align: AlignmentType.LEFT })],
-      }),
-      new TableCell({
-        children: [pTxtBody(fmtMoney2(tva), { bold: false, align: AlignmentType.RIGHT })],
-      }),
+      cell([pTxtBody("")], { columnSpan: 2, borders: NO_BORDERS }),
+      cell([pTxtBody("Montant TVA", { bold: true, align: AlignmentType.LEFT })]),
+      cell([pTxtBody(fmtMoney2(tva), { bold: false, align: AlignmentType.RIGHT })]),
     ],
   });
 
-  // ✅ TTC : colonnes 1+2 fusionnées vides, label en col3, montant en col4
   const ttcRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      new TableCell({
-        columnSpan: 2,
-        children: [pTxtBody("", { bold: false })],
-      }),
-      new TableCell({
-        children: [pTxtBody("Montant TTC", { bold: true, align: AlignmentType.LEFT })],
-      }),
-      new TableCell({
-        children: [pTxtBody(fmtMoney2(totalTTC), { bold: false, align: AlignmentType.RIGHT })],
-      }),
+      cell([pTxtBody("")], { columnSpan: 2, borders: NO_BORDERS }),
+      cell([pTxtBody("Montant TTC", { bold: true, align: AlignmentType.LEFT })]),
+      cell([pTxtBody(fmtMoney2(totalTTC), { bold: false, align: AlignmentType.RIGHT })]),
     ],
   });
 
@@ -460,6 +469,27 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const logoHeader = buildLogoHeader();
 
   const doc = new Document({
+    // ✅ numbering "cercle vide" avec indent stable (pas de décalage à droite)
+    numbering: {
+      config: [
+        {
+          reference: HOLLOW_BULLET_REF,
+          levels: [
+            {
+              level: 0,
+              format: "bullet",
+              text: "○",
+              alignment: AlignmentType.LEFT,
+              style: {
+                paragraph: {
+                  indent: { left: 360, hanging: 360 }, // ✅ indent stable (~0,63cm)
+                },
+              },
+            },
+          ],
+        },
+      ],
+    },
     sections: [
       {
         headers: logoHeader
@@ -530,13 +560,17 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(1),
 
-          sectionTitle("A la charge du client :"),
-          ...(chargeClient.length ? bulletsFromStrings(chargeClient) : bulletsFromStrings(["—"])),
+sectionTitle("A la charge du client :"),
+...(chargeClient.length ? bulletsFromStrings(chargeClient) : bulletsFromStrings(["—"])),
 
-          ...blank(1),
+...blank(1),
 
-          // ✅ Table prix (avec Total + TVA + TTC en continuité sous colonnes 3-4)
-          table,
+// ✅ Titre du tableau des prix
+sectionTitle("Prix :"),
+...blank(1),
+
+table,
+
 
           ...blank(1),
 
@@ -553,7 +587,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
           sectionTitle("Validité de l’offre :"),
           pTxt(validiteTexte),
 
-          ...blank(3),
+          ...blank(5),
           new Paragraph({
             alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigNom, bold: true, font: FONT, size: SIZE_9 })],
