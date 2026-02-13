@@ -5,6 +5,7 @@ import {
   AlignmentType,
   Document,
   Footer,
+  Header,
   ImageRun,
   Packer,
   Paragraph,
@@ -117,8 +118,12 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
 ========================= */
 
 const FONT = "Tahoma";
-const SIZE_9 = 18; // docx = half-points (9pt => 18)
-const ROW_HEIGHT = 360; // ✅ twips (~18pt) => lignes du tableau un peu plus hautes
+const SIZE_9 = 18; // 9pt
+const ROW_HEIGHT = 360;
+
+// ✅ Tableau: body + totaux en Arial 10 (sauf header)
+const TABLE_BODY_FONT = "Arial";
+const SIZE_10 = 20; // 10pt
 
 function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
   return new Paragraph({
@@ -134,8 +139,21 @@ function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
   });
 }
 
+function pTxtBody(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
+  return new Paragraph({
+    alignment: opts?.align,
+    children: [
+      new TextRun({
+        text: text ?? "",
+        bold: !!opts?.bold,
+        font: TABLE_BODY_FONT,
+        size: SIZE_10,
+      }),
+    ],
+  });
+}
+
 function blank(lines = 1) {
-  // des paragraphes vides pour créer l'espace (stable dans Word)
   return Array.from({ length: Math.max(1, lines) }).map(
     () =>
       new Paragraph({
@@ -162,10 +180,6 @@ function bulletsFromStrings(lines: string[]) {
     );
 }
 
-/**
- * ✅ robuste contre: string[] OU object[] (sinon tu as [object Object])
- * On reconstruit des phrases "comme l'onglet contenu" (au moins lisible et stable).
- */
 function normalizeLines(raw: any): string[] {
   const arr = safeJsonParse(raw, []);
   if (!Array.isArray(arr)) return [];
@@ -203,11 +217,47 @@ function normalizeLines(raw: any): string[] {
     .filter(Boolean);
 }
 
+function buildLogoHeader(): Header | null {
+  try {
+    const logoPath = path.resolve(process.cwd(), "src/assets/LHM_logo.jpg");
+    if (!fs.existsSync(logoPath)) return null;
+
+    const imgBuf = fs.readFileSync(logoPath);
+    const imgData = new Uint8Array(imgBuf);
+
+    return new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              data: imgData,
+              type: "jpg",
+              transformation: { width: 180, height: 95 },
+            }),
+          ],
+        }),
+        ...blank(1),
+      ],
+    });
+  } catch {
+    return null;
+  }
+}
+
+const TABLE_BORDERS = {
+  top: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+  bottom: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+  left: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+  right: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+  insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+  insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+};
+
 export async function buildDevisWordBuffer(variantId: string, opts?: BuildOptions): Promise<Buffer> {
   const useMajorations = opts?.useMajorations !== undefined ? !!opts.useMajorations : true;
   const useDevisSurcharges = opts?.useDevisSurcharges !== undefined ? !!opts.useDevisSurcharges : true;
 
-  // ⚠️ any pour ne pas bloquer si tes types Prisma ne reflètent pas encore devis.*
   const v: any = await prisma.variant.findUnique({
     where: { id: variantId },
     include: {
@@ -257,7 +307,6 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
       ? String((v.devis as any).validiteTexte)
       : "Offre valable pour une durée d’un mois à partir de sa date d’envoi.";
 
-  // ✅ LECTURE ROBUSTE (string[] OU object[])
   const chargeFournisseur = normalizeLines((v?.devis as any)?.chargeFournisseur);
   const chargeClient = normalizeLines((v?.devis as any)?.chargeClient);
   const prixComplementaires = normalizeLines((v?.devis as any)?.prixComplementaires);
@@ -267,11 +316,9 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const sigPoste = String(sig?.poste ?? "Commercial P&L");
   const sigTel = String(sig?.telephone ?? "+212701888888");
 
-  // --- Hydrofuge (meta) (si présent)
   const hydroPu = n(devisMeta?.hydrofugePuM3 ?? 0);
   const hydroQty = n(devisMeta?.hydrofugeQtyM3 ?? 0);
 
-  // --- Calcul prix (CMP + transport + MOMD) + majorations + surcharge devis
   const maj = readMajorations(v);
   const surMap = readDevisSurcharges(v);
 
@@ -292,7 +339,6 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
       const prixT = mpPrixUsed(mpId);
       const prixKgBase = pricePerKg(prixT);
 
-      // ✅ majorations MP uniquement si activées
       const pctMp = useMajorations ? getMajPct(`mp:${mpId}`, maj) : 0;
       const prixKg = applyMaj(prixKgBase, pctMp);
 
@@ -326,30 +372,10 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const tva = totalHT * 0.2;
   const totalTTC = totalHT + tva;
 
-  // --- Logo (plus grand surtout en hauteur)
-  let logoPara: Paragraph | null = null;
-  try {
-    const logoPath = path.resolve(process.cwd(), "src/assets/LHM_logo.jpg");
-    if (fs.existsSync(logoPath)) {
-      const imgBuf = fs.readFileSync(logoPath);
-      const imgData = new Uint8Array(imgBuf);
-
-      logoPara = new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [
-          new ImageRun({
-            data: imgData,
-            type: "jpg",
-            transformation: { width: 180, height: 95 },
-          }),
-        ],
-      });
-    }
-  } catch {
-    logoPara = null;
-  }
-
-  // --- Table (proche du modèle)
+  // =========================
+  // TABLE (4 colonnes)
+  // TVA/TTC en continuité sous colonnes 3-4
+  // =========================
   const headerRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
@@ -365,63 +391,84 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
       new TableRow({
         height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
         children: [
-          new TableCell({ children: [pTxt(x.label)] }),
-          new TableCell({ children: [pTxt(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })] }),
-          new TableCell({ children: [pTxt(fmtMoney2(x.vol), { align: AlignmentType.RIGHT })] }),
-          new TableCell({ children: [pTxt(fmtMoney2(x.total), { align: AlignmentType.RIGHT })] }),
+          new TableCell({ children: [pTxtBody(x.label)] }),
+          new TableCell({ children: [pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })] }),
+          new TableCell({ children: [pTxtBody(fmtMoney2(x.vol), { align: AlignmentType.RIGHT })] }),
+          new TableCell({ children: [pTxtBody(fmtMoney2(x.total), { align: AlignmentType.RIGHT })] }),
         ],
       })
   );
 
-  const footRows = [
-    new TableRow({
-      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
-      children: [
-        new TableCell({ children: [pTxt("Total :", { bold: true })] }),
-        new TableCell({ children: [pTxt("")] }),
-        new TableCell({ children: [pTxt("")] }),
-        new TableCell({ children: [pTxt(fmtMoney2(totalHT), { bold: true, align: AlignmentType.RIGHT })] }),
-      ],
-    }),
-    new TableRow({
-      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
-      children: [
-        new TableCell({ children: [pTxt("Montant TVA", { bold: true })] }),
-        new TableCell({ children: [pTxt("")] }),
-        new TableCell({ children: [pTxt("")] }),
-        new TableCell({ children: [pTxt(fmtMoney2(tva), { bold: true, align: AlignmentType.RIGHT })] }),
-      ],
-    }),
-    new TableRow({
-      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
-      children: [
-        new TableCell({ children: [pTxt("Montant TTC", { bold: true })] }),
-        new TableCell({ children: [pTxt("")] }),
-        new TableCell({ children: [pTxt("")] }),
-        new TableCell({ children: [pTxt(fmtMoney2(totalTTC), { bold: true, align: AlignmentType.RIGHT })] }),
-      ],
-    }),
-  ];
+  // ✅ Total : libellé gras / chiffres non gras
+  const totalRow = new TableRow({
+    height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
+    children: [
+      new TableCell({
+        columnSpan: 2,
+        children: [pTxtBody("Total :", { bold: true, align: AlignmentType.CENTER })],
+      }),
+      new TableCell({
+        children: [pTxtBody(fmtMoney2(volumeTotal), { bold: false, align: AlignmentType.RIGHT })],
+      }),
+      new TableCell({
+        children: [pTxtBody(fmtMoney2(totalHT), { bold: false, align: AlignmentType.RIGHT })],
+      }),
+    ],
+  });
+
+  // ✅ TVA : colonnes 1+2 fusionnées vides, label en col3, montant en col4
+  const tvaRow = new TableRow({
+    height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
+    children: [
+      new TableCell({
+        columnSpan: 2,
+        children: [pTxtBody("", { bold: false })],
+      }),
+      new TableCell({
+        children: [pTxtBody("Montant TVA", { bold: true, align: AlignmentType.LEFT })],
+      }),
+      new TableCell({
+        children: [pTxtBody(fmtMoney2(tva), { bold: false, align: AlignmentType.RIGHT })],
+      }),
+    ],
+  });
+
+  // ✅ TTC : colonnes 1+2 fusionnées vides, label en col3, montant en col4
+  const ttcRow = new TableRow({
+    height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
+    children: [
+      new TableCell({
+        columnSpan: 2,
+        children: [pTxtBody("", { bold: false })],
+      }),
+      new TableCell({
+        children: [pTxtBody("Montant TTC", { bold: true, align: AlignmentType.LEFT })],
+      }),
+      new TableCell({
+        children: [pTxtBody(fmtMoney2(totalTTC), { bold: false, align: AlignmentType.RIGHT })],
+      }),
+    ],
+  });
 
   const table = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [headerRow, ...bodyRows, ...footRows],
-    borders: {
-      top: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-      bottom: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-      left: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-      right: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-    },
+    rows: [headerRow, ...bodyRows, totalRow, tvaRow, ttcRow],
+    borders: TABLE_BORDERS,
   });
 
-  // ✅ LE "headerLine" doit être un pied de page (footer)
   const footerLine = `${pnlTitle} - offre de prix - ${date}`;
+  const logoHeader = buildLogoHeader();
 
   const doc = new Document({
     sections: [
       {
+        headers: logoHeader
+          ? {
+              default: logoHeader,
+              first: logoHeader,
+              even: logoHeader,
+            }
+          : undefined,
         footers: {
           default: new Footer({
             children: [
@@ -433,18 +480,13 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
           }),
         },
         children: [
-          ...(logoPara ? [logoPara, ...blank(1)] : []),
-
-          // Ville/Date à droite
           new Paragraph({
             alignment: AlignmentType.RIGHT,
             children: [new TextRun({ text: `${ville}, le ${date}`, font: FONT, size: SIZE_9 })],
           }),
 
-          // ✅ plus d'espace entre date ... et "Offre de prix ..."
-          ...blank(2),
+          ...blank(3),
 
-          // ✅ Titre centré avec retour à la ligne entre "Offre de prix" et le nom du P&L
           new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [
@@ -453,10 +495,8 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
             ],
           }),
 
-          // ✅ espace entre "offre de prix ...." et "Client..."
-          ...blank(1),
+          ...blank(2),
 
-          // ✅ Client aligné à gauche: "Client: xxxx" en gras
           new Paragraph({
             alignment: AlignmentType.LEFT,
             children: [
@@ -471,12 +511,10 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(1),
 
-          // Intro
           pTxt(intro),
 
           ...blank(1),
 
-          // Rappel
           sectionTitle("Rappel des données du projet :"),
           ...bulletsFromStrings([
             `Quantité : ${fmtMoney0(volumeTotal)} m3`,
@@ -487,7 +525,6 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(1),
 
-          // Charges
           sectionTitle("A la charge de LafargeHolcim Maroc :"),
           ...(chargeFournisseur.length ? bulletsFromStrings(chargeFournisseur) : bulletsFromStrings(["—"])),
 
@@ -498,28 +535,24 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(1),
 
-          // Table prix
+          // ✅ Table prix (avec Total + TVA + TTC en continuité sous colonnes 3-4)
           table,
 
           ...blank(1),
 
-          // Prix complémentaires
           sectionTitle("Prix complémentaires :"),
           ...(prixComplementaires.length ? bulletsFromStrings(prixComplementaires) : bulletsFromStrings(["—"])),
 
           ...blank(1),
 
-          // Durée-Quantité
           sectionTitle("Durée - Quantité :"),
           pTxt(dureeQuantiteTexte),
 
           ...blank(1),
 
-          // Validité
           sectionTitle("Validité de l’offre :"),
           pTxt(validiteTexte),
 
-          // ✅ Signature: alignée à gauche + un peu plus bas
           ...blank(3),
           new Paragraph({
             alignment: AlignmentType.LEFT,
@@ -527,11 +560,11 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
           }),
           new Paragraph({
             alignment: AlignmentType.LEFT,
-            children: [new TextRun({ text: sigPoste, font: FONT, size: SIZE_9 })],
+            children: [new TextRun({ text: sigPoste, bold: true, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
             alignment: AlignmentType.LEFT,
-            children: [new TextRun({ text: sigTel, font: FONT, size: SIZE_9 })],
+            children: [new TextRun({ text: sigTel, bold: true, font: FONT, size: SIZE_9 })],
           }),
         ],
       },

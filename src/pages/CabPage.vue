@@ -1,8 +1,9 @@
-<!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET / compact + sticky subheader + toast + modal confirm + generalize) -->
+<!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET / compact + sticky subheader + toast + modal confirm + generalize + ✅ importer) -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
 
 // Heroicons
 import {
@@ -11,6 +12,7 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   TruckIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -154,9 +156,9 @@ onBeforeUnmount(() => {
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
-const toastKind = ref<"ok" | "err">("ok");
+const toastKind = ref<"ok" | "err" | "info">("ok");
 
-function showToast(msg: string, kind: "ok" | "err" = "ok") {
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
@@ -240,9 +242,83 @@ function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
     closeModal();
     resetFromVariant();
-    showToast("Valeurs restaurées.", "ok");
+    showToast("Valeurs restaurées.", "info");
   });
 }
+
+/* =========================
+   ✅ IMPORTER (depuis autre variante)
+========================= */
+const impOpen = ref(false);
+const impBusy = ref(false);
+const impErr = ref<string | null>(null);
+
+function findVariantById(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return v;
+      }
+    }
+  }
+  return null;
+}
+
+function applyCabFromVariant(srcVariant: any) {
+  const c = srcVariant?.cab ?? {};
+
+  // ✅ Copy section only
+  draft.etat = String(c?.etat ?? "NEUVE");
+  draft.mode = String(c?.mode ?? "ACHAT");
+  draft.capaciteM3 = toNum(c?.capaciteM3);
+  draft.amortMois = toNum(c?.amortMois);
+
+  activeField.value = null;
+
+  // ✅ import => local change, needs save
+  dirty.value = true;
+}
+
+async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
+  if (!variant.value) return;
+
+  const sourceId = String(payload?.sourceVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  if (String(variant.value?.id ?? "") === sourceId) {
+    showToast("La source est déjà la variante active.", "info");
+    impOpen.value = false;
+    return;
+  }
+
+  // NOTE: CAB n’utilise pas les presets -> on ignore payload.copy (toujours FULL par UI)
+  impErr.value = null;
+  impBusy.value = true;
+  try {
+    let src = findVariantById(sourceId);
+
+    if (!src) await (store as any).loadPnls?.();
+
+    src = src ?? findVariantById(sourceId);
+    if (!src) {
+      showToast("Variante source introuvable (données non chargées).", "err");
+      return;
+    }
+
+    applyCabFromVariant(src);
+    showToast("CAB importée dans la variante active. Pense à enregistrer.", "ok");
+    impOpen.value = false;
+  } catch (e: any) {
+    impErr.value = e?.message ?? String(e);
+    showToast(String(impErr.value), "err");
+  } finally {
+    impBusy.value = false;
+  }
+}
+
 
 /* =========================
    GENERALISER (CAB)
@@ -291,7 +367,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 /* =========================
-   INDICATEURS (conservés pour la side card)
+   INDICATEURS (side card)
 ========================= */
 const dureeMois = computed<number>(() => Math.max(1, toNum(contract.value?.dureeMois) || 1));
 const amortTotal = computed<number>(() => toNum(draft.amortMois) * dureeMois.value);
@@ -305,7 +381,6 @@ function mpPriceUsed(mpId: string): number {
   const vmp = (variant.value?.mp?.items ?? []).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
 
-  // ✅ tolérant: certains modèles utilisent `prix`, d'autres `prixOverride`
   if (vmp?.prix != null) return toNum(vmp.prix);
   if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
 
@@ -356,24 +431,28 @@ const amortPctCa = computed<number>(() => {
         </div>
 
         <div class="actions" v-if="variant && !cabChargeClient">
-          <button class="btn" :disabled="saving || genBusy" @click="askReset()">
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <button class="btn" :disabled="saving || genBusy" @click="genOpen = true">
+          <!-- ✅ NEW: Importer -->
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
+            <ArrowDownTrayIcon class="ic" />
+            {{ impBusy ? "…" : "Importer" }}
+          </button>
+
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="saving || !dirty" @click="askSave()">
+          <button class="btn pri" :disabled="saving || !dirty || impBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
         </div>
       </div>
-
-      <!-- ✅ KPI supprimé ici (uniquement) -->
 
       <div v-if="err" class="alert err">
         <ExclamationTriangleIcon class="aic" />
@@ -383,6 +462,11 @@ const amortPctCa = computed<number>(() => {
       <div v-if="genErr" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Généralisation :</b> {{ genErr }}</div>
+      </div>
+
+      <div v-if="impErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Import :</b> {{ impErr }}</div>
       </div>
 
       <div v-if="(store as any).loading" class="alert">
@@ -527,6 +611,14 @@ const amortPctCa = computed<number>(() => {
       </template>
     </template>
 
+    <!-- ✅ MODAL IMPORT -->
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="CAB"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
+
     <!-- ✅ MODAL GENERALISATION -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
@@ -537,7 +629,7 @@ const amortPctCa = computed<number>(() => {
 
     <!-- ✅ Modal confirm/info -->
     <teleport to="body">
-      <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
+      <div v-if="modal.open" class="ovl underDash" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
           <div class="dlgHdr">
             <div class="dlgTtl">{{ modal.title }}</div>
@@ -550,7 +642,12 @@ const amortPctCa = computed<number>(() => {
 
           <div class="dlgFtr">
             <button class="btn2" type="button" @click="closeModal()">Fermer</button>
-            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
+            <button
+              v-if="modal.mode === 'confirm'"
+              class="btn2 pri"
+              type="button"
+              @click="modal.onConfirm && modal.onConfirm()"
+            >
               Confirmer
             </button>
           </div>
@@ -886,7 +983,7 @@ const amortPctCa = computed<number>(() => {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* modal */
+/* ✅ modal (AU-DESSUS + sous header) */
 .ovl {
   position: fixed;
   inset: 0;
@@ -895,8 +992,13 @@ const amortPctCa = computed<number>(() => {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 99999;
 }
+.ovl.underDash {
+  align-items: flex-start;
+  padding-top: 82px;
+}
+
 .dlg {
   width: min(520px, 100%);
   background: #fff;
@@ -952,12 +1054,13 @@ const amortPctCa = computed<number>(() => {
   border-color: rgba(2, 132, 199, 0.28);
 }
 
-/* toast */
+/* ✅ toast (AU-DESSUS) */
 .toast {
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 90;
+  z-index: 100000;
+
   display: flex;
   align-items: center;
   gap: 10px;
@@ -978,5 +1081,10 @@ const amortPctCa = computed<number>(() => {
 .tmsg {
   font-weight: 900;
   color: rgba(15, 23, 42, 0.85);
+}
+
+/* ✅ Safe: si SectionImportModal/GeneralizeModal utilisent une overlay interne */
+:deep(.modalOverlay) {
+  z-index: 99999 !important;
 }
 </style>

@@ -1,8 +1,9 @@
-<!-- ✅ src/pages/AutresCoutsPage.vue (FICHIER COMPLET / charte “subheader sticky” + KPIs en haut + actions compactes + inputs bleu unité/valeur) -->
+<!-- ✅ src/pages/AutresCoutsPage.vue (FICHIER COMPLET / charte “subheader sticky” + KPIs en haut + actions compactes + inputs bleu unité/valeur + ✅ importer) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal from "@/components/SectionImportModal.vue";
 
 // Heroicons (charte pages)
 import {
@@ -11,6 +12,7 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   PlusCircleIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -442,6 +444,75 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 /* =========================
+   ✅ IMPORTER (UI only)
+========================= */
+const impOpen = ref(false);
+const impBusy = ref(false);
+const impErr = ref<string | null>(null);
+
+function findVariantById(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return v;
+      }
+    }
+  }
+  return null;
+}
+
+function applyFromVariant(v: any) {
+  const items = ((v as any)?.autresCouts?.items ?? []) as any[];
+  rows.value = items.map((it: any) => ({
+    _id: uid(),
+    label: String(it?.label ?? ""),
+    unite: (String(it?.unite ?? "FORFAIT") as Unite) || "FORFAIT",
+    valeur: clamp(it?.valeur),
+  }));
+  ensureFraisGeneraux();
+}
+
+async function onApplyImport(payload: { sourceVariantId: string }) {
+  if (!variant.value) return;
+
+  const sourceId = String(payload?.sourceVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  if (String(variant.value?.id ?? "") === sourceId) {
+    showToast("La source est déjà la variante active.", "ok");
+    impOpen.value = false;
+    return;
+  }
+
+  impErr.value = null;
+  impBusy.value = true;
+  try {
+    let src = findVariantById(sourceId);
+    if (!src) {
+      await (store as any).loadPnls?.();
+      src = findVariantById(sourceId);
+    }
+    if (!src) {
+      showToast("Variante source introuvable (données non chargées).", "err");
+      return;
+    }
+
+    applyFromVariant(src);
+    showToast("Autres coûts importés. Pense à enregistrer.", "ok");
+    impOpen.value = false;
+  } catch (e: any) {
+    impErr.value = e?.message ?? String(e);
+    showToast(String(impErr.value), "err");
+    openInfo("Erreur", String(impErr.value));
+  } finally {
+    impBusy.value = false;
+  }
+}
+
+/* =========================
    UI helpers (inputs selon unité)
 ========================= */
 function valueUnitLabel(u: Unite): string {
@@ -486,22 +557,28 @@ function valuePlaceholder(u: Unite): string {
         </div>
 
         <div class="actions" v-if="variant">
-          <button class="btn" :disabled="saving || genBusy" @click="addRow()">
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="addRow()">
             <PlusCircleIcon class="ic" />
             Ajouter
           </button>
 
-          <button class="btn" :disabled="saving || genBusy" @click="askReset()">
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <button class="btn" :disabled="saving || genBusy" @click="genOpen = true">
+          <!-- ✅ Importer -->
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
+            <ArrowDownTrayIcon class="ic" />
+            {{ impBusy ? "…" : "Importer" }}
+          </button>
+
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="saving || genBusy" @click="askSave()">
+          <button class="btn pri" :disabled="saving || genBusy || impBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
@@ -536,6 +613,11 @@ function valuePlaceholder(u: Unite): string {
       <div v-if="err" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="impErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Import :</b> {{ impErr }}</div>
       </div>
 
       <div v-if="genErr" class="alert err">
@@ -631,6 +713,14 @@ function valuePlaceholder(u: Unite): string {
         </div>
       </div>
     </template>
+
+    <!-- ✅ IMPORT -->
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="Autres coûts"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
 
     <!-- ✅ GENERALISATION -->
     <SectionTargetsGeneralizeModal

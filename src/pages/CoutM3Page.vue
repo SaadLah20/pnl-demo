@@ -1,8 +1,9 @@
-<!-- ✅ src/pages/CoutM3Page.vue (FICHIER COMPLET / look harmonisé + sticky subheader + KPIs + toast + generalize) -->
+<!-- ✅ src/pages/CoutM3Page.vue (FICHIER COMPLET / look harmonisé + sticky subheader + KPIs + toast + generalize + ✅ importer) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
 
 // Heroicons
 import {
@@ -11,6 +12,7 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   CurrencyDollarIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -80,11 +82,10 @@ const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?
 const transportPrixMoyen = computed(() => toNum((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
-  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find(
-    (x: any) => String(x.mpId) === String(mpId)
-  );
+  const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
   if (vmp?.prix != null) return toNum(vmp.prix);
+  if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
   return toNum(vmp?.mp?.prix);
 }
 
@@ -102,9 +103,7 @@ function cmpParM3For(vf: any): number {
   return compositionFor(vf?.formule).reduce((s: number, x) => s + toNum(x.coutParM3), 0);
 }
 
-const volumeTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => s + toNum(vf?.volumeM3), 0)
-);
+const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + toNum(vf?.volumeM3), 0));
 
 const caTotal = computed(() => {
   const t = transportPrixMoyen.value;
@@ -132,9 +131,9 @@ const coutM3Pct = computed(() => (caTotal.value > 0 ? (coutM3Total.value / caTot
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
-const toastKind = ref<"ok" | "err">("ok");
+const toastKind = ref<"ok" | "err" | "info">("ok");
 
-function showToast(msg: string, kind: "ok" | "err" = "ok") {
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
@@ -220,6 +219,70 @@ function askReset() {
 }
 
 /* =========================
+   ✅ IMPORTER (depuis autre variante / save séparé)
+========================= */
+const impOpen = ref(false);
+const impBusy = ref(false);
+const impErr = ref<string | null>(null);
+
+function findVariantById(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return v;
+      }
+    }
+  }
+  return null;
+}
+
+function applyCoutM3FromVariant(srcVariant: any) {
+  const c: any = srcVariant?.coutM3 ?? {};
+  draft.eau = clamp(c?.eau, 0, 1e12);
+  draft.qualite = clamp(c?.qualite, 0, 1e12);
+  draft.dechets = clamp(c?.dechets, 0, 1e12);
+}
+
+async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
+  if (!variant.value) return;
+
+  const sourceId = String(payload?.sourceVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  if (String(variant.value?.id ?? "") === sourceId) {
+    showToast("La source est déjà la variante active.", "info");
+    impOpen.value = false;
+    return;
+  }
+
+  // NOTE: CoutM3 n'utilise pas les presets => on ignore payload.copy (FULL par défaut)
+  impErr.value = null;
+  impBusy.value = true;
+  try {
+    let src = findVariantById(sourceId);
+    if (!src) await (store as any).loadPnls?.();
+
+    src = src ?? findVariantById(sourceId);
+    if (!src) {
+      showToast("Variante source introuvable (données non chargées).", "err");
+      return;
+    }
+
+    applyCoutM3FromVariant(src);
+    showToast("Coût au m³ importé dans la variante active. Pense à enregistrer.", "ok");
+    impOpen.value = false;
+  } catch (e: any) {
+    impErr.value = e?.message ?? String(e);
+    showToast(String(impErr.value), "err");
+  } finally {
+    impBusy.value = false;
+  }
+}
+
+/* =========================
    GENERALISER
 ========================= */
 const genOpen = ref(false);
@@ -296,24 +359,30 @@ const variantLabel = computed(() => {
         </div>
 
         <div class="actions">
-          <button class="btn" :disabled="!variant || saving" @click="askReset()">
+          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
+          <!-- ✅ NEW: Importer -->
+          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="impOpen = true">
+            <ArrowDownTrayIcon class="ic" />
+            {{ impBusy ? "…" : "Importer" }}
+          </button>
+
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="!variant || saving" @click="askSave()">
+          <button class="btn pri" :disabled="!variant || saving || impBusy || genBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
         </div>
       </div>
 
-      <!-- ✅ KPIs (sans Volume total + CA estimé) -->
+      <!-- ✅ KPIs -->
       <div class="kpis" v-if="variant">
         <div class="kpi main">
           <div class="kLbl">Prix / m³</div>
@@ -342,6 +411,11 @@ const variantLabel = computed(() => {
       <div v-if="err" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="impErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Import :</b> {{ impErr }}</div>
       </div>
 
       <div v-if="genErr" class="alert err">
@@ -401,11 +475,12 @@ const variantLabel = computed(() => {
           </div>
         </div>
 
-        <div class="note">
-          Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (formules).
-        </div>
+        <div class="note">Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (formules).</div>
       </div>
     </template>
+
+    <!-- ✅ MODAL IMPORT -->
+    <SectionImportModal v-model="impOpen" sectionLabel="Coût au m³" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
     <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal
@@ -440,7 +515,7 @@ const variantLabel = computed(() => {
 
     <!-- ✅ Toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -740,7 +815,7 @@ const variantLabel = computed(() => {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 100000;
 }
 .dlg {
   width: min(520px, 100%);
@@ -802,7 +877,7 @@ const variantLabel = computed(() => {
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 90;
+  z-index: 100000; /* ✅ au-dessus du HeaderDashboard + modals */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -813,8 +888,12 @@ const variantLabel = computed(() => {
   backdrop-filter: blur(8px);
   box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
 }
+
 .toast.err {
   border-color: rgba(239, 68, 68, 0.22);
+}
+.toast.info {
+  border-color: rgba(59, 130, 246, 0.22);
 }
 .tic {
   width: 18px;

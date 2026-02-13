@@ -1,8 +1,9 @@
-<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize + hide zeros) -->
+<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize + import + hide zeros) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
 
 // Heroicons
 import {
@@ -12,6 +13,7 @@ import {
   Squares2X2Icon,
   WrenchScrewdriverIcon,
   CalendarDaysIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -119,6 +121,7 @@ function mpPriceUsed(mpId: string): number {
   const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
   if (vmp?.prix != null) return toNum(vmp.prix);
+  if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
   return toNum(vmp?.mp?.prix);
 }
 
@@ -198,9 +201,9 @@ const visibleLines = computed(() => {
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
-const toastKind = ref<"ok" | "err">("ok");
+const toastKind = ref<"ok" | "err" | "info">("ok");
 
-function showToast(msg: string, kind: "ok" | "err" = "ok") {
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
@@ -289,6 +292,74 @@ function askReset() {
 }
 
 /* =========================
+   ✅ IMPORTER (depuis autre variante / save séparé)
+========================= */
+const impOpen = ref(false);
+const impBusy = ref(false);
+const impErr = ref<string | null>(null);
+
+function findVariantById(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return v;
+      }
+    }
+  }
+  return null;
+}
+
+function applyMaintenanceFromVariant(srcVariant: any) {
+  const m: any = srcVariant?.maintenance ?? {};
+  edit.cab = clamp(m?.cab, 0, 1e12);
+  edit.elec = clamp(m?.elec, 0, 1e12);
+  edit.chargeur = clamp(m?.chargeur, 0, 1e12);
+  edit.generale = clamp(m?.generale, 0, 1e12);
+  edit.bassins = clamp(m?.bassins, 0, 1e12);
+  edit.preventive = clamp(m?.preventive, 0, 1e12);
+}
+
+async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
+  if (!variant.value) return;
+
+  const sourceId = String(payload?.sourceVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  if (String(variant.value?.id ?? "") === sourceId) {
+    showToast("La source est déjà la variante active.", "info");
+    impOpen.value = false;
+    return;
+  }
+
+  // NOTE: Maintenance n’utilise pas les presets => on ignore payload.copy (toujours FULL par défaut)
+  impErr.value = null;
+  impBusy.value = true;
+  try {
+    let src = findVariantById(sourceId);
+
+    if (!src) await (store as any).loadPnls?.();
+
+    src = src ?? findVariantById(sourceId);
+    if (!src) {
+      showToast("Variante source introuvable (données non chargées).", "err");
+      return;
+    }
+
+    applyMaintenanceFromVariant(src);
+    showToast("Maintenance importée dans la variante active. Pense à enregistrer.", "ok");
+    impOpen.value = false;
+  } catch (e: any) {
+    impErr.value = e?.message ?? String(e);
+    showToast(String(impErr.value), "err");
+  } finally {
+    impBusy.value = false;
+  }
+}
+
+/* =========================
    GENERALISER
 ========================= */
 const genOpen = ref(false);
@@ -313,7 +384,7 @@ async function generalizeTo(variantIds: string[]) {
     showToast("Section Maintenance généralisée.", "ok");
   } catch (e: any) {
     genErr.value = e?.message ?? String(e);
-    showToast(String(genErr.value ?? e?.message ?? e)), "err";
+    showToast(String(genErr.value ?? e?.message ?? e), "err");
   } finally {
     genBusy.value = false;
   }
@@ -356,9 +427,15 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <div class="actions">
-          <button class="btn" :disabled="!variant || saving" @click="askReset()">
+          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
+          </button>
+
+          <!-- ✅ NEW: Importer -->
+          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="impOpen = true">
+            <ArrowDownTrayIcon class="ic" />
+            {{ impBusy ? "…" : "Importer" }}
           </button>
 
           <!-- ✅ NEW: Masquer 0 -->
@@ -367,12 +444,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
           </button>
 
-          <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="!variant || saving" @click="askSave()">
+          <button class="btn pri" :disabled="!variant || saving || impBusy || genBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
@@ -411,6 +488,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       <div v-if="err" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="impErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Import :</b> {{ impErr }}</div>
       </div>
 
       <div v-if="genErr" class="alert err">
@@ -499,11 +581,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </table>
         </div>
 
-        <div class="foot">
-          Durée : <b>{{ dureeMois }}</b> mois • % calculé sur CA (CMP + Transport + MOMD).
-        </div>
+        <div class="foot">Durée : <b>{{ dureeMois }}</b> mois • % calculé sur CA (CMP + Transport + MOMD).</div>
       </div>
     </template>
+
+    <!-- ✅ MODAL IMPORT -->
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="Maintenance"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
 
     <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal
@@ -538,7 +626,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <!-- ✅ Toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -961,6 +1049,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 .toast.err {
   border-color: rgba(239, 68, 68, 0.22);
+}
+.toast.info {
+  border-color: rgba(59, 130, 246, 0.22);
 }
 .tic {
   width: 18px;

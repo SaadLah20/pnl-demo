@@ -221,6 +221,8 @@ async function addFormule(formuleId: string) {
 
 /* =========================
    ✅ SUPPRIMER FORMULE (variant) + confirm modal interne
+   ✅ FIX: resolve vrai variantFormuleId (ignore preview ids)
+   ✅ FIX: refresh deep après suppression -> KPIs à jour
 ========================= */
 const delBusy = reactive<Record<string, boolean>>({});
 const delErr = ref<string | null>(null);
@@ -228,18 +230,51 @@ const delErr = ref<string | null>(null);
 const delConfirm = reactive({
   open: false,
   variantFormuleId: "",
+  formuleId: "",
   label: "",
 });
 
-function openDeleteConfirm(vfId: string, label: string) {
+function resolveVariantFormuleId(row: FormuleRow): string {
+  // 0) si preview, jamais utiliser raw.id
+  const rawId = String(row?.raw?.id ?? "").trim();
+  if (rawId && !rawId.startsWith("__preview__")) {
+    // 1) si le raw contient déjà le bon id (VariantFormule.id)
+    return rawId;
+  }
+
+  // 2) fallback: chercher dans la variante active (deep) par formuleId
+  const v: any = variant.value ?? null;
+  const items = (v?.formules?.items ?? v?.variantFormules ?? []) as any[];
+  const fid = String(row?.formuleId ?? "").trim();
+  if (!fid || !Array.isArray(items)) return "";
+
+  const found = items.find((x: any) => String(x?.formuleId ?? x?.formule?.id ?? "").trim() === fid);
+  return String(found?.id ?? "").trim();
+}
+
+function openDeleteConfirm(row: FormuleRow) {
+  delErr.value = null;
+
+  // en preview import : pas de delete (c'est du non-enregistré)
   if (importDraft.ready) return;
-  delConfirm.variantFormuleId = String(vfId ?? "");
-  delConfirm.label = String(label ?? "");
+
+  const vfId = resolveVariantFormuleId(row);
+  if (!vfId) {
+    delErr.value =
+      "Impossible de trouver l'ID de la formule dans la variante (variantFormuleId manquant). Clique sur Recharger puis réessaie.";
+    return;
+  }
+
+  delConfirm.variantFormuleId = vfId;
+  delConfirm.formuleId = String(row?.formuleId ?? "");
+  delConfirm.label = String(row?.label ?? "");
   delConfirm.open = true;
 }
+
 function closeDeleteConfirm() {
   delConfirm.open = false;
   delConfirm.variantFormuleId = "";
+  delConfirm.formuleId = "";
   delConfirm.label = "";
 }
 
@@ -252,9 +287,18 @@ async function deleteFormule(variantFormuleId: string) {
 
   delErr.value = null;
   delBusy[vfId] = true;
+
   try {
+    // 1) API delete (backend idempotent)
     await (store as any).deleteVariantFormule(variantId, vfId);
-    if ((store as any).loadVariantDeep) await (store as any).loadVariantDeep(variantId);
+
+    // 2) refresh deep pour resync l’UI + recalcul KPIs header
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(variantId);
+    }
+
+    // 3) fermer modal
+    closeDeleteConfirm();
   } catch (e: any) {
     delErr.value = e?.message ?? String(e);
   } finally {
@@ -1084,8 +1128,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 <button
                   class="iconDanger"
                   title="Supprimer la formule"
-                  @click.stop="openDeleteConfirm(r.id, r.label)"
-                  :disabled="delBusy[r.id] || importBusy || importDraft.ready"
+                  @click.stop="openDeleteConfirm(r)"
+                  :disabled="importBusy || importDraft.ready"
                 >
                   🗑
                 </button>
@@ -1406,7 +1450,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 class="btnPrimary"
                 style="background:#b91c1c;border-color:#b91c1c"
                 :disabled="delBusy[delConfirm.variantFormuleId] || importBusy || importDraft.ready"
-                @click="closeDeleteConfirm(); deleteFormule(delConfirm.variantFormuleId);"
+                @click="deleteFormule(delConfirm.variantFormuleId)"
               >
                 Confirmer la suppression
               </button>

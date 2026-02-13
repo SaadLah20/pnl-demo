@@ -1,8 +1,9 @@
-<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize + ✅ masquer 0) -->
+<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize + ✅ masquer 0 + ✅ importer) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal from "@/components/SectionImportModal.vue";
 
 // Heroicons
 import {
@@ -11,6 +12,7 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   CalendarDaysIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -148,8 +150,8 @@ const draft = reactive<Draft>({
   location: 0,
 });
 
-function loadFromVariant() {
-  const s: any = (variant.value as any)?.coutMensuel ?? {};
+function applyFromVariant(v: any) {
+  const s: any = (v as any)?.coutMensuel ?? {};
   draft.electricite = clamp(s.electricite);
 
   // ✅ on ne garde plus s.locationGroupes côté UI
@@ -167,6 +169,10 @@ function loadFromVariant() {
 
   // ✅ legacy utilisé comme "Location groupes"
   draft.location = clamp(s.location);
+}
+
+function loadFromVariant() {
+  applyFromVariant(variant.value);
 }
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 
@@ -199,6 +205,66 @@ const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 
    ✅ MASQUER 0 (UI uniquement)
 ========================= */
 const hideZeros = ref(false);
+
+/* =========================
+   ✅ IMPORTER (depuis autre variante / UI only)
+========================= */
+const impOpen = ref(false);
+const impBusy = ref(false);
+const impErr = ref<string | null>(null);
+
+function findVariantById(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return v;
+      }
+    }
+  }
+  return null;
+}
+
+async function onApplyImport(payload: { sourceVariantId: string }) {
+  if (!variant.value) return;
+
+  const sourceId = String(payload?.sourceVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  if (String(variant.value?.id ?? "") === sourceId) {
+    showToast("La source est déjà la variante active.", "ok");
+    impOpen.value = false;
+    return;
+  }
+
+  impErr.value = null;
+  impBusy.value = true;
+  try {
+    const src = findVariantById(sourceId);
+
+    // si la liste n'est pas encore complète, on recharge
+    if (!src) {
+      await (store as any).loadPnls?.();
+    }
+
+    const src2 = src ?? findVariantById(sourceId);
+    if (!src2) {
+      showToast("Variante source introuvable (données non chargées).", "err");
+      return;
+    }
+
+    applyFromVariant(src2);
+    showToast("Coûts mensuels importés. Pense à enregistrer.", "ok");
+    impOpen.value = false;
+  } catch (e: any) {
+    impErr.value = e?.message ?? String(e);
+    showToast(String(impErr.value), "err");
+  } finally {
+    impBusy.value = false;
+  }
+}
 
 /* =========================
    TOAST (non bloquant)
@@ -368,21 +434,27 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
         <div class="actions">
           <!-- ✅ bouton Masquer 0 -->
-          <button class="btn" :disabled="!variant || saving" @click="hideZeros = !hideZeros">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="hideZeros = !hideZeros">
             {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
           </button>
 
-          <button class="btn" :disabled="!variant || saving" @click="askReset()">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <button class="btn" :disabled="!variant || saving || genBusy" @click="genOpen = true">
+          <!-- ✅ Importer -->
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="impOpen = true">
+            <ArrowDownTrayIcon class="ic" />
+            {{ impBusy ? "…" : "Importer" }}
+          </button>
+
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="!variant || saving" @click="askSave()">
+          <button class="btn pri" :disabled="!variant || saving || genBusy || impBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
@@ -421,6 +493,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       <div v-if="err" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="impErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Import :</b> {{ impErr }}</div>
       </div>
 
       <div v-if="genErr" class="alert err">
@@ -566,6 +643,14 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
     </template>
+
+    <!-- ✅ IMPORT -->
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="Coûts mensuels"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
 
     <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal
