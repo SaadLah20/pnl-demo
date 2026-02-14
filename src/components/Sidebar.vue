@@ -118,6 +118,8 @@ const routeByItem: Record<string, string> = {
   Majorations: "Majorations",
   "Comparateur de variantes": "ComparateurVariantes",
   Devis: "Devis",
+  "Générer devis multi-variantes": "MultiVarianteDevis",
+
 };
 
 function goToPage(item: string) {
@@ -173,6 +175,7 @@ watch(
     else if (route.name === "AutresCouts") activeItem.value = "Autres couts";
     else if (route.name === "Majorations") activeItem.value = "Majorations";
     else if (route.name === "Devis") activeItem.value = "Devis";
+    else if (route.name === "MultiVarianteDevis") activeItem.value = "Générer devis multi-variantes";
     else if (route.name === "PageView") {
       const n = typeof route.params.name === "string" ? route.params.name : "";
 

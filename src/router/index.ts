@@ -7,6 +7,8 @@ import DetailsPage from "@/pages/DetailsPage.vue";
 import PnlArchivePage from "@/pages/PnlArchivePage.vue";
 import MpCataloguePage from "@/pages/MpCataloguePage.vue";
 import FormulesCataloguePage from "@/pages/FormulesCataloguePage.vue";
+import MultiVarianteDevisPage from "@/pages/MultiVarianteDevisPage.vue";
+
 
 // ⚠️ Si ton fichier s'appelle vraiment "Cab.Page.vue", remets-le.
 // import CabPage from "@/pages/Cab.Page.vue";
@@ -47,6 +49,10 @@ const routes = [
 
   // ✅ Devis
   { path: "/devis", name: "Devis", component: DevisPage },
+
+  // ✅ Devis multi-variantes
+  { path: "/multi-variante-devis", name: "MultiVarianteDevis", component: MultiVarianteDevisPage },
+
 
   // ✅ Comparateur
   { path: "/comparateur-variantes", name: "ComparateurVariantes", component: ComparateurVariantesPage },

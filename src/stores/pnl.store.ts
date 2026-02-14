@@ -506,6 +506,56 @@ async exportDevisWord(variantId?: string) {
   setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
 },
 
+// =========================================================
+// ✅ Export Devis MULTI (DOCX) - plusieurs variantes
+// payload: { variantIds: string[], options: {useMajorations,useDevisSurcharges}, meta: {...} }
+// =========================================================
+async exportDevisMultiWord(payload: {
+  variantIds: string[];
+  options?: { useMajorations?: boolean; useDevisSurcharges?: boolean };
+  meta?: any;
+}) {
+  const variantIds = (payload?.variantIds ?? []).map((x) => String(x)).filter(Boolean);
+  if (!variantIds.length) throw new Error("Aucune variante sélectionnée.");
+
+  const useMajorations = payload?.options?.useMajorations !== undefined ? !!payload.options.useMajorations : true;
+  const useDevisSurcharges =
+    payload?.options?.useDevisSurcharges !== undefined ? !!payload.options.useDevisSurcharges : true;
+
+  const res = await fetch(`${API}/devis/multi/word`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      variantIds,
+      useMajorations,
+      useDevisSurcharges,
+      meta: payload?.meta ?? null,
+    }),
+  });
+
+  if (!res.ok) {
+    let msg = `Export devis multi Word échoué: ${res.status}`;
+    try {
+      const j = await res.clone().json();
+      if (typeof j?.error === "string") msg = j.error;
+    } catch {}
+    throw new Error(msg);
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = `Devis-Multi-${new Date().toISOString().slice(0, 10)}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+},
+
+
 
     // =========================================================
     // Variant update (optimistic + normalisation réponse)
