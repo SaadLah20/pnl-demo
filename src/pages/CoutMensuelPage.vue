@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize + ✅ masquer 0 + ✅ importer) -->
+<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize + ✅ masquer 0 + ✅ importer + ✅ règles contrat (force 0 + lock)) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -13,6 +13,7 @@ import {
   Squares2X2Icon,
   CalendarDaysIcon,
   ArrowDownTrayIcon,
+  LockClosedIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -51,6 +52,19 @@ function isZero(v: any) {
   return clamp(v) === 0;
 }
 
+// same logic family as backend
+function norm(s: any): string {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+function isChargeClient(v: any): boolean {
+  const t = norm(v);
+  return t.includes("client"); // "à la charge du client", "charge client", etc.
+}
+
 /* =========================
    ACTIVE
 ========================= */
@@ -65,8 +79,21 @@ const variantLabel = computed(() => {
 });
 
 /* =========================
+   ✅ CONTRAT → LOCK FLAGS
+   - consoElec à charge client => electricite + locationGroupes (legacy: location) forcés à 0
+   - terrain à charge client => locationTerrain forcé à 0
+========================= */
+const lockElecAndGroups = computed<boolean>(() => {
+  const c: any = contract.value ?? {};
+  return isChargeClient(c?.consoElec);
+});
+const lockTerrain = computed<boolean>(() => {
+  const c: any = contract.value ?? {};
+  return isChargeClient(c?.terrain);
+});
+
+/* =========================
    VOLUME + CA (for %)
-   (on garde la logique pour pct, mais pas d'affichage KPI Volume/CA)
 ========================= */
 type DraftForm = { volumeM3: number; momd: number };
 const formDrafts = reactive<Record<string, DraftForm>>({});
@@ -153,8 +180,6 @@ const draft = reactive<Draft>({
 function applyFromVariant(v: any) {
   const s: any = (v as any)?.coutMensuel ?? {};
   draft.electricite = clamp(s.electricite);
-
-  // ✅ on ne garde plus s.locationGroupes côté UI
   draft.gasoil = clamp(s.gasoil);
   draft.hebergements = clamp(s.hebergements);
   draft.locationTerrain = clamp(s.locationTerrain);
@@ -166,35 +191,93 @@ function applyFromVariant(v: any) {
   draft.locationAmbulance = clamp(s.locationAmbulance);
   draft.locationBungalows = clamp(s.locationBungalows);
   draft.epi = clamp(s.epi);
+  draft.location = clamp(s.location); // legacy: "Location groupes"
+}
 
-  // ✅ legacy utilisé comme "Location groupes"
-  draft.location = clamp(s.location);
+/** ✅ enforce contract rules on draft (immediate KPI correctness) */
+function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
+  let changed = false;
+  const notes: string[] = [];
+
+  if (lockElecAndGroups.value) {
+    if (clamp(draft.electricite) !== 0) {
+      draft.electricite = 0;
+      changed = true;
+    }
+    if (clamp(draft.location) !== 0) {
+      draft.location = 0;
+      changed = true;
+    }
+    if (changed) notes.push("Électricité + Location groupes forcées à 0 (charge client).");
+  }
+
+  if (lockTerrain.value) {
+    if (clamp(draft.locationTerrain) !== 0) {
+      draft.locationTerrain = 0;
+      changed = true;
+      notes.push("Location terrain forcée à 0 (charge client).");
+    }
+  }
+
+  return { changed, notes };
 }
 
 function loadFromVariant() {
   applyFromVariant(variant.value);
+  enforceContractLocksOnDraft();
 }
+
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
+watch(
+  () => [lockElecAndGroups.value, lockTerrain.value],
+  () => {
+    // si contrat change, on force immédiatement le draft à 0
+    enforceContractLocksOnDraft();
+  },
+  { immediate: true }
+);
+
+/* =========================
+   ✅ EFFECTIVE VALUES (for KPI + save)
+========================= */
+const effective = computed(() => {
+  return {
+    electricite: lockElecAndGroups.value ? 0 : clamp(draft.electricite),
+    location: lockElecAndGroups.value ? 0 : clamp(draft.location), // location groupes
+    locationTerrain: lockTerrain.value ? 0 : clamp(draft.locationTerrain),
+
+    gasoil: clamp(draft.gasoil),
+    hebergements: clamp(draft.hebergements),
+    telephone: clamp(draft.telephone),
+    troisG: clamp(draft.troisG),
+    taxeProfessionnelle: clamp(draft.taxeProfessionnelle),
+    securite: clamp(draft.securite),
+    locationVehicule: clamp(draft.locationVehicule),
+    locationAmbulance: clamp(draft.locationAmbulance),
+    locationBungalows: clamp(draft.locationBungalows),
+    epi: clamp(draft.epi),
+  };
+});
 
 /* =========================
    KPI
 ========================= */
 const monthly = computed(() => {
+  const e = effective.value;
   return (
-    clamp(draft.electricite) +
-    // ✅ Location groupes = DB: location (legacy)
-    clamp(draft.location) +
-    clamp(draft.gasoil) +
-    clamp(draft.hebergements) +
-    clamp(draft.locationTerrain) +
-    clamp(draft.telephone) +
-    clamp(draft.troisG) +
-    clamp(draft.taxeProfessionnelle) +
-    clamp(draft.securite) +
-    clamp(draft.locationVehicule) +
-    clamp(draft.locationAmbulance) +
-    clamp(draft.locationBungalows) +
-    clamp(draft.epi)
+    e.electricite +
+    e.location +
+    e.gasoil +
+    e.hebergements +
+    e.locationTerrain +
+    e.telephone +
+    e.troisG +
+    e.taxeProfessionnelle +
+    e.securite +
+    e.locationVehicule +
+    e.locationAmbulance +
+    e.locationBungalows +
+    e.epi
   );
 });
 const total = computed(() => monthly.value * clamp(dureeMois.value));
@@ -244,7 +327,6 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   try {
     const src = findVariantById(sourceId);
 
-    // si la liste n'est pas encore complète, on recharge
     if (!src) {
       await (store as any).loadPnls?.();
     }
@@ -256,7 +338,11 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
     }
 
     applyFromVariant(src2);
-    showToast("Coûts mensuels importés. Pense à enregistrer.", "ok");
+    const { changed, notes } = enforceContractLocksOnDraft();
+
+    if (changed) showToast(`Import OK. Ajustements contrat: ${notes.join(" ")}`, "ok");
+    else showToast("Coûts mensuels importés. Pense à enregistrer.", "ok");
+
     impOpen.value = false;
   } catch (e: any) {
     impErr.value = e?.message ?? String(e);
@@ -319,22 +405,23 @@ const err = ref<string | null>(null);
 
 function buildPayload() {
   const existing: any = (variant.value as any)?.coutMensuel ?? {};
+  const e = effective.value;
+
   return {
     category: existing.category ?? "COUTS_CHARGES",
-    electricite: Number(clamp(draft.electricite)),
-    // ✅ on force l'ancienne colonne DB `location` (legacy) comme "Location groupes"
-    location: Number(clamp(draft.location)),
-    gasoil: Number(clamp(draft.gasoil)),
-    hebergements: Number(clamp(draft.hebergements)),
-    locationTerrain: Number(clamp(draft.locationTerrain)),
-    telephone: Number(clamp(draft.telephone)),
-    troisG: Number(clamp(draft.troisG)),
-    taxeProfessionnelle: Number(clamp(draft.taxeProfessionnelle)),
-    securite: Number(clamp(draft.securite)),
-    locationVehicule: Number(clamp(draft.locationVehicule)),
-    locationAmbulance: Number(clamp(draft.locationAmbulance)),
-    locationBungalows: Number(clamp(draft.locationBungalows)),
-    epi: Number(clamp(draft.epi)),
+    electricite: Number(e.electricite),
+    location: Number(e.location), // legacy = Location groupes
+    gasoil: Number(e.gasoil),
+    hebergements: Number(e.hebergements),
+    locationTerrain: Number(e.locationTerrain),
+    telephone: Number(e.telephone),
+    troisG: Number(e.troisG),
+    taxeProfessionnelle: Number(e.taxeProfessionnelle),
+    securite: Number(e.securite),
+    locationVehicule: Number(e.locationVehicule),
+    locationAmbulance: Number(e.locationAmbulance),
+    locationBungalows: Number(e.locationBungalows),
+    epi: Number(e.epi),
   };
 }
 
@@ -373,6 +460,46 @@ const genOpen = ref(false);
 const genBusy = ref(false);
 const genErr = ref<string | null>(null);
 
+function findContractByVariantId(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return c;
+      }
+    }
+  }
+  return null;
+}
+
+function impactedByContractOnTargets(targetIds: string[], payload: any) {
+  const impacted: Array<{ id: string; label: string; fields: string[] }> = [];
+
+  for (const tid of targetIds) {
+    const c = findContractByVariantId(tid);
+    if (!c) continue;
+
+    const fields: string[] = [];
+    if (isChargeClient(c?.consoElec)) {
+      if (toNum(payload?.electricite) !== 0) fields.push("Électricité");
+      if (toNum(payload?.location) !== 0) fields.push("Location groupes");
+    }
+    if (isChargeClient(c?.terrain)) {
+      if (toNum(payload?.locationTerrain) !== 0) fields.push("Location terrain");
+    }
+
+    if (fields.length) {
+      const v = findVariantById(tid);
+      const label = v?.title ?? v?.name ?? String(tid).slice(0, 8);
+      impacted.push({ id: tid, label, fields });
+    }
+  }
+
+  return impacted;
+}
+
 async function generalizeTo(variantIds: string[]) {
   const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceId) return;
@@ -397,13 +524,28 @@ async function generalizeTo(variantIds: string[]) {
 }
 
 async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
-  const ids = payload?.variantIds ?? [];
+  const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
   if (!ids.length) return;
+
+  const data = buildPayload();
+  const impacted = impactedByContractOnTargets(ids, data);
+
+  let warn = "";
+  if (impacted.length) {
+    const lines = impacted
+      .slice(0, 8)
+      .map((x) => `• ${x.label}: ${x.fields.join(", ")} → 0`)
+      .join("\n");
+    warn =
+      `\n\n⚠️ Contrats: ${impacted.length} variante(s) recevront des valeurs forcées à 0:\n` +
+      lines +
+      (impacted.length > 8 ? `\n… (+${impacted.length - 8} autres)` : "");
+  }
 
   const msg =
     payload.mode === "ALL"
-      ? "Confirmer la généralisation de la section Coûts mensuels sur TOUTES les variantes ?"
-      : `Confirmer la généralisation de la section Coûts mensuels sur ${ids.length} variante(s) ?`;
+      ? "Confirmer la généralisation de la section Coûts mensuels sur TOUTES les variantes ?" + warn
+      : `Confirmer la généralisation de la section Coûts mensuels sur ${ids.length} variante(s) ?` + warn;
 
   openConfirm("Généraliser Coûts mensuels", msg, async () => {
     closeModal();
@@ -433,7 +575,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <div class="actions">
-          <!-- ✅ bouton Masquer 0 -->
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="hideZeros = !hideZeros">
             {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
           </button>
@@ -443,7 +584,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             Reset
           </button>
 
-          <!-- ✅ Importer -->
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
@@ -461,7 +601,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
 
-      <!-- ✅ KPIs (sans Volume total + CA estimé) -->
+      <!-- ✅ Contract locks info -->
+      <div v-if="variant && (lockElecAndGroups || lockTerrain)" class="lockInfo">
+        <LockClosedIcon class="lic" />
+        <div class="ltext">
+          <b>Contrat :</b>
+          <span v-if="lockElecAndGroups"> Électricité + Location groupes figées à 0 (charge client).</span>
+          <span v-if="lockTerrain"> Location terrain figée à 0 (charge client).</span>
+        </div>
+      </div>
+
+      <!-- ✅ KPIs -->
       <div class="kpis" v-if="variant">
         <div class="kpi main">
           <div class="kLbl">
@@ -531,25 +681,44 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <!-- ✅ ULTRA COMPACT GRID (zero waste + low scroll) -->
         <div class="gridDense">
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.electricite)">
-            <div class="label">Électricité</div>
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.electricite)">
+            <div class="label">
+              Électricité
+              <span v-if="lockElecAndGroups" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+            </div>
             <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.electricite" />
+              <input
+                class="in mono"
+                type="number"
+                step="0.01"
+                min="0"
+                v-model.number="draft.electricite"
+                :disabled="lockElecAndGroups"
+              />
               <span class="u">DH</span>
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.location)">
-            <div class="label">Location groupes</div>
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.location)">
+            <div class="label">
+              Location groupes
+              <span v-if="lockElecAndGroups" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+            </div>
             <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.location" />
+              <input
+                class="in mono"
+                type="number"
+                step="0.01"
+                min="0"
+                v-model.number="draft.location"
+                :disabled="lockElecAndGroups"
+              />
               <span class="u">DH</span>
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.gasoil)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.gasoil)">
             <div class="label">Gasoil</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.gasoil" />
@@ -557,7 +726,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.hebergements)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.hebergements)">
             <div class="label">Hébergements</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.hebergements" />
@@ -565,15 +734,25 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationTerrain)">
-            <div class="label">Location terrain</div>
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationTerrain)">
+            <div class="label">
+              Location terrain
+              <span v-if="lockTerrain" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+            </div>
             <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationTerrain" />
+              <input
+                class="in mono"
+                type="number"
+                step="0.01"
+                min="0"
+                v-model.number="draft.locationTerrain"
+                :disabled="lockTerrain"
+              />
               <span class="u">DH</span>
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.telephone)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.telephone)">
             <div class="label">Téléphone</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.telephone" />
@@ -581,7 +760,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.troisG)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.troisG)">
             <div class="label">3G</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.troisG" />
@@ -589,7 +768,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.taxeProfessionnelle)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.taxeProfessionnelle)">
             <div class="label">Taxe prof.</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.taxeProfessionnelle" />
@@ -597,7 +776,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.securite)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.securite)">
             <div class="label">Sécurité</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.securite" />
@@ -605,7 +784,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationVehicule)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationVehicule)">
             <div class="label">Loc. véhicule</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationVehicule" />
@@ -613,7 +792,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationAmbulance)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationAmbulance)">
             <div class="label">Loc. ambulance</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationAmbulance" />
@@ -621,7 +800,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.locationBungalows)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationBungalows)">
             <div class="label">Loc. bungalows</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationBungalows" />
@@ -629,7 +808,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             </div>
           </div>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(draft.epi)">
+          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.epi)">
             <div class="label">EPI</div>
             <div class="inCell">
               <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.epi" />
@@ -670,7 +849,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
 
           <div class="dlgBody">
-            <div class="dlgMsg">{{ modal.message }}</div>
+            <div class="dlgMsg" style="white-space: pre-line">{{ modal.message }}</div>
           </div>
 
           <div class="dlgFtr">
@@ -695,7 +874,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
-/* ✅ more compact overall */
 .page {
   padding: 10px;
   display: flex;
@@ -775,7 +953,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 .btn {
-  height: 32px; /* ✅ compact */
+  height: 32px;
   border-radius: 12px;
   padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -823,7 +1001,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-/* ✅ KPIs compact */
+/* ✅ lock info line */
+.lockInfo {
+  margin-top: 8px;
+  border-radius: 14px;
+  padding: 8px 10px;
+  border: 1px solid rgba(2, 132, 199, 0.18);
+  background: rgba(2, 132, 199, 0.06);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.lic {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.ltext {
+  font-size: 11.5px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.75);
+  line-height: 1.35;
+}
+
+/* KPIs */
 .kpis {
   margin-top: 8px;
   display: grid;
@@ -839,7 +1041,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 14px;
-  padding: 8px 10px; /* ✅ compact */
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -870,7 +1072,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: rgba(15, 23, 42, 0.55);
 }
 
-/* alerts compact */
+/* alerts */
 .alert {
   margin-top: 8px;
   border-radius: 14px;
@@ -892,7 +1094,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   margin-top: 1px;
 }
 
-/* card compact */
+/* card */
 .card {
   border-radius: 16px;
   border: 1px solid rgba(16, 24, 40, 0.1);
@@ -900,7 +1102,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   overflow: hidden;
 }
 .cardHdr {
-  padding: 8px 10px; /* ✅ compact */
+  padding: 8px 10px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
 }
 .cardTtl {
@@ -919,15 +1121,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 12px;
 }
 
-/* ✅ ULTRA COMPACT GRID (remplit la largeur + réduit le scroll) */
+/* grid */
 .gridDense {
   padding: 10px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 8px;
 }
-
-/* ✅ champ en ligne => densité + moins de hauteur */
 .fieldRow {
   display: grid;
   grid-template-columns: 1fr 170px;
@@ -938,13 +1138,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border: 1px solid rgba(16, 24, 40, 0.08);
   background: rgba(15, 23, 42, 0.012);
 }
-
-/* label compact */
 .fieldRow .label {
   font-size: 11px;
   font-weight: 900;
   color: rgba(15, 23, 42, 0.68);
   line-height: 1.1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lockTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(2, 132, 199, 0.95);
+  background: rgba(2, 132, 199, 0.08);
+  border: 1px solid rgba(2, 132, 199, 0.18);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.lk {
+  width: 14px;
+  height: 14px;
 }
 
 .inCell {
@@ -953,8 +1171,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   justify-content: flex-end;
   gap: 8px;
 }
-
-/* ✅ input fluide (plus de width fixe => pas de gaspillage) */
 .in {
   width: 100%;
   height: 28px;
@@ -971,6 +1187,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
+.in:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(16, 24, 40, 0.1);
+}
 
 .u {
   font-size: 10.5px;
@@ -979,7 +1201,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   white-space: nowrap;
 }
 
-/* ✅ mobile: label au-dessus pour éviter l’écrasement */
 @media (max-width: 520px) {
   .fieldRow {
     grid-template-columns: 1fr;

@@ -437,10 +437,40 @@ export function computeHeaderKpis(
     coutOccasionnelTotal +
     autresCoutsHorsPctTotal;
 
-  // 6) Pompage désactivé
-  const volumePompePct = 0;
-  const volumePompeM3 = 0;
-  const margePompageTotal = 0;
+    function clamp(x: any, min: number, max: number) {
+  const v = n(x);
+  return Math.max(min, Math.min(max, v));
+}
+
+// 6) Pompage (conditionné par transport.includePompage)
+// ✅ Important : si includePompage est absent (ancien data), on l'infère depuis les valeurs
+const t = variant?.transport ?? {};
+
+const rawInclude = (t as any)?.includePompage;
+
+// valeurs (on ne les "zero" jamais ici — juste ignorées si includePompage=false)
+const rawVolumePompePct = n((t as any)?.volumePompePct);
+const rawPrixAchatPompe = n((t as any)?.prixAchatPompe);
+const rawPrixVentePompe = n((t as any)?.prixVentePompe);
+
+// ✅ si flag absent : on active si des valeurs existent (corrige le besoin d'aller "Enregistrer" après refresh)
+const inferredIncludePompage =
+  rawVolumePompePct > 0 || rawPrixAchatPompe > 0 || rawPrixVentePompe > 0;
+
+const includePompage =
+  typeof rawInclude === "boolean" ? rawInclude : inferredIncludePompage;
+
+const volumePompePct = includePompage ? clamp(rawVolumePompePct, 0, 100) : 0;
+const prixAchatPompe = includePompage ? rawPrixAchatPompe : 0;
+const prixVentePompe = includePompage ? rawPrixVentePompe : 0;
+
+const volumePompeM3 = (volumePompePct / 100) * volumeTotalM3;
+
+// Marge totale pompage = (PV - PA) * volume pompé
+const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
+
+
+
 
   // 7) Frais généraux
   const fraisGenerauxTotal = (fraisGenPct / 100) * caTotal;

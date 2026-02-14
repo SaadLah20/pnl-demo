@@ -1,4 +1,7 @@
-<!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET / compact + sticky subheader + toast + modal confirm + generalize + ✅ importer) -->
+<!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET)
+     ✅ Contrat: CAB à charge client => amortMois forcé à 0 (UI + auto-fix backend),
+     ✅ page reste active, seul champ amortissement verrouillé
+-->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -13,6 +16,7 @@ import {
   Squares2X2Icon,
   TruckIcon,
   ArrowDownTrayIcon,
+  LockClosedIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -44,6 +48,18 @@ function n(v: any, digits = 2) {
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
+function norm(s: any): string {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+function isChargeClient(v: any): boolean {
+  if (typeof v === "boolean") return v;
+  const t = norm(v);
+  return !!t && t.includes("client");
+}
 
 /* =========================
    ACTIVE
@@ -59,18 +75,21 @@ const variantLabel = computed(() => {
 });
 
 /**
- * CAB à la charge du client ?
- * (garde le comportement “multi-clés” pour éviter de te bloquer)
+ * ✅ CAB à la charge du client ?
+ * -> aligné avec ton backend: contract.cab (string contenant "client" ou boolean)
  */
 const cabChargeClient = computed<boolean>(() => {
   const c: any = contract.value ?? {};
   const v: any = variant.value ?? {};
 
   const candidates = [
+    c.cab, // ✅ backend
     c.cabChargeClient,
     c.cabAChargeClient,
     c.cabPrisEnChargeParClient,
-    c.cabCharge, // ex: "CLIENT" | "NOUS"
+    c.cabCharge,
+
+    v.cab,
     v.cabChargeClient,
     v.cabAChargeClient,
     v.cabPrisEnChargeParClient,
@@ -78,10 +97,11 @@ const cabChargeClient = computed<boolean>(() => {
   ];
 
   for (const x of candidates) if (typeof x === "boolean") return x;
+  for (const x of candidates) if (isChargeClient(x)) return true;
 
   for (const x of candidates) {
     if (typeof x === "string") {
-      const s = x.toUpperCase();
+      const s = x.trim().toUpperCase();
       if (s === "CLIENT" || s === "CUSTOMER") return true;
       if (s === "NOUS" || s === "OWNER" || s === "MIASMO") return false;
     }
@@ -114,7 +134,10 @@ function resetFromVariant() {
   draft.etat = String(c.etat ?? "NEUVE");
   draft.mode = String(c.mode ?? "ACHAT");
   draft.capaciteM3 = toNum(c.capaciteM3);
-  draft.amortMois = toNum(c.amortMois);
+
+  // ✅ si charge client => draft amort = 0 (UI)
+  draft.amortMois = cabChargeClient.value ? 0 : toNum(c.amortMois);
+
   activeField.value = null;
   dirty.value = false;
 }
@@ -126,12 +149,16 @@ watch(
 );
 
 function startEdit(k: keyof CabDraft) {
+  // ✅ seul amortissement est verrouillé
+  if (k === "amortMois" && cabChargeClient.value) return;
   activeField.value = k;
 }
 function stopEdit() {
   activeField.value = null;
 }
-function markDirty() {
+function markDirty(field?: keyof CabDraft) {
+  // ✅ si contrat charge client => amort verrouillé, pas de dirty sur amort
+  if (field === "amortMois" && cabChargeClient.value) return;
   dirty.value = true;
 }
 
@@ -152,7 +179,7 @@ onBeforeUnmount(() => {
 });
 
 /* =========================
-   TOAST (non bloquant)
+   TOAST
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
@@ -166,7 +193,7 @@ function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
 }
 
 /* =========================
-   MODAL (confirm/info)
+   MODAL confirm/info
 ========================= */
 const modal = reactive({
   open: false,
@@ -197,6 +224,50 @@ function closeModal() {
 }
 
 /* =========================
+   ✅ AUTO-FIX BACKEND (important pour dashboard)
+   Si contrat => charge client, mais DB a encore amortMois != 0,
+   on force updateVariant(... amortMois:0) pour corriger DB + store + dashboard.
+========================= */
+const fixBusy = ref(false);
+const fixErr = ref<string | null>(null);
+
+async function ensureAmortZeroIfChargeClient() {
+  const vId = String(variant.value?.id ?? "").trim();
+  if (!vId) return;
+  if (!cabChargeClient.value) return;
+
+  const current = toNum(cab.value?.amortMois);
+  if (current === 0) return;
+
+  if (fixBusy.value) return;
+
+  fixErr.value = null;
+  fixBusy.value = true;
+  try {
+    // ✅ update minimal: backend forcera à 0 de toute façon
+    await (store as any).updateVariant(vId, { cab: { amortMois: 0 } });
+    // ✅ resync draft
+    draft.amortMois = 0;
+    dirty.value = false;
+    showToast("Amortissement forcé à 0 (contrat: charge client).", "info");
+  } catch (e: any) {
+    fixErr.value = e?.message ?? String(e);
+    showToast("Impossible de forcer l'amortissement à 0: " + String(fixErr.value), "err");
+  } finally {
+    fixBusy.value = false;
+  }
+}
+
+// déclenche sur (variant, contrat, cab)
+watch(
+  () => [variant.value?.id, cabChargeClient.value, cab.value?.amortMois],
+  () => {
+    ensureAmortZeroIfChargeClient();
+  },
+  { immediate: true }
+);
+
+/* =========================
    SAVE CAB
 ========================= */
 const saving = ref(false);
@@ -205,11 +276,12 @@ const err = ref<string | null>(null);
 function buildCabPayload() {
   const existing: any = cab.value ?? {};
   return {
-    category: existing?.category ?? "COUTS_CHARGES",
+    category: existing?.category ?? "LOGISTIQUE_APPRO",
     etat: String(draft.etat ?? "NEUVE"),
     mode: String(draft.mode ?? "ACHAT"),
     capaciteM3: toNum(draft.capaciteM3),
-    amortMois: toNum(draft.amortMois),
+    // ✅ si charge client => 0
+    amortMois: cabChargeClient.value ? 0 : toNum(draft.amortMois),
   };
 }
 
@@ -247,7 +319,7 @@ function askReset() {
 }
 
 /* =========================
-   ✅ IMPORTER (depuis autre variante)
+   IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -270,15 +342,14 @@ function findVariantById(variantId: string): any | null {
 function applyCabFromVariant(srcVariant: any) {
   const c = srcVariant?.cab ?? {};
 
-  // ✅ Copy section only
   draft.etat = String(c?.etat ?? "NEUVE");
   draft.mode = String(c?.mode ?? "ACHAT");
   draft.capaciteM3 = toNum(c?.capaciteM3);
-  draft.amortMois = toNum(c?.amortMois);
+
+  // ✅ contrat actif de la variante cible: si charge client => 0
+  draft.amortMois = cabChargeClient.value ? 0 : toNum(c?.amortMois);
 
   activeField.value = null;
-
-  // ✅ import => local change, needs save
   dirty.value = true;
 }
 
@@ -294,7 +365,6 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
     return;
   }
 
-  // NOTE: CAB n’utilise pas les presets -> on ignore payload.copy (toujours FULL par UI)
   impErr.value = null;
   impBusy.value = true;
   try {
@@ -309,6 +379,12 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
     }
 
     applyCabFromVariant(src);
+
+    // ✅ si charge client => on force déjà l’amort à 0 et on sync backend pour KPI
+    if (cabChargeClient.value) {
+      await ensureAmortZeroIfChargeClient();
+    }
+
     showToast("CAB importée dans la variante active. Pense à enregistrer.", "ok");
     impOpen.value = false;
   } catch (e: any) {
@@ -318,7 +394,6 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
     impBusy.value = false;
   }
 }
-
 
 /* =========================
    GENERALISER (CAB)
@@ -370,7 +445,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
    INDICATEURS (side card)
 ========================= */
 const dureeMois = computed<number>(() => Math.max(1, toNum(contract.value?.dureeMois) || 1));
-const amortTotal = computed<number>(() => toNum(draft.amortMois) * dureeMois.value);
+
+// ✅ amortissement EFFECTIF (ce qui doit être pris en compte)
+const amortMoisEff = computed<number>(() => (cabChargeClient.value ? 0 : toNum(draft.amortMois)));
+const amortTotal = computed<number>(() => amortMoisEff.value * dureeMois.value);
 
 /* % du CA (si dispo via formules/transport/mp synchronisés) */
 const formules = computed<any[]>(() => (variant.value?.formules?.items ?? []) as any[]);
@@ -420,6 +498,10 @@ const amortPctCa = computed<number>(() => {
           <div class="ttlRow">
             <div class="ttl">CAB</div>
             <span v-if="variant" class="badge">Variante active</span>
+            <span v-if="variant && cabChargeClient" class="badge lock">
+              <LockClosedIcon class="bic" />
+              Amortissement verrouillé (contrat)
+            </span>
           </div>
 
           <div class="meta" v-if="variant">
@@ -430,24 +512,24 @@ const amortPctCa = computed<number>(() => {
           <div class="meta" v-else>Aucune variante active.</div>
         </div>
 
-        <div class="actions" v-if="variant && !cabChargeClient">
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="askReset()">
+        <!-- ✅ actions restent actives -->
+        <div class="actions" v-if="variant">
+          <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <!-- ✅ NEW: Importer -->
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
+          <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="genOpen = true">
+          <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="saving || !dirty || impBusy" @click="askSave()">
+          <button class="btn pri" :disabled="saving || !dirty || impBusy || fixBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
@@ -457,6 +539,11 @@ const amortPctCa = computed<number>(() => {
       <div v-if="err" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ err }}</div>
+      </div>
+
+      <div v-if="fixErr" class="alert err">
+        <ExclamationTriangleIcon class="aic" />
+        <div><b>Contrat → Fix amortissement :</b> {{ fixErr }}</div>
       </div>
 
       <div v-if="genErr" class="alert err">
@@ -484,91 +571,100 @@ const amortPctCa = computed<number>(() => {
     </div>
 
     <template v-else>
-      <!-- ✅ CAB à la charge du client => message -->
-      <div v-if="cabChargeClient" class="card clientOnly">
-        <div class="bigMsg">✅ Dans ce contrat, la CAB est à la charge du client.</div>
-        <div class="subMsg">Aucune saisie n’est nécessaire sur cette section.</div>
-      </div>
-
-      <!-- ✅ UI CAB -->
-      <template v-else>
-        <div class="grid">
-          <div class="card">
-            <div class="cardHdr">
-              <div class="cardTtl">
-                <TruckIcon class="ic3" />
-                <div>
-                  <div class="h">Données CAB</div>
-                  <div class="p">Clique sur une valeur pour modifier. Clique ailleurs pour quitter le champ.</div>
+      <div class="grid">
+        <div class="card">
+          <div class="cardHdr">
+            <div class="cardTtl">
+              <TruckIcon class="ic3" />
+              <div>
+                <div class="h">Données CAB</div>
+                <div class="p">
+                  Clique sur une valeur pour modifier. <span class="muted">Amortissement est verrouillé si charge client.</span>
                 </div>
               </div>
             </div>
+          </div>
 
-            <div class="rows">
-              <!-- Etat -->
-              <div class="rrow">
-                <div class="lab">État</div>
-                <div class="val">
-                  <template v-if="activeField === 'etat'">
-                    <select class="inSel" v-model="draft.etat" @change="markDirty()" data-editor="1">
-                      <option value="NEUVE">NEUVE</option>
-                      <option value="OCCASION">OCCASION</option>
-                    </select>
-                  </template>
-                  <template v-else>
-                    <span class="click" @click="startEdit('etat')">{{ draft.etat }}</span>
-                  </template>
-                </div>
+          <div class="rows">
+            <!-- Etat -->
+            <div class="rrow">
+              <div class="lab">État</div>
+              <div class="val">
+                <template v-if="activeField === 'etat'">
+                  <select class="inSel" v-model="draft.etat" @change="markDirty('etat')" data-editor="1">
+                    <option value="NEUVE">NEUVE</option>
+                    <option value="OCCASION">OCCASION</option>
+                  </select>
+                </template>
+                <template v-else>
+                  <span class="click" @click="startEdit('etat')">{{ draft.etat }}</span>
+                </template>
+              </div>
+            </div>
+
+            <!-- Mode -->
+            <div class="rrow">
+              <div class="lab">Mode</div>
+              <div class="val">
+                <template v-if="activeField === 'mode'">
+                  <select class="inSel" v-model="draft.mode" @change="markDirty('mode')" data-editor="1">
+                    <option value="ACHAT">ACHAT</option>
+                    <option value="LOCATION">LOCATION</option>
+                    <option value="LEASING">LEASING</option>
+                  </select>
+                </template>
+                <template v-else>
+                  <span class="click" @click="startEdit('mode')">{{ draft.mode }}</span>
+                </template>
+              </div>
+            </div>
+
+            <!-- Capacite -->
+            <div class="rrow">
+              <div class="lab">Capacité (m³)</div>
+              <div class="val">
+                <template v-if="activeField === 'capaciteM3'">
+                  <input
+                    class="inNum mono"
+                    type="number"
+                    step="0.1"
+                    v-model.number="draft.capaciteM3"
+                    @input="markDirty('capaciteM3')"
+                    data-editor="1"
+                  />
+                </template>
+                <template v-else>
+                  <span class="click mono" @click="startEdit('capaciteM3')">{{ n(draft.capaciteM3, 1) }}</span>
+                </template>
+              </div>
+            </div>
+
+            <!-- Amort -->
+            <div class="rrow">
+              <div class="lab">
+                Amortissement / mois
+                <span v-if="cabChargeClient" class="lockHint">
+                  <LockClosedIcon class="lic" />
+                  Contrat
+                </span>
               </div>
 
-              <!-- Mode -->
-              <div class="rrow">
-                <div class="lab">Mode</div>
-                <div class="val">
-                  <template v-if="activeField === 'mode'">
-                    <select class="inSel" v-model="draft.mode" @change="markDirty()" data-editor="1">
-                      <option value="ACHAT">ACHAT</option>
-                      <option value="LOCATION">LOCATION</option>
-                      <option value="LEASING">LEASING</option>
-                    </select>
-                  </template>
-                  <template v-else>
-                    <span class="click" @click="startEdit('mode')">{{ draft.mode }}</span>
-                  </template>
-                </div>
-              </div>
+              <div class="val">
+                <!-- ✅ si charge client => champ désactivé, valeur 0 -->
+                <template v-if="cabChargeClient">
+                  <span class="click mono lockedVal" title="Verrouillé par contrat">
+                    <b>{{ money(0, 2) }}</b>
+                  </span>
+                </template>
 
-              <!-- Capacite -->
-              <div class="rrow">
-                <div class="lab">Capacité (m³)</div>
-                <div class="val">
-                  <template v-if="activeField === 'capaciteM3'">
-                    <input
-                      class="inNum mono"
-                      type="number"
-                      step="0.1"
-                      v-model.number="draft.capaciteM3"
-                      @input="markDirty()"
-                      data-editor="1"
-                    />
-                  </template>
-                  <template v-else>
-                    <span class="click mono" @click="startEdit('capaciteM3')">{{ n(draft.capaciteM3, 1) }}</span>
-                  </template>
-                </div>
-              </div>
-
-              <!-- Amort -->
-              <div class="rrow">
-                <div class="lab">Amortissement / mois</div>
-                <div class="val">
+                <template v-else>
                   <template v-if="activeField === 'amortMois'">
                     <input
                       class="inNum mono"
                       type="number"
                       step="0.01"
                       v-model.number="draft.amortMois"
-                      @input="markDirty()"
+                      @input="markDirty('amortMois')"
                       data-editor="1"
                     />
                   </template>
@@ -577,38 +673,38 @@ const amortPctCa = computed<number>(() => {
                       <b>{{ money(draft.amortMois, 2) }}</b>
                     </span>
                   </template>
-                </div>
+                </template>
               </div>
             </div>
-
-            <div class="note">
-              Amortissement total = amort./mois × durée. % = part du CA si la section Formules est renseignée.
-            </div>
           </div>
 
-          <!-- side card compact (info) -->
-          <div class="card side">
-            <div class="sideTtl">Repères</div>
-            <div class="sideLine">
-              <span class="k">Durée</span>
-              <span class="v mono">{{ n(dureeMois, 0) }} mois</span>
-            </div>
-            <div class="sideLine">
-              <span class="k">Amort./mois</span>
-              <span class="v mono">{{ money(draft.amortMois, 2) }}</span>
-            </div>
-            <div class="sideLine">
-              <span class="k">Total</span>
-              <span class="v mono">{{ money(amortTotal, 2) }}</span>
-            </div>
-            <div class="sideLine">
-              <span class="k">% CA</span>
-              <span class="v mono">{{ n(amortPctCa, 2) }}%</span>
-            </div>
-            <div class="sideHint muted">Si le CA = 0 (formules non saisies), le % reste à 0.</div>
+          <div class="note">
+            Amortissement total = amort./mois × durée. <b v-if="cabChargeClient">Contrat charge client ⇒ amortissement = 0.</b>
           </div>
         </div>
-      </template>
+
+        <!-- side card -->
+        <div class="card side">
+          <div class="sideTtl">Repères</div>
+          <div class="sideLine">
+            <span class="k">Durée</span>
+            <span class="v mono">{{ n(dureeMois, 0) }} mois</span>
+          </div>
+          <div class="sideLine">
+            <span class="k">Amort./mois</span>
+            <span class="v mono">{{ money(amortMoisEff, 2) }}</span>
+          </div>
+          <div class="sideLine">
+            <span class="k">Total</span>
+            <span class="v mono">{{ money(amortTotal, 2) }}</span>
+          </div>
+          <div class="sideLine">
+            <span class="k">% CA</span>
+            <span class="v mono">{{ n(amortPctCa, 2) }}%</span>
+          </div>
+          <div class="sideHint muted">Si le CA = 0 (formules non saisies), le % reste à 0.</div>
+        </div>
+      </div>
     </template>
 
     <!-- ✅ MODAL IMPORT -->
@@ -723,6 +819,18 @@ const amortPctCa = computed<number>(() => {
   border: 1px solid #a7f3d0;
   padding: 2px 8px;
   border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.badge.lock {
+  color: #7c2d12;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.bic {
+  width: 14px;
+  height: 14px;
 }
 
 .meta {
@@ -882,7 +990,27 @@ const amortPctCa = computed<number>(() => {
   font-size: 11px;
   font-weight: 900;
   color: rgba(15, 23, 42, 0.65);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
+.lockHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 950;
+  color: #7c2d12;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.lic {
+  width: 12px;
+  height: 12px;
+}
+
 .val {
   min-height: 34px;
   display: flex;
@@ -898,6 +1026,10 @@ const amortPctCa = computed<number>(() => {
 .click:hover {
   background: rgba(2, 132, 199, 0.06);
   border-color: rgba(2, 132, 199, 0.18);
+}
+.lockedVal {
+  cursor: not-allowed;
+  opacity: 0.95;
 }
 
 .inSel,
@@ -965,25 +1097,7 @@ const amortPctCa = computed<number>(() => {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* client message */
-.clientOnly {
-  padding: 18px;
-  text-align: center;
-  background: rgba(2, 132, 199, 0.04);
-}
-.bigMsg {
-  font-size: 16px;
-  font-weight: 950;
-  color: #0f172a;
-}
-.subMsg {
-  margin-top: 6px;
-  font-size: 12px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.6);
-}
-
-/* ✅ modal (AU-DESSUS + sous header) */
+/* modal */
 .ovl {
   position: fixed;
   inset: 0;
@@ -1054,7 +1168,7 @@ const amortPctCa = computed<number>(() => {
   border-color: rgba(2, 132, 199, 0.28);
 }
 
-/* ✅ toast (AU-DESSUS) */
+/* toast */
 .toast {
   position: fixed;
   right: 12px;
@@ -1083,8 +1197,15 @@ const amortPctCa = computed<number>(() => {
   color: rgba(15, 23, 42, 0.85);
 }
 
-/* ✅ Safe: si SectionImportModal/GeneralizeModal utilisent une overlay interne */
+/* safe overlays from child modals */
 :deep(.modalOverlay) {
-  z-index: 99999 !important;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100000 !important;
+}
+:deep(.modalDialog),
+:deep(.modalCard),
+:deep(.modalPanel) {
+  z-index: 100001 !important;
 }
 </style>

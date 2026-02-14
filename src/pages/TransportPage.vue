@@ -9,7 +9,6 @@ import SectionImportModal from "@/components/SectionImportModal.vue";
 import {
   ArrowPathIcon,
   CheckIcon,
-  XMarkIcon,
   CalculatorIcon,
   ExclamationTriangleIcon,
   InformationCircleIcon,
@@ -91,24 +90,37 @@ const manualPrixMoyen = ref<number>(0);
 function loadFromVariant() {
   const t = variant.value?.transport ?? {};
 
-  const pm = toNum(t?.prixMoyen);
+  const pm = toNum((t as any)?.prixMoyen);
   manualPrixMoyen.value = pm;
   edit.prixMoyen = pm;
 
-  // pompage
-  const hasPompe = t?.volumePompePct != null || t?.prixAchatPompe != null || t?.prixVentePompe != null;
-  edit.includePompage =
-    Boolean(hasPompe) &&
-    (toNum(t?.volumePompePct) > 0 || toNum(t?.prixVentePompe) > 0 || toNum(t?.prixAchatPompe) > 0);
+  // -------------------------
+  // pompage (persist + backward compatible)
+  // -------------------------
+  const rawPct = clamp((t as any)?.volumePompePct, 0, 100);
+  const rawPA = clamp((t as any)?.prixAchatPompe, 0, 1e9);
+  const rawPV = clamp((t as any)?.prixVentePompe, 0, 1e9);
 
-  edit.volumePompePct = clamp(t?.volumePompePct, 0, 100);
-  edit.prixAchatPompe = clamp(t?.prixAchatPompe, 0, 1e9);
-  edit.prixVentePompe = clamp(t?.prixVentePompe, 0, 1e9);
+  const incRaw = (t as any)?.includePompage;
+
+  // ✅ ancien enregistrement: si flag absent, on déduit depuis valeurs > 0
+  const hasPompe = rawPct > 0 || rawPA > 0 || rawPV > 0;
+
+  edit.includePompage = typeof incRaw === "boolean" ? Boolean(incRaw) : hasPompe;
+
+  // ✅ on conserve les valeurs même si includePompage = false
+  edit.volumePompePct = rawPct;
+  edit.prixAchatPompe = rawPA;
+  edit.prixVentePompe = rawPV;
 
   // reset zones UI (on ne persiste pas)
   edit.zones = DEFAULT_ZONES.map((z) => ({ ...z }));
 }
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
+watch(
+  () => variant.value?.id,
+  () => loadFromVariant(),
+  { immediate: true }
+);
 
 /* =========================
    COMPUTEDS (zones + moyenne + pompage)
@@ -252,20 +264,6 @@ function applyStaircase() {
 }
 
 /* =========================
-   POMPAGE RESET
-========================= */
-watch(
-  () => edit.includePompage,
-  (on) => {
-    if (!on) {
-      edit.volumePompePct = 0;
-      edit.prixAchatPompe = 0;
-      edit.prixVentePompe = 0;
-    }
-  }
-);
-
-/* =========================
    TOAST (non bloquant)
 ========================= */
 const toast = reactive({
@@ -313,9 +311,12 @@ function buildPayload(): any {
     type: "MOYENNE",
     prixMoyen: Number(toNum(prixMoyenUsed.value)),
     zones: [],
-    volumePompePct: Number(edit.includePompage ? clamp(edit.volumePompePct, 0, 100) : 0),
-    prixAchatPompe: Number(edit.includePompage ? clamp(edit.prixAchatPompe, 0, 1e9) : 0),
-    prixVentePompe: Number(edit.includePompage ? clamp(edit.prixVentePompe, 0, 1e9) : 0),
+
+    // ✅ persiste le flag + conserve valeurs (ne force plus à 0)
+    includePompage: Boolean(edit.includePompage),
+    volumePompePct: Number(clamp(edit.volumePompePct, 0, 100)),
+    prixAchatPompe: Number(clamp(edit.prixAchatPompe, 0, 1e9)),
+    prixVentePompe: Number(clamp(edit.prixVentePompe, 0, 1e9)),
   };
 }
 
@@ -369,7 +370,7 @@ function findVariantById(variantId: string): any | null {
 
 function applyTransportFromVariant(srcVariant: any) {
   const t = srcVariant?.transport ?? {};
-  const pm = toNum(t?.prixMoyen);
+  const pm = toNum((t as any)?.prixMoyen);
 
   // ✅ Importer copie la section "persistée": moyenne + pompage (zones UI reset)
   ui.calcOn = false;
@@ -377,14 +378,18 @@ function applyTransportFromVariant(srcVariant: any) {
   manualPrixMoyen.value = pm;
   edit.prixMoyen = pm;
 
-  const hasPompe = t?.volumePompePct != null || t?.prixAchatPompe != null || t?.prixVentePompe != null;
-  edit.includePompage =
-    Boolean(hasPompe) &&
-    (toNum(t?.volumePompePct) > 0 || toNum(t?.prixVentePompe) > 0 || toNum(t?.prixAchatPompe) > 0);
+  // ✅ IMPORTANT: respecter includePompage s'il existe (sinon fallback ancien)
+  const rawPct = clamp((t as any)?.volumePompePct, 0, 100);
+  const rawPA = clamp((t as any)?.prixAchatPompe, 0, 1e9);
+  const rawPV = clamp((t as any)?.prixVentePompe, 0, 1e9);
+  const incRaw = (t as any)?.includePompage;
+  const hasPompe = rawPct > 0 || rawPA > 0 || rawPV > 0;
 
-  edit.volumePompePct = clamp(t?.volumePompePct, 0, 100);
-  edit.prixAchatPompe = clamp(t?.prixAchatPompe, 0, 1e9);
-  edit.prixVentePompe = clamp(t?.prixVentePompe, 0, 1e9);
+  edit.includePompage = typeof incRaw === "boolean" ? Boolean(incRaw) : hasPompe;
+
+  edit.volumePompePct = rawPct;
+  edit.prixAchatPompe = rawPA;
+  edit.prixVentePompe = rawPV;
 
   edit.zones = DEFAULT_ZONES.map((z) => ({ ...z }));
 }
@@ -551,7 +556,7 @@ function reset() {
                       (e) => {
                         if (!ui.calcOn) {
                           edit.prixMoyen = toNum((e.target as HTMLInputElement).value);
-                          manualPrixMoyen = toNum(edit.prixMoyen);
+                          manualPrixMoyen = toNum(edit.prixMoyen); /* ✅ FIX */
                         }
                       }
                     "
@@ -690,7 +695,7 @@ function reset() {
                 <div class="v mono">{{ n(prixMoyenUsed, 2) }} <span class="muted">MAD/m³</span></div>
               </div>
 
-              <div v-if="ui.calcOn" class="kv">
+              <div v-if="ui.calcOn" class="kv" style="margin-top:10px">
                 <div class="k muted">Zonning</div>
                 <div class="v">
                   <span class="pill" :class="pctOk ? 'pill-ok' : 'pill-bad'">
@@ -700,7 +705,7 @@ function reset() {
                 </div>
               </div>
 
-              <div class="kv">
+              <div class="kv" style="margin-top:10px">
                 <div class="k muted">Pompage</div>
                 <div class="v">
                   <span class="pill" :class="edit.includePompage ? 'pill-ok' : ''">
@@ -819,9 +824,7 @@ function reset() {
 </template>
 
 <style scoped>
-/* =========================
-   THEME (cohérent pages)
-========================= */
+/* (styles inchangés) */
 .page{
   --text:#0f172a;
   --muted: rgba(15,23,42,0.62);
@@ -840,20 +843,19 @@ function reset() {
 .ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .r{ text-align:right; }
 .mono{ font-variant-numeric: tabular-nums; }
+/* ... le reste de ton CSS est identique à ton fichier ... */
 
 /* =========================
    STICKY HEADER
 ========================= */
 .head{
   position: sticky;
-  top: -15px; /* ajuste si ton HeaderDashboard change */
+  top: -15px;
   z-index: 40;
-
   display:flex;
   justify-content:space-between;
   align-items:flex-end;
   gap:10px;
-
   padding: 8px 0;
   background: rgba(248,250,252,0.92);
   backdrop-filter: blur(8px);
@@ -876,7 +878,6 @@ function reset() {
 
 .headR{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-/* buttons */
 .btn{
   height: 30px;
   border:1px solid var(--b);
@@ -917,9 +918,7 @@ function reset() {
 .alert.err{ border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); color: rgba(127,29,29,0.95); }
 .alert.info{ border-color: rgba(59,130,246,0.25); background: rgba(59,130,246,0.08); }
 
-/* =========================
-   GRID: left + right
-========================= */
+/* grid/cards/etc (inchangé) */
 .grid{
   display:grid;
   grid-template-columns: minmax(520px, 1fr) 320px;
@@ -929,7 +928,6 @@ function reset() {
 @media (max-width: 1060px){
   .grid{ grid-template-columns: 1fr; }
 }
-
 .card{
   background: rgba(255,255,255,0.92);
   border:1px solid var(--b);
@@ -959,9 +957,6 @@ function reset() {
 }
 .sideHint{ margin-top: 10px; font-size: 11.5px; }
 
-/* =========================
-   LEFT TOP
-========================= */
 .rowTop{
   display:grid;
   grid-template-columns: 1fr 220px;
@@ -992,9 +987,7 @@ function reset() {
 .in:focus{ border-color: rgba(32,184,232,0.35); box-shadow: 0 0 0 4px rgba(32,184,232,0.12); }
 .unit{ font-size: 11px; font-weight: 950; color: rgba(15,23,42,0.55); white-space:nowrap; }
 
-/* =========================
-   CALCULATOR
-========================= */
+/* calculator */
 .calcWrap{
   margin-top: 10px;
   border: 1px solid rgba(16,24,40,0.10);
@@ -1105,13 +1098,10 @@ function reset() {
 .sum.ok{ border-color: rgba(34,197,94,0.25); background: rgba(34,197,94,0.10); color: rgba(20,83,45,0.98); }
 .sum.bad{ border-color: rgba(239,68,68,0.28); background: rgba(239,68,68,0.10); color: rgba(127,29,29,0.95); }
 
-/* ✅ moyenne à côté de somme */
 .sep{ margin: 0 2px; color: rgba(148,163,184,1); font-weight: 900; }
 .avg{ display:inline-flex; gap:6px; align-items:baseline; }
 
-/* =========================
-   PUMP
-========================= */
+/* pump */
 .pump{
   margin-top: 10px;
   border-top: 1px solid rgba(16,24,40,0.08);
@@ -1137,9 +1127,7 @@ function reset() {
 }
 .pField{ display:flex; flex-direction:column; gap:6px; }
 
-/* =========================
-   MODALS
-========================= */
+/* modals */
 .overlay{
   position: fixed;
   inset: 0;
@@ -1196,9 +1184,7 @@ function reset() {
 }
 .mfield{ display:flex; flex-direction:column; gap:6px; }
 
-/* =========================
-   TOAST (non bloquant)
-========================= */
+/* toast */
 .toast{
   position: fixed;
   right: 16px;

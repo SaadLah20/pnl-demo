@@ -6,7 +6,6 @@ import { getPnls } from "./pnl.repo";
 import { Prisma } from "@prisma/client";
 import { registerDevisRoutes } from "./devis.routes";
 
-
 const app = express();
 
 app.use(cors());
@@ -33,7 +32,6 @@ app.get("/pnls", async (_req: Request, res: Response) => {
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 
 // ✅ include exact selon ton schema.prisma
 const variantInclude = Prisma.validator<Prisma.VariantInclude>()({
@@ -64,8 +62,6 @@ app.get("/variants/:id", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
-
 
 /* =========================================================
    HELPERS
@@ -129,12 +125,11 @@ async function getFullVariant(variantId: string) {
           },
         },
       },
-            variantFormules: {
+      variantFormules: {
         include: {
           formule: { include: { items: { include: { mp: true } } } },
         },
       },
-
     },
   });
 }
@@ -413,15 +408,79 @@ async function ensureVariantSkeleton(tx: Prisma.TransactionClient, variantId: st
   });
 }
 
+function norm(s: any): string {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isChargeClient(v: any): boolean {
+  const t = norm(v);
+  // tolérant aux libellés: "client", "a la charge du client", "charge client", etc.
+  return t.includes("client");
+}
+
+/**
+ * ✅ SANITIZE: force à 0 les champs interdits par contrat (sécurité DB).
+ * (Le verrouillage UI sera fait plus tard côté front.)
+ */
+async function sanitizeVariantByContract(
+  tx: Prisma.TransactionClient,
+  variantId: string,
+  contract: any | null
+) {
+  if (!contract) return;
+
+  // CAB
+  if (isChargeClient(contract.cab)) {
+    await tx.sectionCab.updateMany({
+      where: { variantId },
+      data: { amortMois: 0 },
+    });
+  }
+
+  // Cout mensuel (⚠️ consoElec = consommation)
+  if (isChargeClient(contract.consoElec)) {
+    await tx.sectionCoutMensuel.updateMany({
+      where: { variantId },
+      data: { electricite: 0, location: 0 },
+    });
+  }
+
+  if (isChargeClient(contract.terrain)) {
+    await tx.sectionCoutMensuel.updateMany({
+      where: { variantId },
+      data: { locationTerrain: 0 },
+    });
+  }
+
+  // Cout occasionnel
+  if (isChargeClient(contract.installation)) {
+    await tx.sectionCoutOccasionnel.updateMany({
+      where: { variantId },
+      data: { installation: 0 },
+    });
+  }
+
+  if (isChargeClient(contract.genieCivil)) {
+    await tx.sectionCoutOccasionnel.updateMany({
+      where: { variantId },
+      data: { genieCivil: 0 },
+    });
+  }
+
+  if (isChargeClient(contract.transport)) {
+    await tx.sectionCoutOccasionnel.updateMany({
+      where: { variantId },
+      data: { transport: 0 },
+    });
+  }
+}
+
 /* =========================================================
    INITIÉE → Calcul MOMD pour atteindre un EBIT cible (%)
-   Hypothèse modèle:
-   - CA = (CMP + Transport + MOMD) * Volume
-   - Coûts = (CMP + Transport + CoutM3) * Volume
-            + (Mensuel + Employés + Maintenance) * Durée
-            + CoutOccasionnel
-            + Frais généraux (% CA)
-   - EBIT% cible = EBIT / CA
 ========================================================= */
 
 function sumNums(obj: any, keys: string[]): number {
@@ -478,7 +537,6 @@ async function computeInitieeMomdPerM3(
   }
 
   // CMP moyen pondéré (MAD/m3)
-  // Hypothèse: formuleCatalogueItem.qty en kg/m3, mp.prix en MAD/tonne
   const cmpTotal = links.reduce((sum, l) => {
     const vol = numOr0(l.volumeM3);
     const cmpM3 = (l.formule?.items ?? []).reduce((s2, it: any) => {
@@ -493,15 +551,11 @@ async function computeInitieeMomdPerM3(
   // Transport (MAD/m3)
   const transportM3 = numOr0(transport?.prixMoyen);
 
-  // Surcharge devis (pour INITIEE, souvent 0 car surcharges = {} au skeleton)
-  // On laisse volontairement à 0 ici (comme ton usage actuel).
+  // Surcharge devis (pour INITIEE, souvent 0)
   const surchargeM3 = 0;
 
-  // 1) MOMD est notre variable "m" (MAD/m3)
-  // 2) CA = (CMP + Transport + Surcharge + MOMD) * V
   const B = cmpAvg + transportM3 + surchargeM3; // base ASP sans MOMD
 
-  // Coûts "productionTotal" (comme headerkpis.ts)
   const coutM3M3 = sumNums(coutM3, ["eau", "qualite", "dechets"]);
   const coutM3Total = coutM3M3 * V;
 
@@ -525,27 +579,22 @@ async function computeInitieeMomdPerM3(
   const maintenanceMois = sumNums(maintenance, ["cab", "elec", "chargeur", "generale", "bassins", "preventive"]);
   const maintenanceTotal = maintenanceMois * duree;
 
-function employesMensuelFromSection(employes: any): number {
-  if (!employes) return 0;
-
-  // On prend chaque paire xxxNb / xxxCout => Nb * Cout
-  let total = 0;
-  for (const [k, v] of Object.entries(employes)) {
-    const key = String(k);
-    if (!key.endsWith("Nb")) continue;
-
-    const base = key.slice(0, -2); // ex: "responsable"
-    const nb = numOr0(v);
-    const cout = numOr0((employes as any)[`${base}Cout`]);
-
-    total += nb * cout;
+  function employesMensuelFromSection(employes: any): number {
+    if (!employes) return 0;
+    let total = 0;
+    for (const [k, v] of Object.entries(employes)) {
+      const key = String(k);
+      if (!key.endsWith("Nb")) continue;
+      const base = key.slice(0, -2);
+      const nb = numOr0(v);
+      const cout = numOr0((employes as any)[`${base}Cout`]);
+      total += nb * cout;
+    }
+    return total;
   }
-  return total;
-}
 
-const employesMois = employesMensuelFromSection(employes);
-const employesTotal = employesMois * duree;
-
+  const employesMois = employesMensuelFromSection(employes);
+  const employesTotal = employesMois * duree;
 
   const coutOccasionnelTotal = sumNums(coutOcc, [
     "genieCivil",
@@ -558,7 +607,6 @@ const employesTotal = employesMois * duree;
     "bungalows",
   ]);
 
-  // Autres coûts (hors POURCENT_CA) comme headerkpis.ts
   const autresItems = await tx.autreCoutItem.findMany({ where: { variantId } });
 
   const fraisGenPct = autresItems
@@ -570,11 +618,9 @@ const employesTotal = employesMois * duree;
     .reduce((s, it: any) => {
       const unite = String(it.unite ?? "").toUpperCase();
       const val = numOr0(it.valeur);
-
-      // même logique que headerkpis.ts (approx)
       if (unite === "MOIS") return s + val * duree;
       if (unite === "M3") return s + val * V;
-      return s + val; // FORFAIT ou autres
+      return s + val;
     }, 0);
 
   const productionTotal =
@@ -585,30 +631,19 @@ const employesTotal = employesMois * duree;
     coutOccasionnelTotal +
     autresCoutsHorsPctTotal;
 
-  // Amortissement (comme headerkpis.ts)
   const amortissementMensuel = numOr0(cab?.amortMois);
   const amortissementTotal = amortissementMensuel * duree;
 
-  // Frais généraux = (fraisGenPct/100) * CA
   const fg = numOr0(fraisGenPct) / 100;
 
-  // Résolution fermée (alignée avec le modèle headerkpis.ts)
-  // EBIT = momdTotal - productionTotal - fraisGenerauxTotal - amortissementTotal
-  // momdTotal = m * V
-  // CA = (B + m) * V
-  //
-  // => m = ( B*(t + fg) + (productionTotal + amortissementTotal)/V ) / (1 - fg - t)
   const denom = 1 - fg - t;
   if (denom <= 0) return 0;
 
   const C = (productionTotal + amortissementTotal) / V;
   const m = (B * (t + fg) + C) / denom;
 
-  // sécurité: pas de momd négative
   return Number.isFinite(m) && m > 0 ? m : 0;
 }
-
-
 
 async function applyInitiee(
   tx: Prisma.TransactionClient,
@@ -627,7 +662,7 @@ async function applyInitiee(
 
   await ensureVariantSkeleton(tx, variantId);
 
-  // Baseline non-zéro (tu pourras raffiner après)
+  // Baseline non-zéro
   await tx.sectionTransport.update({
     where: { variantId },
     data: {
@@ -707,7 +742,6 @@ async function applyInitiee(
       : await tx.formuleCatalogue.findMany({ orderBy: { label: "asc" } });
 
   if (basePool.length === 0) {
-    // pas de catalogue => rien à lier
     return;
   }
 
@@ -758,21 +792,19 @@ async function applyInitiee(
     });
   }
 
-await syncVariantMpsFromFormules(tx, variantId);
+  await syncVariantMpsFromFormules(tx, variantId);
 
-// ✅ Calcul MOMD pour atteindre EBIT cible (%)
-const momdTarget = await computeInitieeMomdPerM3(tx, {
-  variantId,
-  contractId,
-  ebitCiblePct: initiee.ebitCiblePct,
-});
+  // ✅ Calcul MOMD
+  const momdTarget = await computeInitieeMomdPerM3(tx, {
+    variantId,
+    contractId,
+    ebitCiblePct: initiee.ebitCiblePct,
+  });
 
-// ✅ Appliquer la MOMD sur toutes les formules de la variante
-await tx.variantFormule.updateMany({
-  where: { variantId },
-  data: { momd: momdTarget },
-});
-
+  await tx.variantFormule.updateMany({
+    where: { variantId },
+    data: { momd: momdTarget },
+  });
 }
 
 type ComposeSectionKey =
@@ -798,7 +830,6 @@ type ComposeSectionKey =
 function pickComposeSourceStrict(bySection: any, key: ComposeSectionKey): string | null {
   const raw = bySection?.[key];
 
-  // si tu veux ZERO => il faut que le front envoie null ou "ZERO"
   if (raw === null) return null;
   if (raw === undefined) return null;
 
@@ -818,7 +849,6 @@ function pickComposeSourceStrict(bySection: any, key: ComposeSectionKey): string
 
   return null;
 }
-
 
 async function applyComposee(
   tx: Prisma.TransactionClient,
@@ -941,7 +971,6 @@ async function applyComposee(
     const src = await tx.sectionEmployes.findUnique({ where: { variantId: fromId } });
     if (!src) return;
 
-    // on copie tout sauf id/variantId
     const data: any = { ...src };
     delete data.id;
     delete data.variantId;
@@ -1026,7 +1055,6 @@ async function applyComposee(
   };
 
   const copyMajorations = async (_fromId: string) => {
-    // no-op (majorations déjà via sectionAutresCouts.majorations)
     return;
   };
 
@@ -1045,8 +1073,8 @@ async function applyComposee(
   ];
 
   for (const [k, fn] of steps) {
-const srcId = pickComposeSourceStrict(composee.bySection, k);
-    if (!srcId) continue; // ZERO -> garder squelette
+    const srcId = pickComposeSourceStrict(composee.bySection, k);
+    if (!srcId) continue;
     await fn(srcId);
   }
 }
@@ -1289,12 +1317,11 @@ app.post("/pnls", async (req: Request, res: Response) => {
         status: String(body.status ?? "ENCOURS"),
         model: String(body.model ?? "MODEL"),
         startDate:
-  body.startDate === undefined
-    ? undefined
-    : body.startDate
-    ? new Date(String(body.startDate))
-    : null,
-
+          body.startDate === undefined
+            ? undefined
+            : body.startDate
+            ? new Date(String(body.startDate))
+            : null,
       } as any,
     });
 
@@ -1319,24 +1346,22 @@ app.put("/pnls/:id", async (req: Request, res: Response) => {
         client: req.body?.client === undefined ? undefined : (req.body.client ?? null),
         city: req.body?.city === undefined ? undefined : String(req.body.city),
 
-        // ⚠️ si region est REQUIRED dans Prisma => jamais null
         region: req.body?.region === undefined ? undefined : String(req.body.region ?? ""),
 
         status: req.body?.status === undefined ? undefined : String(req.body.status),
         startDate:
-  req.body?.startDate === undefined
-    ? undefined
-    : req.body?.startDate
-    ? new Date(String(req.body.startDate))
-    : null,
-
+          req.body?.startDate === undefined
+            ? undefined
+            : req.body?.startDate
+            ? new Date(String(req.body.startDate))
+            : null,
       } as any,
     });
 
     res.json({ ok: true, pnl: updated });
   } catch (e: any) {
     console.error(e);
-    res.status(400).json({ error: e?.message ?? "Bad Request" });
+    res.status(400).json({ error: "Bad Request" });
   }
 });
 
@@ -1381,7 +1406,6 @@ app.post("/contracts", async (req: Request, res: Response) => {
     if (data.delayPenalty !== undefined) data.delayPenalty = Number(data.delayPenalty ?? 0);
     if (data.chillerRent !== undefined) data.chillerRent = Number(data.chillerRent ?? 0);
 
-    // 🔥 IMPORTANT: aucun champ "ref"
     const created = await prisma.contract.create({
       data: {
         pnlId,
@@ -1396,9 +1420,9 @@ app.post("/contracts", async (req: Request, res: Response) => {
   }
 });
 
-
 // =========================================================
 // CONTRACT UPDATE (pour popup edit)
+// ✅ + sanitize toutes les variantes du contrat
 // =========================================================
 app.put("/contracts/:id", async (req: Request, res: Response) => {
   const id = String(req.params.id);
@@ -1438,8 +1462,25 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
 
     delete data.status;
 
-    const updated = await prisma.contract.update({ where: { id }, data });
-    return res.json({ ok: true, contract: updated });
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.contract.update({ where: { id }, data });
+
+      const variants = await tx.variant.findMany({
+        where: { contractId: id },
+        select: { id: true },
+      });
+
+      const touchedVariantIds = variants.map((v) => v.id);
+
+      // ✅ appliquer règles sur toutes les variantes du contrat
+      for (const variantId of touchedVariantIds) {
+        await sanitizeVariantByContract(tx, variantId, updated);
+      }
+
+      return { updated, touchedVariantIds };
+    });
+
+    return res.json({ ok: true, contract: result.updated, touchedVariantIds: result.touchedVariantIds });
   } catch (e: any) {
     console.error(e);
     return res.status(400).json({ error: e?.message ?? "Bad Request" });
@@ -1466,6 +1507,7 @@ app.delete("/variants/:id/mps/:variantMpId", async (req: Request, res: Response)
 ========================================================= */
 
 // ✅ CREATE VARIANT (respecte createMode + initiee/composee)
+// ✅ + sanitize selon contrat à la fin (pour couvrir INITIEE/COMPOSEE)
 app.post("/variants", async (req: Request, res: Response) => {
   try {
     const body = req.body ?? {};
@@ -1501,7 +1543,8 @@ app.post("/variants", async (req: Request, res: Response) => {
                 ? (initiee as any).resistances.map((x: any) => String(x))
                 : [],
               ebitCiblePct: numOr0((initiee as any).ebitCiblePct),
-              etatCentrale: String((initiee as any).etatCentrale ?? "NEUVE") === "EXISTANTE" ? "EXISTANTE" : "NEUVE",
+              etatCentrale:
+                String((initiee as any).etatCentrale ?? "NEUVE") === "EXISTANTE" ? "EXISTANTE" : "NEUVE",
             },
           });
         }
@@ -1522,6 +1565,10 @@ app.post("/variants", async (req: Request, res: Response) => {
         }
       }
 
+      // ✅ IMPORTANT: à la fin, on nettoie la variante selon le contrat
+      const contract = await tx.contract.findUnique({ where: { id: contractId } });
+      await sanitizeVariantByContract(tx, v.id, contract);
+
       return v.id;
     });
 
@@ -1540,6 +1587,13 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const contract = await tx.contract.findUnique({
+        where: {
+          id:
+            (await tx.variant.findUnique({ where: { id: variantId }, select: { contractId: true } }))?.contractId ?? "",
+        },
+      });
+
       /* =========================================================
          VARIANT META (title / status / description)
       ========================================================= */
@@ -1587,6 +1641,10 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
       if (body.cab) {
         const allowed = ["category", "etat", "mode", "capaciteM3", "amortMois"];
         const data = pick(body.cab, allowed);
+
+        if (contract && isChargeClient((contract as any).cab)) {
+          (data as any).amortMois = 0;
+        }
 
         await upsertPartialSection({
           tx,
@@ -1676,6 +1734,15 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         ];
 
         const data = pick(incoming, allowed);
+
+        if (contract && isChargeClient((contract as any).consoElec)) {
+          (data as any).electricite = 0;
+          (data as any).location = 0;
+        }
+        if (contract && isChargeClient((contract as any).terrain)) {
+          (data as any).locationTerrain = 0;
+        }
+
         for (const k of Object.keys(data)) {
           if (k !== "category") (data as any)[k] = numOr0((data as any)[k]);
         }
@@ -1729,6 +1796,11 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
         ];
 
         const data = pick(incoming, allowed);
+
+        if (contract && isChargeClient((contract as any).installation)) (data as any).installation = 0;
+        if (contract && isChargeClient((contract as any).genieCivil)) (data as any).genieCivil = 0;
+        if (contract && isChargeClient((contract as any).transport)) (data as any).transport = 0;
+
         for (const k of Object.keys(data)) {
           if (k !== "category") (data as any)[k] = numOr0((data as any)[k]);
         }
@@ -2006,9 +2078,6 @@ app.put("/variants/:id/formules/:variantFormuleId", async (req: Request, res: Re
   }
 });
 
-
-
-
 // =========================================================
 // VARIANT DELETE (cascade)
 // =========================================================
@@ -2019,16 +2088,13 @@ app.delete("/variants/:variantId/formules/:variantFormuleId", async (req, res) =
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // ✅ idempotent + sécurisé
       await tx.variantFormule.deleteMany({
         where: { id: variantFormuleId, variantId },
       });
 
-      // ✅ important : resync MP
       await syncVariantMpsFromFormules(tx, variantId);
     });
 
-    // ✅ renvoyer une variante COMPLETE (sinon tu casses les autres sections)
     const variant = await getFullVariant(variantId);
     if (!variant) return res.status(404).json({ error: "Variant not found" });
 
@@ -2038,9 +2104,6 @@ app.delete("/variants/:variantId/formules/:variantFormuleId", async (req, res) =
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
-
-
 
 // =========================================================
 // CONTRACT DELETE (cascade)
@@ -2058,12 +2121,10 @@ app.delete("/contracts/:id", async (req: Request, res: Response) => {
       const variantIds = variants.map((v) => v.id);
 
       if (variantIds.length) {
-        // dépendances variantes
         await tx.variantFormule.deleteMany({ where: { variantId: { in: variantIds } } });
         await tx.variantMp.deleteMany({ where: { variantId: { in: variantIds } } });
         await tx.autreCoutItem.deleteMany({ where: { variantId: { in: variantIds } } });
 
-        // sections
         await tx.sectionTransport.deleteMany({ where: { variantId: { in: variantIds } } });
         await tx.sectionCab.deleteMany({ where: { variantId: { in: variantIds } } });
         await tx.sectionMaintenance.deleteMany({ where: { variantId: { in: variantIds } } });
@@ -2076,7 +2137,6 @@ app.delete("/contracts/:id", async (req: Request, res: Response) => {
         await tx.sectionDevis.deleteMany({ where: { variantId: { in: variantIds } } });
         await tx.sectionMajorations.deleteMany({ where: { variantId: { in: variantIds } } });
 
-        // (optionnel) section MP si elle existe dans ton schema
         if ((tx as any).sectionMatierePremiere?.deleteMany) {
           await (tx as any).sectionMatierePremiere.deleteMany({ where: { variantId: { in: variantIds } } });
         }
@@ -2100,21 +2160,17 @@ app.delete("/variants/:id", async (req: Request, res: Response) => {
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // optionnel: vérifier existence
       const v = await tx.variant.findUnique({ where: { id: variantId }, select: { id: true } });
       if (!v) {
-        // on sort en lançant une erreur "404"
         const err: any = new Error("Variant not found");
         err.status = 404;
         throw err;
       }
 
-      // dépendances (items)
       await tx.variantFormule.deleteMany({ where: { variantId } });
       await tx.variantMp.deleteMany({ where: { variantId } });
       await tx.autreCoutItem.deleteMany({ where: { variantId } });
 
-      // sections
       await tx.sectionTransport.deleteMany({ where: { variantId } });
       await tx.sectionCab.deleteMany({ where: { variantId } });
       await tx.sectionMaintenance.deleteMany({ where: { variantId } });
@@ -2128,7 +2184,6 @@ app.delete("/variants/:id", async (req: Request, res: Response) => {
       await tx.sectionMajorations.deleteMany({ where: { variantId } });
       await tx.sectionMatierePremiere.deleteMany({ where: { variantId } });
 
-      // variante
       await tx.variant.delete({ where: { id: variantId } });
     });
 
@@ -2196,7 +2251,6 @@ app.delete("/pnls/:id", async (req: Request, res: Response) => {
     return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
-
 
 app.listen(3001, () => {
   console.log("API running on http://localhost:3001");
