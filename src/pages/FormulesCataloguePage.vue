@@ -1,6 +1,6 @@
-<!-- ✅ src/pages/FormulesCataloguePage.vue (FICHIER COMPLET) -->
+<!-- ✅ src/pages/FormulesCataloguePage.vue (FICHIER COMPLET / pagination en bas uniquement, 10 par page) -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch, nextTick } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 
 import {
@@ -392,6 +392,35 @@ const filtered = computed(() => {
 });
 
 /* =========================
+   ✅ PAGINATION (10 / page) - navigator en bas uniquement
+========================= */
+const pageSize = 10;
+const currentPage = ref(1);
+
+const totalPages = computed(() => Math.max(1, Math.ceil((filtered.value?.length ?? 0) / pageSize)));
+
+const paginated = computed(() => {
+  const start = (currentPage.value - 1) * pageSize;
+  return (filtered.value ?? []).slice(start, start + pageSize);
+});
+
+function goToPage(p: number) {
+  if (p < 1) p = 1;
+  if (p > totalPages.value) p = totalPages.value;
+  currentPage.value = p;
+}
+
+/* reset page when filters change */
+watch([q, fRes, fCity, fRegion, fCimentMin, fCimentMax], () => {
+  currentPage.value = 1;
+});
+
+/* adjust page if total pages shrink (delete/filter) */
+watch(totalPages, (tp) => {
+  if (currentPage.value > tp) currentPage.value = tp;
+});
+
+/* =========================
    CRUD MODAL (create/edit)
 ========================= */
 const showFormModal = ref(false);
@@ -452,6 +481,8 @@ async function confirmDelete() {
     await store.deleteFormuleCatalogue(deleteId.value);
     await store.loadFormulesCatalogue();
     closeDeleteModal();
+    // ✅ pagination safety (in case current page becomes empty)
+    if (currentPage.value > totalPages.value) currentPage.value = totalPages.value;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -566,6 +597,8 @@ async function reload() {
       const id = String((f as any)?.id ?? "");
       if (draftsById[id]) loadDraftFromRow(f);
     }
+    // ✅ pagination safety after reload
+    if (currentPage.value > totalPages.value) currentPage.value = totalPages.value;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -595,6 +628,8 @@ async function saveForm(payload?: FormuleDraft) {
       });
       await store.loadFormulesCatalogue();
       showFormModal.value = false;
+      // ✅ go to last page to see newly created item (optional but handy)
+      currentPage.value = totalPages.value;
     } else {
       const id = activeEditId.value;
       if (!id) throw new Error("Aucune formule sélectionnée");
@@ -775,7 +810,7 @@ onMounted(reload);
 
     <!-- Cards list -->
     <div class="cards">
-      <div v-for="f in filtered" :key="f.id" class="card">
+      <div v-for="f in paginated" :key="f.id" class="card">
         <button class="rowHead" type="button" @click="toggle(String(f.id)); ensureDraft(f)">
           <div class="left">
             <span class="chev">
@@ -923,6 +958,24 @@ onMounted(reload);
       </div>
 
       <div v-if="filtered.length === 0" class="emptyPanel">Aucune formule.</div>
+
+      <!-- ✅ Pagination (EN BAS uniquement) -->
+      <div v-if="filtered.length > 0 && totalPages > 1" class="pagination">
+        <button class="pgBtn" type="button" :disabled="currentPage === 1" @click="goToPage(currentPage - 1)">◀</button>
+
+        <button
+          v-for="p in totalPages"
+          :key="p"
+          class="pgNum"
+          type="button"
+          :class="{ active: p === currentPage }"
+          @click="goToPage(p)"
+        >
+          {{ p }}
+        </button>
+
+        <button class="pgBtn" type="button" :disabled="currentPage === totalPages" @click="goToPage(currentPage + 1)">▶</button>
+      </div>
     </div>
 
     <!-- Create/Edit modal -->
@@ -1507,6 +1560,44 @@ onMounted(reload);
 .tIc{ width:18px; height:18px; flex:0 0 auto; margin-top: 2px; color:#ef4444; }
 .tMsg{ font-size: 12px; font-weight: 900; color: rgba(127,29,29,0.95); white-space: pre-line; }
 .toastFoot{ padding: 12px 14px 14px; display:flex; justify-content:flex-end; border-top: 1px solid rgba(16,24,40,0.10); background: rgba(15,23,42,0.02); }
+
+/* ✅ pagination */
+.pagination{
+  margin-top: 12px;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.pgBtn,
+.pgNum{
+  min-width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background:#fff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.pgBtn:hover,
+.pgNum:hover{
+  background: rgba(2,132,199,0.08);
+  border-color: rgba(2,132,199,0.18);
+}
+.pgNum.active{
+  background: rgba(24,64,112,0.92);
+  color:#fff;
+  border-color: rgba(24,64,112,0.65);
+}
+.pgBtn:disabled{
+  opacity: 0.4;
+  cursor: default;
+}
 
 @media (max-width: 980px){
   .filtersGrid{ grid-template-columns: 1fr; }

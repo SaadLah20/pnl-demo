@@ -233,6 +233,8 @@ async function ensureVariantSkeleton(tx: Prisma.TransactionClient, variantId: st
       volumePompePct: null,
       prixAchatPompe: null,
       prixVentePompe: null,
+      includePompage: false, // ✅ AJOUT
+
     },
     update: {},
   });

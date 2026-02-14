@@ -151,34 +151,26 @@ type Opt = { value: any; label: string };
 const CHARGE_3: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-  { value: "EXISTANTE", label: "Existante" },
 ];
 
 const GENIE_CIVIL_4: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-  { value: "EXISTANTE", label: "Existante" },
-  { value: "PARTAGE", label: "Partagé" },
 ];
 
 const TERRAIN_4: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-  { value: "EXISTANTE", label: "Existante" },
-  { value: "PARTAGE", label: "Partagé" },
 ];
 
 const MATIERE_3: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-  { value: "PRESTATAIRE", label: "Prestataire" },
 ];
 
 const MAINTENANCE_4: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-  { value: "PARTAGE_STANDARD", label: "Partage standard" },
-  { value: "PARTAGE_PARTICULIER", label: "Partage particulier" },
 ];
 
 const CONSOMMATION_2: Opt[] = [
@@ -526,6 +518,9 @@ const editErr = ref<string | null>(null);
 const isCreate = ref(false);
 const createPnlId = ref<string | null>(null);
 
+/* ✅ models fixes */
+const PNL_MODELS = ["CAB Mobile", "CAB fixe - existante", "CAB fixe - nouvelle"] as const;
+
 const draft = reactive<any>({
   id: "",
 
@@ -662,7 +657,8 @@ function openCreatePnl() {
   draft.client = "";
   draft.city = "";
   draft.status = "ENCOURS";
-  draft.model = draft.model || "MODEL";
+  // ✅ choix par défaut valide
+  draft.model = PNL_MODELS[0];
   draft.startDate = new Date().toISOString().slice(0, 10);
 }
 
@@ -683,6 +679,15 @@ function closeEdit() {
   editErr.value = null;
 }
 
+/* ✅ obligation: model requis en création P&L */
+const canSaveEdit = computed(() => {
+  if (editBusy.value) return false;
+  if (editMode.value === "pnl" && isCreate.value) {
+    return String(draft.model ?? "").trim().length > 0;
+  }
+  return true;
+});
+
 async function saveEdit() {
   editErr.value = null;
   editBusy.value = true;
@@ -690,6 +695,11 @@ async function saveEdit() {
   try {
     if (editMode.value === "pnl") {
       if (isCreate.value) {
+        // ✅ sécurité: obligation côté logique
+        if (!String(draft.model ?? "").trim()) {
+          throw new Error("Veuillez choisir un modèle.");
+        }
+
         const created = await apiJson(`/pnls`, {
           method: "POST",
           body: JSON.stringify({
@@ -1273,10 +1283,17 @@ async function handleSaveComposee(payload: ComposePayload) {
                   <option value="ARCHIVED">ARCHIVED</option>
                 </select>
               </div>
+
+              <!-- ✅ MODEL: obligatoire + 3 choix en création; verrouillé en édition -->
               <div class="f">
-                <div class="k">Modèle (non modifiable)</div>
-                <input class="in in--disabled" v-model="draft.model" disabled />
+                <div class="k">Modèle</div>
+                <select v-if="isCreate" class="in" v-model="draft.model">
+                  <option value="" disabled>Choisir un modèle…</option>
+                  <option v-for="m in PNL_MODELS" :key="m" :value="m">{{ m }}</option>
+                </select>
+                <input v-else class="in in--disabled" v-model="draft.model" disabled />
               </div>
+
               <div class="f">
                 <div class="k">Date de démarrage</div>
                 <input class="in" type="date" v-model="draft.startDate" />
@@ -1353,15 +1370,18 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <div class="k">Titre</div>
                 <input class="in" v-model="draft.title" placeholder="Titre de la variante" />
               </div>
+
+              <!-- ✅ MODIF: Statut variante (uniquement ici) -->
               <div class="f">
                 <div class="k">Statut</div>
                 <select class="in" v-model="draft.status">
-                  <option value="INITIALISEE">INITIALISÉE</option>
-                  <option value="ENCOURS">ENCOURS</option>
-                  <option value="ANNULEE">ANNULÉE</option>
-                  <option value="CLOTUREE">CLÔTURÉE</option>
+                  <option value="ENCOURS">Encours</option>
+                  <option value="CLOTUREE">Cloturée</option>
+                  <option value="ADJUGE">Adjugée</option>
+                  <option value="ARCHIVED">Archivée</option>
                 </select>
               </div>
+
               <div class="f f--full">
                 <div class="k">Description</div>
                 <textarea class="in" rows="4" v-model="draft.description" placeholder="Description (optionnelle)"></textarea>
@@ -1371,7 +1391,7 @@ async function handleSaveComposee(payload: ComposePayload) {
 
           <div class="modalFoot">
             <button class="chipBtn" :disabled="editBusy" @click="closeEdit()">Annuler</button>
-            <button class="chipBtn chipBtn--primary" :disabled="editBusy" @click="saveEdit()">
+            <button class="chipBtn chipBtn--primary" :disabled="editBusy || !canSaveEdit" @click="saveEdit()">
               {{ editBusy ? "Enregistrement…" : isCreate ? "Créer" : "Enregistrer" }}
             </button>
           </div>
@@ -1400,6 +1420,97 @@ async function handleSaveComposee(payload: ComposePayload) {
 </template>
 
 <style scoped>
+/* ✅ STYLE STRICTEMENT IDENTIQUE (aucun changement) */
+.page {
+  --navy: #184070;
+  --cyan: #20b8e8;
+
+  --holcim-navy: #184070;
+  --holcim-cyan: #7b9da7;
+  --holcim-green: #65814d;
+
+  --holcim-open-bg: rgba(24, 64, 112, 0.08);
+  --holcim-open-bd: rgba(24, 64, 112, 0.2);
+  --holcim-open-tx: rgba(24, 64, 112, 0.92);
+
+  /* ✅ active accents */
+  --active-pnl: rgba(32, 184, 232, 1);
+  --active-contract: rgba(24, 64, 112, 1);
+  --active-variant: rgba(123, 191, 58, 1);
+
+  --bg: #f4f6fb;
+  --card: #ffffff;
+  --border: rgba(16, 24, 40, 0.12);
+  --muted: rgba(15, 23, 42, 0.65);
+
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+/* ... (tout ton CSS inchangé) ... */
+
+/* Responsive */
+@media (max-width: 900px) {
+  .subHeader {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .searchMini {
+    min-width: 0;
+    width: 100%;
+  }
+  .popGrid {
+    grid-template-columns: 1fr;
+  }
+  .rowKV {
+    grid-template-columns: 140px 1fr;
+  }
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+  .variantsHead {
+    margin-left: 0;
+  }
+  .indent2 {
+    margin-left: 0;
+  }
+}
+/* (STYLE INCHANGÉ) */
+.page {
+  --navy: #184070;
+  --cyan: #20b8e8;
+
+  --holcim-navy: #184070;
+  --holcim-cyan: #7b9da7;
+  --holcim-green: #65814d;
+
+  --holcim-open-bg: rgba(24, 64, 112, 0.08);
+  --holcim-open-bd: rgba(24, 64, 112, 0.2);
+  --holcim-open-tx: rgba(24, 64, 112, 0.92);
+
+  --active-pnl: rgba(32, 184, 232, 1);
+  --active-contract: rgba(24, 64, 112, 1);
+  --active-variant: rgba(123, 191, 58, 1);
+
+  --bg: #f4f6fb;
+  --card: #ffffff;
+  --border: rgba(16, 24, 40, 0.12);
+  --muted: rgba(15, 23, 42, 0.65);
+
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
 .page {
   --navy: #184070;
   --cyan: #20b8e8;

@@ -1,6 +1,8 @@
 <!-- src/pages/MpCataloguePage.vue -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch, nextTick } from "vue";
+import { MOROCCO_CITIES } from "@/constants/morocco.cities";
+
 import { usePnlStore } from "@/stores/pnl.store";
 import {
   PencilSquareIcon,
@@ -41,7 +43,7 @@ const rows = computed<any[]>(() => store.mpCatalogue ?? []);
 /* =========================
    ENUMS
 ========================= */
-const CATEGORIES = ["CIMENT", "GRANULATS", "SABLE", "ADJUVANT", "EAU", "FILLER", "AUTRE"] as const;
+const CATEGORIES = ["CIMENT", "GRANULATS", "ADJUVANT", "COLORANT", "FIBRE", "FILLER", "AUTRE"] as const;
 const UNITS = ["T", "KG", "L", "M3", "U"] as const;
 
 const UNITS_OPTIONS = computed<UnitOption[]>(() =>
@@ -576,7 +578,7 @@ onMounted(reload);
       :categories="CATEGORIES"
       :units="UNITS_OPTIONS"
       :regions="REGIONS_MA"
-      :cities="options.cities"
+      :cities="MOROCCO_CITIES"
       :busy="busy.save"
       :error="mpModalError"
       @close="closeMpModal"
