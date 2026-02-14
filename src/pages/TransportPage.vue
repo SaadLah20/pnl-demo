@@ -43,6 +43,18 @@ function nearlyEqual(a: number, b: number, eps = 0.001) {
   return Math.abs(a - b) <= eps;
 }
 
+/** ✅ robust: handle boolean | 0/1 | "0/1" | "true/false" */
+function parseBoolLike(v: any): boolean | null {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v === 1 ? true : v === 0 ? false : null;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1" || s === "yes" || s === "y") return true;
+    if (s === "false" || s === "0" || s === "no" || s === "n") return false;
+  }
+  return null;
+}
+
 /* =========================
    ACTIVE VARIANT ONLY
 ========================= */
@@ -101,12 +113,12 @@ function loadFromVariant() {
   const rawPA = clamp((t as any)?.prixAchatPompe, 0, 1e9);
   const rawPV = clamp((t as any)?.prixVentePompe, 0, 1e9);
 
-  const incRaw = (t as any)?.includePompage;
+  const incParsed = parseBoolLike((t as any)?.includePompage);
 
-  // ✅ ancien enregistrement: si flag absent, on déduit depuis valeurs > 0
+  // ✅ ancien enregistrement: si flag absent/invalide, on déduit depuis valeurs > 0
   const hasPompe = rawPct > 0 || rawPA > 0 || rawPV > 0;
 
-  edit.includePompage = typeof incRaw === "boolean" ? Boolean(incRaw) : hasPompe;
+  edit.includePompage = incParsed !== null ? incParsed : hasPompe;
 
   // ✅ on conserve les valeurs même si includePompage = false
   edit.volumePompePct = rawPct;
@@ -382,10 +394,11 @@ function applyTransportFromVariant(srcVariant: any) {
   const rawPct = clamp((t as any)?.volumePompePct, 0, 100);
   const rawPA = clamp((t as any)?.prixAchatPompe, 0, 1e9);
   const rawPV = clamp((t as any)?.prixVentePompe, 0, 1e9);
-  const incRaw = (t as any)?.includePompage;
+
+  const incParsed = parseBoolLike((t as any)?.includePompage);
   const hasPompe = rawPct > 0 || rawPA > 0 || rawPV > 0;
 
-  edit.includePompage = typeof incRaw === "boolean" ? Boolean(incRaw) : hasPompe;
+  edit.includePompage = incParsed !== null ? incParsed : hasPompe;
 
   edit.volumePompePct = rawPct;
   edit.prixAchatPompe = rawPA;
@@ -564,7 +577,7 @@ function reset() {
                   <span class="unit">MAD/m³</span>
                 </div>
                 <div class="hint muted">
-                  {{ ui.calcOn ? "Calculée via zones (UI)." : "Saisie directe." }}
+                  {{ ui.calcOn ? 'Calculée via zones (UI).' : 'Saisie directe.' }}
                 </div>
               </div>
 

@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize + ✅ masquer 0 + ✅ importer + ✅ verrouillage contrat (installation/genieCivil/transport) => force 0) -->
+<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize + ✅ masquer 0 + ✅ importer + ✅ verrouillage contrat (installation/genieCivil/transport) => force 0 + ✅ confirmation: liste variantes impactées (→0)) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -78,7 +78,6 @@ function norm(s: any): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 function isChargeClient(v: any): boolean {
-  // ex: "CLIENT", "A CHARGE CLIENT", etc.
   return norm(v).includes("client");
 }
 
@@ -90,16 +89,6 @@ function enforceLocks() {
   if (lockInstallation.value) draft.installation = 0;
   if (lockGenieCivil.value) draft.genieCivil = 0;
   if (lockTransport.value) draft.transport = 0;
-}
-
-/* ✅ AJOUT: message de synthèse (Save / Généraliser) */
-function lockSummaryText(): string {
-  const forced: string[] = [];
-  if (lockInstallation.value) forced.push("Installation CAB");
-  if (lockGenieCivil.value) forced.push("Génie civil");
-  if (lockTransport.value) forced.push("Transport");
-  if (!forced.length) return "";
-  return `\n\n⚠️ Contrat : à la charge du client → ces champs seront forcés à 0 : ${forced.join(", ")}.`;
 }
 
 /* =========================
@@ -204,18 +193,8 @@ function loadFromVariant() {
   enforceLocks();
 }
 
-watch(
-  () => variant.value?.id,
-  () => loadFromVariant(),
-  { immediate: true }
-);
-
-// ✅ si le contrat change (ou charge client), on force 0 immédiatement
-watch(
-  () => contract.value,
-  () => enforceLocks(),
-  { immediate: true }
-);
+watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
+watch(() => contract.value, () => enforceLocks(), { immediate: true });
 
 /* =========================
    KPI
@@ -227,7 +206,6 @@ const total = computed(() => {
 
   return (
     gc +
-    // ✅ on retire installationCab du total UI, et on utilise le legacy (installation) comme "Installation CAB"
     clamp(draft.demontage) +
     clamp(draft.remisePointCentrale) +
     tr +
@@ -314,16 +292,14 @@ function buildPayload() {
   return {
     category: existing.category ?? "COUTS_CHARGES",
     genieCivil: Number(lockGenieCivil.value ? 0 : clamp(draft.genieCivil)),
-    // ✅ champ retiré côté UI, gardé compat (ne pas casser DB)
-    installationCab: Number(clamp(draft.installationCab)),
+    installationCab: Number(clamp(draft.installationCab)), // compat
     demontage: Number(clamp(draft.demontage)),
     remisePointCentrale: Number(clamp(draft.remisePointCentrale)),
     transport: Number(lockTransport.value ? 0 : clamp(draft.transport)),
     silots: Number(clamp(draft.silots)),
     localAdjuvant: Number(clamp(draft.localAdjuvant)),
     bungalows: Number(clamp(draft.bungalows)),
-    // ✅ legacy : utilisé comme Installation CAB côté UI
-    installation: Number(lockInstallation.value ? 0 : clamp(draft.installation)),
+    installation: Number(lockInstallation.value ? 0 : clamp(draft.installation)), // legacy = Installation CAB
   };
 }
 
@@ -332,7 +308,6 @@ async function save() {
   err.value = null;
   saving.value = true;
   try {
-    // ✅ avant save, on s'assure que les locks ont bien forcé 0
     enforceLocks();
     await (store as any).updateVariant(variant.value.id, { coutOccasionnel: buildPayload() });
     showToast("Coûts occasionnels enregistrés.", "ok");
@@ -345,14 +320,10 @@ async function save() {
 }
 
 function askSave() {
-  openConfirm(
-    "Enregistrer",
-    "Confirmer l’enregistrement des coûts occasionnels ?" + lockSummaryText(),
-    async () => {
-      closeModal();
-      await save();
-    }
-  );
+  openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts occasionnels ?", async () => {
+    closeModal();
+    await save();
+  });
 }
 function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
@@ -436,17 +407,63 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 }
 
 /* =========================
-   GENERALISER
+   ✅ GENERALISER + message "variantes impactées → 0"
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
 const genErr = ref<string | null>(null);
 
+function findContractByVariantId(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return c;
+      }
+    }
+  }
+  return null;
+}
+
+/** Sur chaque cible, le contrat peut forcer certains champs à 0.
+ *  On affiche uniquement si le payload n'est pas déjà 0 (sinon pas "impact").
+ */
+function impactedByContractOnTargets(targetIds: string[], payload: any) {
+  const impacted: Array<{ id: string; label: string; fields: string[] }> = [];
+
+  for (const tid of targetIds) {
+    const c = findContractByVariantId(tid);
+    if (!c) continue;
+
+    const fields: string[] = [];
+
+    if (isChargeClient(c?.genieCivil)) {
+      if (toNum(payload?.genieCivil) !== 0) fields.push("Génie civil");
+    }
+    if (isChargeClient(c?.transport)) {
+      if (toNum(payload?.transport) !== 0) fields.push("Transport");
+    }
+    // ⚠️ Installation CAB est stockée dans legacy `installation`
+    if (isChargeClient(c?.installation)) {
+      if (toNum(payload?.installation) !== 0) fields.push("Installation CAB");
+    }
+
+    if (fields.length) {
+      const v = findVariantById(tid);
+      const label = v?.title ?? v?.name ?? String(tid).slice(0, 8);
+      impacted.push({ id: tid, label, fields });
+    }
+  }
+
+  return impacted;
+}
+
 async function generalizeTo(variantIds: string[]) {
   const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceId) return;
 
-  // ✅ on généralise avec payload déjà "sanitisé" (locks => 0)
   const payload = buildPayload();
 
   genErr.value = null;
@@ -467,15 +484,30 @@ async function generalizeTo(variantIds: string[]) {
 }
 
 async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
-  const ids = payload?.variantIds ?? [];
+  const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
   if (!ids.length) return;
+
+  const data = buildPayload();
+  const impacted = impactedByContractOnTargets(ids, data);
+
+  let warn = "";
+  if (impacted.length) {
+    const lines = impacted
+      .slice(0, 8)
+      .map((x) => `• ${x.label}: ${x.fields.join(", ")} → 0`)
+      .join("\n");
+    warn =
+      `\n\n⚠️ Contrats: ${impacted.length} variante(s) recevront des valeurs forcées à 0:\n` +
+      lines +
+      (impacted.length > 8 ? `\n… (+${impacted.length - 8} autres)` : "");
+  }
 
   const msg =
     payload.mode === "ALL"
-      ? "Confirmer la généralisation de la section Coûts occasionnels sur TOUTES les variantes ?"
-      : `Confirmer la généralisation de la section Coûts occasionnels sur ${ids.length} variante(s) ?`;
+      ? "Confirmer la généralisation de la section Coûts occasionnels sur TOUTES les variantes ?" + warn
+      : `Confirmer la généralisation de la section Coûts occasionnels sur ${ids.length} variante(s) ?` + warn;
 
-  openConfirm("Généraliser", msg + lockSummaryText(), async () => {
+  openConfirm("Généraliser", msg, async () => {
     closeModal();
     await generalizeTo(ids);
     if (!genErr.value) genOpen.value = false;
@@ -628,9 +660,7 @@ function isLockedKey(k: CostKey): boolean {
                 />
               </div>
 
-              <div v-if="isLockedKey(c.key)" class="lockHint">
-                À la charge du client → valeur forcée à 0
-              </div>
+              <div v-if="isLockedKey(c.key)" class="lockHint">À la charge du client → valeur forcée à 0</div>
             </div>
           </template>
 
@@ -651,9 +681,7 @@ function isLockedKey(k: CostKey): boolean {
                 @input="draft.installation = clamp(($event.target as HTMLInputElement).value)"
               />
             </div>
-            <div v-if="lockInstallation" class="lockHint">
-              À la charge du client → valeur forcée à 0
-            </div>
+            <div v-if="lockInstallation" class="lockHint">À la charge du client → valeur forcée à 0</div>
           </div>
         </div>
 
@@ -689,6 +717,7 @@ function isLockedKey(k: CostKey): boolean {
           </div>
 
           <div class="dlgBody">
+            <!-- ✅ important: pour afficher les listes \n -->
             <div class="dlgMsg">{{ modal.message }}</div>
           </div>
 
@@ -1053,6 +1082,7 @@ function isLockedKey(k: CostKey): boolean {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.8);
   line-height: 1.45;
+  white-space: pre-line; /* ✅ affiche les \n du message */
 }
 .dlgFtr {
   padding: 10px;

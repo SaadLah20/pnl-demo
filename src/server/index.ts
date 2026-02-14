@@ -1615,8 +1615,17 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
          TRANSPORT
       ========================================================= */
       if (body.transport) {
-        const allowed = ["category", "type", "prixMoyen", "volumePompePct", "prixAchatPompe", "prixVentePompe"];
-        const data = pick(body.transport, allowed);
+const allowed = [
+  "category",
+  "type",
+  "prixMoyen",
+  "includePompage",      // ✅ AJOUT
+  "volumePompePct",
+  "prixAchatPompe",
+  "prixVentePompe",
+];
+const data = pick(body.transport, allowed);
+
 
         await upsertPartialSection({
           tx,
@@ -1629,6 +1638,8 @@ app.put("/variants/:id", async (req: Request, res: Response) => {
             volumePompePct: null,
             prixAchatPompe: null,
             prixVentePompe: null,
+            includePompage: false,   // ✅ AJOUT
+
           },
           data,
           logLabel: "transport",

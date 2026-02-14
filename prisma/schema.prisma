@@ -116,6 +116,7 @@ model SectionTransport {
   category         String
   type             String
   prixMoyen         Float   @default(0)
+  includePompage  Boolean @default(false) // ✅ AJOUT
   volumePompePct    Float?
   prixAchatPompe    Float?
   prixVentePompe    Float?

@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import HeaderActionsModals from "@/components/HeaderActionsModals.vue";
+
+
+const actionsRef = ref<InstanceType<typeof HeaderActionsModals> | null>(null);
+
+
+
 
 // Heroicons
 import {
@@ -37,6 +44,8 @@ type KpiValues = {
 type Metrics = Record<KpiName, KpiValues>;
 
 const store = usePnlStore();
+
+
 
 /* =========================
    ✅ TOGGLES (AJOUT)
@@ -232,13 +241,29 @@ const kpiLeftRow2: KpiName[] = ["Production", "EBITDA", "Amortissement", "EBIT"]
 /* =========================
    Buttons (placeholders)
 ========================= */
-function viewPnl() {}
-function editPnl() {}
-function viewContract() {}
-function editContract() {}
-function duplicateVariant() {}
-function newVariant() {}
-function editVariant() {}
+function viewPnl() {
+  actionsRef.value?.openViewPnl();
+}
+function editPnl() {
+  actionsRef.value?.openEditPnl();
+}
+function viewContract() {
+  actionsRef.value?.openViewContract();
+}
+function editContract() {
+  actionsRef.value?.openEditContract();
+}
+function newVariant() {
+  actionsRef.value?.openNewVariant();
+}
+function editVariant() {
+  actionsRef.value?.openEditVariant();
+}
+
+function duplicateVariant() {
+  console.log("CLICK DUP / method =", (actionsRef.value as any)?.openDuplicateVariant);
+  actionsRef.value?.openDuplicateVariant();
+}
 
 /* =========================
    UI HELPERS
@@ -581,6 +606,7 @@ onBeforeUnmount(() => {
       </div>
     </teleport>
   </header>
+  <HeaderActionsModals ref="actionsRef" />
 </template>
 
 <style scoped>
