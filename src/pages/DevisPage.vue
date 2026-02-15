@@ -1,4 +1,10 @@
-<!-- src/pages/DevisPage.vue (FICHIER COMPLET) -->
+<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte lisible + compacte)
+     Objectifs demandés :
+     ✅ ZÉRO scroll horizontal sur le tableau des prix (on réduit à 4 colonnes + métriques en sous-ligne)
+     ✅ Contenu en 1 colonne (plus lisible), sections compactes + listes bullet clean
+     ✅ Style pro, pas chargé, actions claires
+     ✅ Logique/script inchangés (mêmes fonctions/états)
+-->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -295,13 +301,12 @@ function buildContractTemplateLocked() {
   const client: LineItem[] = [];
 
   const pushLocked = (label: string, side: Side) => {
-    const item: LineItem = { label, locked: true }; // ✅ piloté contrat => non éditable
+    const item: LineItem = { label, locked: true };
     if (side === "CLIENT") client.push(item);
     else lhm.push(item);
     templateSideByLabel[normLabel(label)] = side;
   };
 
-  // ====== CAB / INSTALL / TRANSPORT
   const sideTransport = normalizeChargeSide(c.transport);
   const sideInstall = normalizeChargeSide(c.installation);
   const sideCab = normalizeChargeSide(c.cab);
@@ -317,7 +322,6 @@ function buildContractTemplateLocked() {
     pushLocked(LABELS.cabOnly, decideSideFromContractField(c.cab));
   }
 
-  // ====== Lignes pilotées par contrat
   pushLocked(LABELS.genieCivil, decideSideFromContractField(c.genieCivil));
   pushLocked(LABELS.mp, decideSideFromContractField(c.matierePremiere));
   pushLocked(LABELS.consoEau, decideSideFromContractField(c.consoEau));
@@ -326,7 +330,6 @@ function buildContractTemplateLocked() {
   pushLocked(LABELS.maintenance, decideSideFromContractField(c.maintenance));
   pushLocked(LABELS.terrain, decideSideFromContractField(c.terrain));
 
-  // ✅ Branchement Eau/Elec
   const sEau = normalizeChargeSide(c.branchementEau);
   const sElec = normalizeChargeSide(c.branchementElec);
 
@@ -342,7 +345,6 @@ function buildContractTemplateLocked() {
 }
 
 function buildWordDefaultsEditable() {
-  // ✅ Ces lignes viennent du devis Word : elles restent éditables
   const L = {
     personnel:
       "Personnels d’exploitation et de conduite de la centrale : 24 mois maximum sur un poste de 10 heures hors Dimanche et jours fériés.",
@@ -467,7 +469,6 @@ function closeExportGuard() {
    Load / Sync
 ========================= */
 function loadPersistedAll() {
-  // surcharges
   draft.surcharges = {};
   const v = variant.value;
   if (v?.devis?.surcharges) {
@@ -511,11 +512,9 @@ function loadPersistedAll() {
   const curLhm = normalizeLineItems(persistedLhmRaw, []);
   const curClient = normalizeLineItems(persistedClientRaw, []);
 
-  // ✅ on supprime du persisted toute ligne qui correspond à un template contrat (car régénérée)
   const keepLhm = curLhm.filter((it) => !tpl.tplSet.has(normLabel(it?.label)) && !it?.locked);
   const keepClient = curClient.filter((it) => !tpl.tplSet.has(normLabel(it?.label)) && !it?.locked);
 
-  // ✅ si rien n’est enregistré, on injecte aussi les defaults Word (éditables)
   const hasAnyPersisted = curLhm.length + curClient.length > 0;
   const baseL = hasAnyPersisted ? [] : wordDefaults.lhm;
   const baseC = hasAnyPersisted ? [] : wordDefaults.client;
@@ -530,7 +529,6 @@ function loadPersistedAll() {
   const templateExtras = dropDelayPenalty(buildDefaultPrixComplementaires());
   const curExtras = dropDelayPenalty(normalizePriceExtras(persistedExtrasRaw, templateExtras));
 
-  // ✅ extras: template + customs (prix non éditable en UI)
   const tset = new Set((templateExtras ?? []).map((x) => String(x?.label ?? "").trim()).filter(Boolean));
   const keepCustomExtras = (curExtras ?? []).filter((x) => {
     const lbl = String(x?.label ?? "").trim();
@@ -556,14 +554,12 @@ function loadPersistedAll() {
   content.signature.poste = String(persistedSignature?.poste ?? "Commercial P&L");
   content.signature.telephone = String(persistedSignature?.telephone ?? "+212701888888");
 
-  // ✅ snapshot = "dernière version enregistrée" (base export)
   lastSavedSnapshot.value = makeSnapshot();
 }
 
 function syncDevisFromContract() {
   const tpl = buildContractTemplateLocked();
 
-  // ✅ on garde tout ce qui n'est PAS locked (word standard + custom)
   const keepLhm = (content.chargeFournisseur ?? []).filter((it) => !it?.locked && !tpl.tplSet.has(normLabel(it?.label)));
   const keepClient = (content.chargeClient ?? []).filter((it) => !it?.locked && !tpl.tplSet.has(normLabel(it?.label)));
 
@@ -665,6 +661,8 @@ const prixMoyenDefinitif = computed(() => {
 
 const caDevisTotal = computed(() => rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0));
 
+const touchedCount = computed(() => rows.value.filter((r) => isRowTouched(r)).length);
+
 /* =========================
    API
 ========================= */
@@ -722,8 +720,6 @@ async function saveDevis() {
     });
 
     await (store as any).loadPnls();
-
-    // ✅ après save, la version "enregistrée" devient la base export
     lastSavedSnapshot.value = makeSnapshot();
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -749,7 +745,7 @@ async function doExportWord() {
 
 async function exportWord() {
   if (busy.export || busy.save) return;
-  if (openExportGuardIfNeeded()) return; // ✅ bloque et explique
+  if (openExportGuardIfNeeded()) return;
   await doExportWord();
 }
 
@@ -757,7 +753,6 @@ async function saveAndExport() {
   if (busy.export || busy.save) return;
   closeExportGuard();
   await saveDevis();
-  // si save a échoué, error sera set => on n'exporte pas
   if (error.value) return;
   await doExportWord();
 }
@@ -783,7 +778,6 @@ watch(
   () => loadPersistedAll()
 );
 
-// ✅ si on change de contrat (dans MesPnlPage) sans changer de variante
 watch(
   () => {
     const c: any = contract.value ?? null;
@@ -818,12 +812,12 @@ watch(
 ========================= */
 function addLine(which: "lhm" | "client") {
   const target = which === "lhm" ? content.chargeFournisseur : content.chargeClient;
-  target.push({ label: "" }); // custom (éditable)
+  target.push({ label: "" });
 }
 function removeLine(which: "lhm" | "client", idx: number) {
   const target = which === "lhm" ? content.chargeFournisseur : content.chargeClient;
   const it = target[idx];
-  if (it?.locked) return; // ✅ interdit suppression lignes contrat
+  if (it?.locked) return;
   target.splice(idx, 1);
 }
 function addExtra() {
@@ -836,221 +830,180 @@ function removeExtra(idx: number) {
 
 <template>
   <div class="page">
-    <!-- TOP -->
-    <div class="top">
+    <!-- HEADER -->
+    <div class="top card">
       <div class="tleft">
-        <div class="title">Devis</div>
+        <div class="titleLine">
+          <div class="title">Devis</div>
+          <div class="pill" v-if="isDirty">
+            <span class="dot" aria-hidden="true"></span>
+            Modifié
+          </div>
+        </div>
+
         <div class="subline">
-          <span class="muted">Variante :</span>
+          <span class="muted">Variante</span>
           <b class="ell">{{ variant?.title ?? "—" }}</b>
-
           <span class="sep">•</span>
-
-          <span class="muted">Volume :</span>
-          <b>{{ int(volumeTotalFromFormules) }}</b><span class="muted">m³</span>
-
+          <span class="muted">Volume</span>
+          <b class="mono">{{ int(volumeTotalFromFormules) }}</b><span class="muted">m³</span>
           <span class="sep">•</span>
-
-          <span class="muted">Prix moyen devis :</span>
-          <b>{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
+          <span class="muted">Prix moyen</span>
+          <b class="mono">{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
         </div>
       </div>
 
       <div class="tright">
-        <button class="btn" @click="reload" :disabled="busy.reload || loading" title="Recharger">
-          <ArrowPathIcon class="actIc" />
+        <button class="iconBtn" @click="reload" :disabled="busy.reload || loading" title="Recharger">
+          <ArrowPathIcon class="ic" />
         </button>
 
         <button class="btn" @click="resetSurcharges" :disabled="busy.save">Réinitialiser</button>
-
-        <button class="btn" @click="applyToDashboard" :disabled="busy.apply" v-if="activeTab === 'SURCHARGES'">
-          Appliquer au dashboard
-        </button>
 
         <button
           class="btn"
           :class="{ warnBtn: isDirty }"
           @click="exportWord"
           :disabled="busy.export || !variant?.id"
-          :title="isDirty ? 'Modifications non enregistrées : export = dernière version enregistrée' : 'Exporter en Word'"
+          :title="isDirty ? 'Export = dernière version enregistrée' : 'Exporter en Word'"
         >
-          <ArrowDownTrayIcon class="actIc" />
-          <span class="btnTxt">{{ busy.export ? "Export..." : "Exporter Word" }}</span>
-          <span v-if="isDirty" class="dot" aria-hidden="true"></span>
+          <ArrowDownTrayIcon class="ic" />
+          {{ busy.export ? "Export..." : "Exporter Word" }}
         </button>
 
         <button class="btn primary" @click="saveDevis" :disabled="busy.save || !variant?.id">
-          <CheckBadgeIcon class="actIc" />
+          <CheckBadgeIcon class="ic" />
           {{ busy.save ? "Enregistrement..." : "Enregistrer" }}
         </button>
       </div>
     </div>
 
-    <!-- ✅ Warning “export = version enregistrée” -->
-    <div v-if="isDirty" class="alert warn">
-      <div class="warnLine">
-        <ExclamationTriangleIcon class="warnIc" />
-        <div class="warnText">
-          <b>Modifications non enregistrées.</b>
-          <span class="muted">
-            Si tu exportes maintenant, le Word utilisera <b>la dernière version enregistrée</b> (pas tes changements en
-            cours).
-          </span>
-        </div>
-
-        <div class="warnActions">
-          <button class="btn mini2" @click="saveDevis" :disabled="busy.save || !variant?.id">Enregistrer</button>
-          <button class="btn mini2" @click="exportGuardOpen = true" :disabled="busy.export || !variant?.id">
-            Exporter quand même
-          </button>
-        </div>
+    <!-- Dirty info compact -->
+    <div v-if="isDirty" class="dirtyBar">
+      <ExclamationTriangleIcon class="warnIc" />
+      <div class="dirtyTxt">
+        <b>Changements non enregistrés.</b>
+        <span class="muted">Si tu exportes maintenant, le Word utilisera la dernière version enregistrée.</span>
+      </div>
+      <div class="dirtyActions">
+        <button class="btn mini" @click="saveDevis" :disabled="busy.save || !variant?.id">Enregistrer</button>
+        <button class="btn mini" @click="exportGuardOpen = true" :disabled="busy.export || !variant?.id">
+          Exporter quand même
+        </button>
       </div>
     </div>
 
     <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <!-- TABS (segmented) -->
-    <div class="tabsSeg card">
-      <div class="seg" role="tablist" aria-label="Devis tabs">
-        <button
-          class="segBtn"
-          :class="{ active: activeTab === 'SURCHARGES' }"
-          role="tab"
-          :aria-selected="activeTab === 'SURCHARGES'"
-          @click="activeTab = 'SURCHARGES'"
-          type="button"
-        >
-          Surcharges <span class="segHint">(/m³)</span>
-        </button>
-
-        <button
-          class="segBtn"
-          :class="{ active: activeTab === 'CONTENU' }"
-          role="tab"
-          :aria-selected="activeTab === 'CONTENU'"
-          @click="activeTab = 'CONTENU'"
-          type="button"
-        >
-          Contenu <span class="segHint">(texte)</span>
-        </button>
-
-        <span class="segRail" aria-hidden="true"></span>
-      </div>
+    <!-- Tabs (pro + simples) -->
+    <div class="tabs">
+      <button class="tab" :class="{ active: activeTab === 'SURCHARGES' }" @click="activeTab = 'SURCHARGES'">
+        Surcharges
+        <span class="badge">{{ touchedCount }}</span>
+      </button>
+      <button class="tab" :class="{ active: activeTab === 'CONTENU' }" @click="activeTab = 'CONTENU'">
+        Contenu
+      </button>
     </div>
 
-    <!-- TAB 1: SURCHARGES -->
+    <!-- =========================
+         TAB 1 : SURCHARGES
+         ✅ 0 scroll horizontal : tableau = 4 colonnes
+         (Métriques CMP/MOMD/PV pond en sous-ligne)
+    ========================= -->
     <template v-if="activeTab === 'SURCHARGES'">
-      <div class="card">
-        <div class="controls">
-          <div class="leftControls">
-            <label class="chk">
-              <input type="checkbox" v-model="withMajorations" />
-              <span>Appliquer majorations</span>
-            </label>
+      <div class="card controls">
+        <div class="checks">
+          <label class="chk">
+            <input type="checkbox" v-model="withMajorations" />
+            <span>Appliquer majorations</span>
+          </label>
 
-            <label class="chk">
-              <input type="checkbox" v-model="withDevisSurcharge" />
-              <span>Dashboard : surcharge devis</span>
-            </label>
+          <label class="chk">
+            <input type="checkbox" v-model="withDevisSurcharge" />
+            <span>Dashboard : surcharge devis</span>
+          </label>
 
-            <label class="chk">
-              <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
-              <span>Appliquer au dashboard lors du save</span>
-            </label>
+          <label class="chk">
+            <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
+            <span>Appliquer au dashboard lors du save</span>
+          </label>
+        </div>
+
+        <div class="rightInfo">
+          <div class="miniStat" v-if="withMajorations">
+            <div class="k">Impact majorations</div>
+            <div class="v mono">{{ money2(impactMajorationM3) }} <span class="muted">DH/m³</span></div>
           </div>
 
-          <div v-if="withMajorations" class="pillInfo">
-            <span class="muted">Impact majorations :</span>
-            <b class="mono">{{ money2(impactMajorationM3) }}</b>
-            <span class="muted">DH/m³</span>
-          </div>
+          <button class="btn" @click="applyToDashboard" :disabled="busy.apply">Appliquer au dashboard</button>
         </div>
       </div>
 
-      <div class="card cardTable">
-        <div class="tableWrap">
-          <div class="tHead" role="row">
-            <div class="th">Désignation</div>
-            <div class="th r">CMP</div>
-            <div class="th r">MOMD</div>
-            <div class="th r">PV (pond)</div>
-            <div class="th r">Surcharge</div>
-            <div class="th r">PV déf.</div>
-            <div class="th r">Total</div>
-          </div>
+      <div class="card tableCard">
+        <div class="tHead">
+          <div>Désignation</div>
+          <div class="r">Surcharge</div>
+          <div class="r">PV déf.</div>
+          <div class="r">Total</div>
+        </div>
 
-          <div class="tBody">
-            <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
+        <div class="tBody">
+          <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
 
-            <div
-              v-for="r in rows"
-              :key="rowKey(r)"
-              class="tRow"
-              role="row"
-              :class="{ touched: isRowTouched(r) }"
-            >
-              <!-- Désignation (hauteur stable) -->
-              <div class="td main" :data-label="'Désignation'">
-                <div class="mainLine">
-                  <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
+          <div v-for="r in rows" :key="rowKey(r)" class="tRow" :class="{ touched: isRowTouched(r) }">
+            <!-- col 1 -->
+            <div class="cell main">
+              <div class="mainTop">
+                <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
 
-                  <!-- tooltip compact -->
-                  <span class="tipWrap">
-                    <button class="tipBtn" type="button" aria-label="Détails">
-                      <InformationCircleIcon class="tipIc" />
-                    </button>
-
-                    <span class="tip" role="tooltip">
-                      CMP : <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b> DH/m³<br />
-                      Transport (base) : <b class="mono">{{ money2(transportBaseM3) }}</b> DH/m³<br />
-                      MOMD : <b class="mono">{{ money2(r?.momd) }}</b> DH/m³<br />
-                      PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />
-                      <template v-if="withMajorations">
-                        PV Maj : <b class="mono">{{ money2(pvWithMajorationM3(r)) }}</b> DH/m³<br />
-                      </template>
-                      PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
-                      <span class="mutedLine">Clé: {{ rowKey(r) }}</span>
-                    </span>
+                <!-- tooltip -->
+                <span class="tipWrap">
+                  <button class="tipBtn" type="button" aria-label="Détails">
+                    <InformationCircleIcon class="tipIc" />
+                  </button>
+                  <span class="tip" role="tooltip">
+                    CMP : <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b> DH/m³<br />
+                    Transport (base) : <b class="mono">{{ money2(transportBaseM3) }}</b> DH/m³<br />
+                    MOMD : <b class="mono">{{ money2(r?.momd) }}</b> DH/m³<br />
+                    PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />
+                    <template v-if="withMajorations">
+                      PV Maj : <b class="mono">{{ money2(pvWithMajorationM3(r)) }}</b> DH/m³<br />
+                    </template>
+                    PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
+                    <span class="mutedLine">Clé: {{ rowKey(r) }}</span>
                   </span>
-                </div>
-
-                <div class="subTextLine">
-                  <span class="muted">Vol.</span>
-                  <b class="mono">{{ int(r?.volumeM3) }}</b>
-                  <span class="muted">m³</span>
-                </div>
+                </span>
               </div>
 
-              <div class="td r" :data-label="'CMP'">
-                <div class="val mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</div>
+              <div class="sub">
+                <span class="chip"><span class="muted">Vol</span> <b class="mono">{{ int(r?.volumeM3) }}</b> <span class="muted">m³</span></span>
+                <span class="chip"><span class="muted">CMP</span> <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b></span>
+                <span class="chip"><span class="muted">MOMD</span> <b class="mono">{{ money2(r?.momd) }}</b></span>
+                <span class="chip"><span class="muted">PV pond</span> <b class="mono">{{ money2(pvPondereM3(r)) }}</b></span>
               </div>
+            </div>
 
-              <div class="td r" :data-label="'MOMD'">
-                <div class="val mono">{{ money2(r?.momd) }}</div>
-              </div>
+            <!-- col 2 -->
+            <div class="cell r">
+              <input
+                class="input num"
+                type="number"
+                step="1"
+                :value="getSurcharge(r)"
+                @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
+              />
+            </div>
 
-              <div class="td r" :data-label="'PV (pond)'">
-                <span class="pillStrong mono">{{ money2(pvPondereM3(r)) }}</span>
-              </div>
+            <!-- col 3 -->
+            <div class="cell r">
+              <span class="pillFinal mono">{{ money2(pvDefinitifM3(r)) }}</span>
+            </div>
 
-              <div class="td r" :data-label="'Surcharge'">
-                <input
-                  class="input numInput"
-                  type="number"
-                  step="1"
-                  :value="getSurcharge(r)"
-                  @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
-                />
-              </div>
-
-              <div class="td r" :data-label="'PV déf.'">
-                <span class="pillFinal mono">{{ money2(pvDefinitifM3(r)) }}</span>
-              </div>
-
-              <div class="td r" :data-label="'Total'">
-                <div class="val mono strong">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</div>
-              </div>
+            <!-- col 4 -->
+            <div class="cell r">
+              <b class="mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b>
             </div>
           </div>
         </div>
@@ -1058,22 +1011,20 @@ function removeExtra(idx: number) {
         <div class="tFoot">
           <div class="sumGrid">
             <div class="sumBox">
-              <div class="k">Prix moyen devis</div>
+              <div class="k">Prix moyen</div>
               <div class="v mono">{{ money2(prixMoyenDefinitif) }} <span>DH/m³</span></div>
             </div>
-
             <div class="sumBox">
               <div class="k">Volume</div>
               <div class="v mono">{{ int(volumeTotalFromFormules) }} <span>m³</span></div>
             </div>
-
             <div class="sumBox">
               <div class="k">CA devis</div>
               <div class="v mono">{{ money2(caDevisTotal) }} <span>DH</span></div>
             </div>
           </div>
 
-          <div class="muted" style="margin-top:6px;">
+          <div class="muted noteLine">
             • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après
             pondération.
           </div>
@@ -1081,137 +1032,133 @@ function removeExtra(idx: number) {
       </div>
     </template>
 
-    <!-- TAB 2: CONTENU -->
+    <!-- =========================
+         TAB 2 : CONTENU
+         ✅ 1 colonne, lisible
+         - sections compactes
+         - listes en bullets (locked) + textarea pour custom
+    ========================= -->
     <template v-else>
-      <div class="card">
-        <div class="contentTop">
-          <div class="contentHead">
-            <div class="lineRight">
-              <span class="muted">{{ content.meta.ville || (pnl?.city ?? "") }}</span>
-              <span class="muted">, le</span>
-              <b>{{ todayFr() }}</b>
-            </div>
+      <div class="card section">
+        <div class="sectionHead">
+          <div class="lbl">En-tête</div>
+          <div class="muted">{{ content.meta.ville || (pnl?.city ?? "") }}, le <b>{{ todayFr() }}</b></div>
+        </div>
 
-            <div class="centerTitle">
-              <b>Offre de prix</b>
-              <div class="muted" style="margin-top:2px;">
-                {{ pnl?.title ?? "—" }}
-              </div>
-            </div>
-
-            <div class="lineRight">
-              <b>{{ pnl?.client ?? "—" }}</b>
-            </div>
+        <div class="grid3">
+          <div>
+            <div class="k">Ville</div>
+            <input class="input" v-model="content.meta.ville" placeholder="Ville" />
           </div>
-
-          <div class="block">
-            <div class="lbl">Introduction</div>
-            <textarea class="ta" v-model="content.intro" rows="3"></textarea>
+          <div>
+            <div class="k">Date</div>
+            <input class="input" v-model="content.meta.date" type="date" />
           </div>
-
-          <div class="block">
-            <div class="lbl">Rappel des données du projet</div>
-
-            <div class="grid2">
-              <div class="kv">
-                <div class="k">Quantité</div>
-                <div class="v"><b>{{ int(quantiteProjetM3) }}</b> <span class="muted">m3</span></div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Délai</div>
-                <div class="v"><b>{{ int(dureeMois) }}</b> <span class="muted">mois</span></div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Démarrage</div>
-                <div class="v"><b>{{ formatDateFr(pnl?.startDate) || "—" }}</b></div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Lieu</div>
-                <div class="v"><b>{{ pnl?.city ?? "—" }}</b></div>
-              </div>
-            </div>
-
-            <div class="muted" style="margin-top:8px;">
-              (Ces valeurs proviennent du PnL/contrat et ne sont pas modifiables ici.)
-            </div>
+          <div>
+            <div class="k">Client</div>
+            <input class="input" v-model="content.meta.client" placeholder="Client" />
           </div>
+        </div>
+
+        <div style="margin-top:10px;">
+          <div class="k">Titre projet</div>
+          <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
         </div>
       </div>
 
-      <div class="card">
-        <div class="twoCols">
-          <div class="col">
-            <div class="lbl">À la charge de LafargeHolcim Maroc</div>
-
-            <div class="list">
-              <div v-for="(it, i) in content.chargeFournisseur" :key="'lhm' + i" class="li">
-                <template v-if="it.locked">
-                  <div class="roLine">{{ it.label }}</div>
-                </template>
-                <template v-else>
-                  <textarea class="ta small" v-model="it.label" rows="2"></textarea>
-                  <button class="mini" type="button" @click="removeLine('lhm', i)">Suppr</button>
-                </template>
-              </div>
-            </div>
-
-            <button class="btn miniAdd" type="button" @click="addLine('lhm')">+ Ajouter ligne</button>
-          </div>
-
-          <div class="col">
-            <div class="lbl">À la charge du client</div>
-
-            <div class="list">
-              <div v-for="(it, i) in content.chargeClient" :key="'cl' + i" class="li">
-                <template v-if="it.locked">
-                  <div class="roLine">{{ it.label }}</div>
-                </template>
-                <template v-else>
-                  <textarea class="ta small" v-model="it.label" rows="2"></textarea>
-                  <button class="mini" type="button" @click="removeLine('client', i)">Suppr</button>
-                </template>
-              </div>
-            </div>
-
-            <button class="btn miniAdd" type="button" @click="addLine('client')">+ Ajouter ligne</button>
-          </div>
-        </div>
+      <div class="card section">
+        <div class="lbl">Introduction</div>
+        <textarea class="ta" v-model="content.intro" rows="3"></textarea>
       </div>
 
-      <div class="card">
+      <div class="card section">
+        <div class="lbl">Rappel des données du projet</div>
+
+        <div class="grid2kv">
+          <div class="kv">
+            <div class="k">Quantité</div>
+            <div class="v"><b>{{ int(quantiteProjetM3) }}</b> <span class="muted">m³</span></div>
+          </div>
+          <div class="kv">
+            <div class="k">Délai</div>
+            <div class="v"><b>{{ int(dureeMois) }}</b> <span class="muted">mois</span></div>
+          </div>
+          <div class="kv">
+            <div class="k">Démarrage</div>
+            <div class="v"><b>{{ formatDateFr(pnl?.startDate) || "—" }}</b></div>
+          </div>
+          <div class="kv">
+            <div class="k">Lieu</div>
+            <div class="v"><b>{{ pnl?.city ?? "—" }}</b></div>
+          </div>
+        </div>
+
+        <div class="muted noteLine">(Ces valeurs proviennent du PnL/contrat et ne sont pas modifiables ici.)</div>
+      </div>
+
+      <div class="card section">
+        <div class="lbl">Charges & responsabilités</div>
+
+        <div class="subLbl">À la charge de LafargeHolcim Maroc</div>
+        <ul class="bullets">
+          <li v-for="(it, i) in content.chargeFournisseur" :key="'lhm' + i" class="bullet">
+            <template v-if="it.locked">
+              <span class="lock">Contrat</span>
+              <span class="txt">{{ it.label }}</span>
+            </template>
+            <template v-else>
+              <textarea class="ta small" v-model="it.label" rows="2"></textarea>
+              <button class="mini" type="button" @click="removeLine('lhm', i)">Suppr</button>
+            </template>
+          </li>
+        </ul>
+        <button class="btn miniAdd" type="button" @click="addLine('lhm')">+ Ajouter ligne</button>
+
+        <div class="sepLine"></div>
+
+        <div class="subLbl">À la charge du client</div>
+        <ul class="bullets">
+          <li v-for="(it, i) in content.chargeClient" :key="'cl' + i" class="bullet">
+            <template v-if="it.locked">
+              <span class="lock">Contrat</span>
+              <span class="txt">{{ it.label }}</span>
+            </template>
+            <template v-else>
+              <textarea class="ta small" v-model="it.label" rows="2"></textarea>
+              <button class="mini" type="button" @click="removeLine('client', i)">Suppr</button>
+            </template>
+          </li>
+        </ul>
+        <button class="btn miniAdd" type="button" @click="addLine('client')">+ Ajouter ligne</button>
+      </div>
+
+      <div class="card section">
         <div class="lbl">Prix complémentaires</div>
 
         <div class="extras">
           <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="exRow">
             <input class="input" v-model="x.label" placeholder="Libellé" />
             <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
-
-            <!-- ✅ prix non éditable -->
             <input class="input exVal" type="number" step="1" :value="x.value" readonly />
-
             <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
           </div>
         </div>
 
         <button class="btn miniAdd" type="button" @click="addExtra">+ Ajouter prix complémentaire</button>
-
-        <div class="muted" style="margin-top:8px;">
-          (Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)
-        </div>
+        <div class="muted noteLine">(Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)</div>
       </div>
 
-      <div class="card">
-        <div class="lbl">Durée - Quantité</div>
+      <div class="card section">
+        <div class="lbl">Textes</div>
+
+        <div class="subLbl">Durée - Quantité</div>
         <textarea class="ta" v-model="content.dureeQuantiteTexte" rows="3"></textarea>
 
-        <div class="lbl" style="margin-top:12px;">Validité de l’offre</div>
+        <div class="subLbl" style="margin-top:12px;">Validité de l’offre</div>
         <textarea class="ta" v-model="content.validiteTexte" rows="2"></textarea>
       </div>
 
-      <div class="card">
+      <div class="card section">
         <div class="lbl">Signature</div>
         <div class="grid3">
           <div>
@@ -1228,17 +1175,17 @@ function removeExtra(idx: number) {
           </div>
         </div>
 
-        <div class="muted" style="margin-top:8px;">
+        <div class="muted noteLine">
           En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b>
         </div>
       </div>
     </template>
 
-    <!-- ✅ Export guard modal -->
+    <!-- Export guard modal -->
     <div v-if="exportGuardOpen" class="modalOverlay" @click.self="closeExportGuard">
       <div class="modalCard" role="dialog" aria-modal="true" aria-label="Export Word">
         <div class="modalTitle">
-          <ExclamationTriangleIcon class="warnIc" />
+          <ExclamationTriangleIcon class="warnIc2" />
           <div>
             <div style="font-weight: 1000; color:#111827;">Exporter sans enregistrer ?</div>
             <div class="muted" style="margin-top:2px;">
@@ -1265,267 +1212,214 @@ function removeExtra(idx: number) {
 </template>
 
 <style scoped>
-/* ✅ header + page plus compact (sans casser la charte) */
-.page { padding: 10px 12px; display:flex; flex-direction:column; gap:10px; }
-
-.top { display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap; }
-.tleft { display:flex; flex-direction:column; gap:2px; min-width: 240px; }
-.title { font-size:15px; font-weight:900; color:#111827; line-height: 1.15; }
-.subline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:11.5px; }
+/* Base */
+.page { padding: 12px; display:flex; flex-direction:column; gap:10px; }
+.card { background:#fff; border:1px solid rgba(16,24,40,.12); border-radius:16px; padding:10px 12px; }
+.muted { color:#6b7280; font-size:12px; }
+.mono { font-variant-numeric: tabular-nums; }
+.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sep { color:#9ca3af; }
-
-.tright { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 
 .alert { border:1px solid #e5e7eb; border-radius:14px; padding:8px 10px; background:#fff; color:#111827; font-size:12px; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
-.alert.warn { border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.08); }
 
-.card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:8px 10px; }
-.cardTable { padding: 0; overflow: hidden; }
-.hint { padding: 8px 10px; }
-
-.btn {
-  border:1px solid #d1d5db;
+.btn{
+  border:1px solid rgba(16,24,40,.14);
   background:#fff;
   border-radius:12px;
-  padding:7px 9px;
-  font-size:11px;
-  font-weight:900;
+  padding:7px 10px;
+  font-size:11.5px;
+  font-weight:1000;
   cursor:pointer;
   display:inline-flex;
   align-items:center;
   gap:8px;
-  position: relative;
 }
-.btn:hover { background:#f9fafb; }
-.btn.primary { background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
-.btn.primary:hover { background: rgba(24,64,112,1); }
+.btn:hover{ background:#f9fafb; }
+.btn.primary{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
+.btn.primary:hover{ background: rgba(24,64,112,1); }
+.btn.warnBtn{ border-color: rgba(245,158,11,0.55); }
+.btn.mini{ padding:6px 9px; font-size:11px; }
 
-.btn.warnBtn { border-color: rgba(245,158,11,0.55); }
-.dot{
-  width: 7px; height: 7px;
-  border-radius: 999px;
-  background: rgba(245,158,11,1);
-  display:inline-block;
-  margin-left: 2px;
+.iconBtn{
+  width:36px; height:36px;
+  border-radius:12px;
+  border:1px solid rgba(16,24,40,.14);
+  background:#fff;
+  cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center;
 }
+.iconBtn:hover{ background:#f9fafb; }
+.ic{ width:16px; height:16px; }
 
-.btnTxt{ display:inline-block; }
-
-.input { width:100%; padding:6px 8px; border:1px solid #d1d5db; border-radius:12px; font-size:12px; background:#fff; }
-.right { text-align:right; }
-.muted { color:#6b7280; font-size:11.5px; }
-.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.mono { font-variant-numeric: tabular-nums; }
-.strong { font-weight: 950; }
-
-.actIc{ width:16px; height:16px; }
-
-/* warn bar */
-.warnLine{
-  display:flex;
-  align-items:flex-start;
-  gap: 10px;
-}
-.warnIc{ width: 18px; height: 18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
-.warnText{ display:flex; flex-direction:column; gap: 2px; min-width: 220px; }
-.warnActions{ margin-left:auto; display:flex; gap: 8px; flex-wrap:wrap; justify-content:flex-end; }
-.mini2{ padding: 6px 9px; border-radius: 12px; font-size: 11px; }
-
-/* =========================
-   TABS segmented (pro) - compact
-========================= */
-.tabsSeg { padding: 8px 10px; }
-.seg{
-  position: relative;
-  display:flex;
-  gap:6px;
-  padding: 5px;
-  border-radius: 16px;
-  border: 1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.02);
-  width: fit-content;
-  max-width: 100%;
-}
-.segBtn{
-  position: relative;
-  z-index: 2;
-  border: 0;
-  background: transparent;
+.input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:12px; font-size:12.5px; background:#fff; }
+.ta{
+  width:100%;
+  border:1px solid #d1d5db;
   border-radius: 14px;
-  padding: 7px 10px;
-  font-weight: 1000;
-  font-size: 11.5px;
-  cursor: pointer;
-  color: rgba(15,23,42,0.75);
-  white-space: nowrap;
+  padding: 10px 12px;
+  font-size: 13px;
+  background:#fff;
+  resize: vertical;
 }
-.segBtn:hover{ background: rgba(15,23,42,0.04); }
-.segBtn.active{
-  color: rgba(24,64,112,1);
-  background: rgba(24,64,112,0.10);
-  box-shadow: 0 6px 14px rgba(2,6,23,0.06);
-}
-.segHint{ font-weight: 900; opacity: .7; margin-left: 6px; font-size: 10.5px; }
-.segRail{ display:none; }
+.ta.small{ font-size: 12px; }
 
-/* Controls */
+/* Header */
+.top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
+.tleft{ min-width:260px; display:flex; flex-direction:column; gap:4px; }
+.titleLine{ display:flex; align-items:center; gap:10px; }
+.title{ font-size:15px; font-weight:1000; color:#111827; }
+.pill{
+  display:inline-flex; align-items:center; gap:8px;
+  border:1px solid rgba(245,158,11,0.45);
+  background: rgba(245,158,11,0.08);
+  border-radius:999px;
+  padding:4px 10px;
+  font-weight:1000;
+  font-size:11px;
+}
+.dot{ width:7px; height:7px; border-radius:999px; background: rgba(245,158,11,1); display:inline-block; }
+.subline{ display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:11.5px; }
+.tright{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+
+/* Dirty bar */
+.dirtyBar{
+  display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;
+  border:1px solid rgba(245,158,11,0.45);
+  background: rgba(245,158,11,0.08);
+  border-radius:14px;
+  padding:8px 10px;
+}
+.warnIc{ width:18px; height:18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
+.dirtyTxt{ display:flex; flex-direction:column; gap:2px; min-width:240px; flex:1; }
+.dirtyActions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+
+/* Tabs */
+.tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+.tab{
+  border:1px solid rgba(16,24,40,.12);
+  background: rgba(15,23,42,.02);
+  border-radius:999px;
+  padding:8px 12px;
+  font-size:12px;
+  font-weight:1000;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.tab:hover{ background: rgba(15,23,42,.04); }
+.tab.active{
+  background: rgba(24,64,112,.10);
+  border-color: rgba(24,64,112,.28);
+  color: rgba(24,64,112,1);
+}
+.badge{
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(15,23,42,.08);
+  font-size: 11px;
+  font-weight: 1000;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+
+/* Controls row */
 .controls{
   display:flex;
   align-items:flex-start;
   justify-content:space-between;
-  gap:10px;
+  gap:12px;
   flex-wrap:wrap;
 }
-.leftControls{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-.chk{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  font-size:11.5px;
-  font-weight:900;
-  color:#111827;
-  user-select:none;
-}
+.checks{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.chk{ display:inline-flex; align-items:center; gap:8px; font-size:11.5px; font-weight:900; color:#111827; }
 .chk input{ width:15px; height:15px; border-radius:6px; }
 
-.pillInfo{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.03);
-  font-size:11.5px;
-  font-weight:900;
-  color:#111827;
+.rightInfo{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.miniStat{
+  border:1px solid rgba(16,24,40,.10);
+  background: rgba(15,23,42,.02);
+  border-radius:14px;
+  padding:8px 10px;
 }
-
-/* =========================
-   TABLE (zéro scroll horizontal au max)
-========================= */
-.tableWrap{
-  width:100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+.miniStat .k{
+  font-size:10.5px; font-weight:1000; color: rgba(15,23,42,.55);
+  text-transform: uppercase; letter-spacing:.02em;
 }
-.tableWrap::-webkit-scrollbar { height: 9px; }
-.tableWrap::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.18); border-radius: 999px; }
-.tableWrap::-webkit-scrollbar-track { background: rgba(15,23,42,0.04); border-radius: 999px; }
+.miniStat .v{ margin-top:3px; font-size:12.5px; font-weight:1000; color:#0f172a; }
 
-.tHead, .tRow{
-  display:grid;
-  column-gap: 12px;
-  align-items:center;
-  grid-template-columns:
-    minmax(220px, 2.7fr)
-    78px
-    78px
-    90px
-    78px
-    90px
-    110px;
-}
-
+/* ✅ Table 4 cols (no horizontal scroll) */
+.tableCard{ padding:0; overflow:hidden; }
 .tHead{
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  padding: 7px 10px;
-  background: #fafafa;
-  border-bottom: 1px solid rgba(16,24,40,0.10);
-  font-size: 10.5px;
-  font-weight: 1000;
-  color: rgba(15,23,42,0.60);
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) 120px 130px 150px;
+  gap:12px;
+  padding:10px 12px;
+  background:#fafafa;
+  border-bottom:1px solid rgba(16,24,40,.10);
+  font-size:10.5px;
+  font-weight:1000;
+  color: rgba(15,23,42,.60);
 }
-.th{ min-width:0; text-align:left; }
-.th.r{ text-align:right; }
-
-.tHead > .th:first-child,
-.tRow  > .td:first-child{
-  padding-right: 12px;
-  border-right: 1px solid rgba(16,24,40,0.08);
-}
-.tHead > .th:nth-child(2),
-.tRow  > .td:nth-child(2){
-  padding-left: 8px;
-}
-
-.tBody{ padding: 0; }
+.tBody{ padding:0; }
 .tRow{
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(16,24,40,0.10);
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) 120px 130px 150px;
+  gap:12px;
+  padding:10px 12px;
+  border-bottom:1px solid rgba(16,24,40,.10);
+  align-items:center;
 }
-.tRow:hover{ background: rgba(15,23,42,0.02); }
-
+.tRow:hover{ background: rgba(15,23,42,.02); }
 .tRow.touched{
   box-shadow: inset 3px 0 0 rgba(24,64,112,0.55);
   background: rgba(24,64,112,0.03);
 }
+.r{ text-align:right; }
+.cell{ min-width:0; }
+.emptyRow{ padding:12px 12px; color:#6b7280; font-size:12px; }
 
-.td{ min-width:0; }
-.td.r{ text-align:right; }
-.val{ font-size: 12px; font-weight: 950; }
-
-.mainLine{
+/* main cell */
+.mainTop{ display:flex; align-items:center; gap:8px; }
+.sub{
+  margin-top:6px;
   display:flex;
-  align-items:center;
-  gap: 8px;
-  min-height: 20px;
+  flex-wrap:wrap;
+  gap:6px;
 }
-.subTextLine{
-  display:flex;
-  align-items:center;
-  gap: 6px;
-  margin-top: 2px;
-  font-size: 10.5px;
-  color: rgba(15,23,42,0.60);
-  line-height: 1.1;
+.chip{
+  border:1px solid rgba(16,24,40,.10);
+  background: rgba(15,23,42,.02);
+  border-radius:999px;
+  padding:3px 8px;
+  font-size:11px;
+  font-weight:900;
+  color:#0f172a;
+  display:inline-flex; gap:6px; align-items:center;
+  max-width:100%;
 }
+.num{ text-align:right; }
+.input.num{ font-variant-numeric: tabular-nums; }
 
-.emptyRow{ padding: 12px 10px; color:#6b7280; font-size:12px; }
-
-.pillStrong{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(16,24,40,0.12);
-  background: rgba(15,23,42,0.04);
-  font-weight: 1000;
-  color:#111827;
-  white-space: nowrap;
-  font-size: 12px;
-}
+/* PV pill */
 .pillFinal{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  height: 22px;
-  padding: 0 8px;
+  height: 26px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(24,64,112,0.22);
   background: rgba(24,64,112,0.06);
   font-weight: 1000;
   color: rgba(24,64,112,1);
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
-.numInput{
-  width: 100%;
-  max-width: 78px;
-  text-align:right;
-  margin-left:auto;
-  font-variant-numeric: tabular-nums;
-  padding: 5px 7px;
-  border-radius: 10px;
-  font-size: 12px;
-}
-
+/* tooltip */
 .tipWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; flex: 0 0 auto; }
 .tipBtn{
   width: 22px; height: 22px;
@@ -1534,7 +1428,6 @@ function removeExtra(idx: number) {
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
-  flex: 0 0 auto;
 }
 .tipIc{ width: 14px; height: 14px; color: rgba(15,23,42,0.55); }
 .tip{
@@ -1557,14 +1450,12 @@ function removeExtra(idx: number) {
   transform: translateY(-50%) translateX(-4px);
   z-index: 9999;
 }
-.tipWrap:hover .tip{
-  opacity: 1;
-  transform: translateY(-50%) translateX(0px);
-}
+.tipWrap:hover .tip{ opacity: 1; transform: translateY(-50%) translateX(0px); }
 .mutedLine{ display:block; margin-top: 5px; opacity: .85; }
 
+/* Footer sums */
 .tFoot{
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: rgba(15,23,42,0.02);
   border-top: 1px solid rgba(16,24,40,0.08);
 }
@@ -1577,7 +1468,7 @@ function removeExtra(idx: number) {
   border: 1px solid rgba(16,24,40,0.10);
   background: rgba(255,255,255,0.75);
   border-radius: 14px;
-  padding: 8px 10px;
+  padding: 10px 12px;
 }
 .sumBox .k{
   font-size: 10.5px;
@@ -1598,72 +1489,52 @@ function removeExtra(idx: number) {
   margin-left: 6px;
   font-size: 11.5px;
 }
+.noteLine{ margin-top:8px; }
 
-@media (max-width: 980px) {
-  .tHead{ display:none; }
-  .tRow{
-    grid-template-columns: 1fr 1fr;
-    row-gap: 8px;
-    align-items:start;
-    border-top: 1px solid rgba(16,24,40,0.10);
-    border-bottom: 0;
-    padding: 10px 10px;
-  }
-  .tRow > .td:first-child{ grid-column: 1 / -1; border-right: 0; padding-right: 0; }
-  .tRow > .td{
-    display:flex;
-    justify-content:space-between;
-    gap: 10px;
-    align-items:center;
-    padding: 2px 0;
-    text-align: right;
-  }
-  .tRow > .td::before{
-    content: attr(data-label);
-    color: rgba(15,23,42,0.60);
-    font-weight: 950;
-    font-size: 11px;
-    flex: 0 0 auto;
-    text-align:left;
-  }
-  .tRow > .td.main{
-    display:block;
-    padding: 0;
-    text-align:left;
-  }
-  .tRow > .td.main::before{ content:""; display:none; }
-  .numInput{ max-width: 160px; }
-  .sumGrid{ grid-template-columns: 1fr; }
-}
-
-/* Contenu */
-.contentHead{ display:grid; grid-template-columns: 1fr; gap: 10px; }
-.lineRight{ text-align:right; }
-.centerTitle{ text-align:center; padding: 6px 0; }
-.block{ margin-top: 10px; }
-.lbl{ font-weight: 1000; font-size: 13px; color:#111827; margin-bottom: 6px; }
-.ta{
-  width:100%;
-  border:1px solid #d1d5db;
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-size: 13px;
-  background:#fff;
-  resize: vertical;
-}
-.ta.small{ font-size: 12px; }
-.grid2{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Content */
+.section{ display:flex; flex-direction:column; gap:10px; }
+.sectionHead{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
+.lbl{ font-weight:1000; font-size:13px; color:#111827; }
+.subLbl{ font-weight:1000; font-size:12px; color: rgba(15,23,42,.78); }
 .kv{
   border:1px solid rgba(16,24,40,0.10);
   background: rgba(15,23,42,0.02);
   border-radius: 14px;
   padding: 10px 12px;
 }
-.k{ font-size: 11px; font-weight: 1000; color:#6b7280; }
+.k{ font-size: 11px; font-weight:1000; color:#6b7280; }
 .v{ margin-top: 4px; }
-.twoCols{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.list{ display:flex; flex-direction:column; gap: 10px; }
-.li{ display:flex; gap: 8px; align-items:flex-start; }
+
+.grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.grid2kv{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.sepLine{ height:1px; background: rgba(16,24,40,.10); margin: 8px 0; border-radius:999px; }
+
+.bullets{ list-style: none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
+.bullet{
+  border:1px solid rgba(16,24,40,.10);
+  background: rgba(15,23,42,.02);
+  border-radius:14px;
+  padding: 10px 12px;
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+}
+.lock{
+  flex:0 0 auto;
+  height:18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(24,64,112,0.22);
+  background: rgba(24,64,112,0.06);
+  color: rgba(24,64,112,1);
+  font-size: 10.5px;
+  font-weight: 1000;
+  display:inline-flex;
+  align-items:center;
+}
+.txt{ flex:1; color:#0f172a; font-size:12.5px; line-height:1.25; white-space: pre-wrap; }
+
 .mini{
   border:1px solid #e5e7eb;
   background:#fff;
@@ -1675,7 +1546,7 @@ function removeExtra(idx: number) {
   white-space:nowrap;
 }
 .mini:hover{ background:#f9fafb; }
-.miniAdd{ margin-top: 10px; }
+.miniAdd{ align-self:flex-start; }
 
 .extras{ display:flex; flex-direction:column; gap: 10px; }
 .exRow{
@@ -1685,28 +1556,31 @@ function removeExtra(idx: number) {
   align-items:center;
 }
 .exVal{ text-align:right; }
-.grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-@media (max-width: 900px){
-  .twoCols{ grid-template-columns: 1fr; }
-  .grid2{ grid-template-columns: 1fr; }
+
+/* Responsive */
+@media (max-width: 980px) {
+  .tHead{ display:none; }
+
+  .tRow{
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items:start;
+  }
+
+  .cell.r{ text-align:left; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .cell.r::before{
+    content: attr(data-label);
+    font-weight:1000;
+    color: rgba(15,23,42,.65);
+  }
+
+  .sumGrid{ grid-template-columns: 1fr; }
   .grid3{ grid-template-columns: 1fr; }
+  .grid2kv{ grid-template-columns: 1fr; }
   .exRow{ grid-template-columns: 1fr; }
 }
 
-/* ✅ lecture seule pour phrases pilotées par contrat */
-.roLine{
-  width: 100%;
-  border: 1px solid rgba(16,24,40,0.10);
-  background: rgba(15,23,42,0.02);
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-size: 12px;
-  line-height: 1.25;
-  color: #0f172a;
-  white-space: pre-wrap;
-}
-
-/* ✅ Export guard modal */
+/* Modal */
 .modalOverlay{
   position: fixed;
   inset: 0;
@@ -1731,6 +1605,7 @@ function removeExtra(idx: number) {
   gap: 10px;
   padding: 6px 6px 10px 6px;
 }
+.warnIc2{ width:18px; height:18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
 .modalActions{
   display:flex;
   justify-content:flex-end;

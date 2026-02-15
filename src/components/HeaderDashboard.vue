@@ -3,6 +3,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import HeaderActionsModals from "@/components/HeaderActionsModals.vue";
+import { contractUiTitle } from "@/services/contractTitle";
+
 
 const actionsRef = ref<InstanceType<typeof HeaderActionsModals> | null>(null);
 
@@ -180,11 +182,8 @@ const status = computed(() => activeVariant.value?.status ?? "—");
 const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
 
-const contractName = computed(() => {
-  const c = activeContract.value;
-  if (!c) return "—";
-  return c.title ? String(c.title) : `Contrat ${String(c.id ?? "").slice(0, 6)}`;
-});
+const contractName = computed(() => contractUiTitle(activeContract.value));
+
 
 /* =========================
    KPI METRICS
@@ -407,9 +406,14 @@ onBeforeUnmount(() => {
             @change="onPickContract(($event.target as HTMLSelectElement).value)"
           >
             <option value="" disabled>—</option>
-            <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
-              {{ c.title ? String(c.title) : `Contrat ${String(c.id).slice(0, 6)}` }}
-            </option>
+<option
+  v-for="c in contractsOfActivePnl"
+  :key="c.id"
+  :value="String(c.id)"
+>
+  {{ contractUiTitle(c) }}
+</option>
+
           </select>
         </div>
 

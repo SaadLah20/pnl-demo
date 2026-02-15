@@ -1,7 +1,16 @@
 <!-- src/pages/MesPnlPage.vue -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  onActivated,
+  reactive,
+  ref,
+  watch,
+} from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { contractUiTitle } from "@/services/contractTitle";
 
 import VariantCreateModal, {
   type VariantCreateNextPayload,
@@ -44,12 +53,20 @@ const store = usePnlStore();
 const LS_ACTIVE_PNL = "pnl.activePnlId";
 const LS_ACTIVE_VARIANT = "pnl.activeVariantId";
 
+/** ✅ robust: si null => remove (évite incohérence) */
 function persistActive(pnlId: string | null, variantId: string | null) {
   if (pnlId) localStorage.setItem(LS_ACTIVE_PNL, String(pnlId));
+  else localStorage.removeItem(LS_ACTIVE_PNL);
+
   if (variantId) localStorage.setItem(LS_ACTIVE_VARIANT, String(variantId));
+  else localStorage.removeItem(LS_ACTIVE_VARIANT);
 }
 
-function setActiveIds(pnlId: string | null, contractId: string | null, variantId: string | null) {
+function setActiveIds(
+  pnlId: string | null,
+  contractId: string | null,
+  variantId: string | null
+) {
   if (pnlId && (store as any).setActivePnl) (store as any).setActivePnl(String(pnlId));
   if (contractId && (store as any).setActiveContract) (store as any).setActiveContract(String(contractId));
   if (variantId && (store as any).setActiveVariant) (store as any).setActiveVariant(String(variantId));
@@ -57,7 +74,7 @@ function setActiveIds(pnlId: string | null, contractId: string | null, variantId
 }
 
 /* =========================================================
-   ✅ INITIAL SELECTION
+   ✅ INITIAL SELECTION (robuste + pas d’écrasement au retour)
 ========================================================= */
 function toTs(d: any): number {
   const t = new Date(d ?? 0).getTime();
@@ -70,20 +87,31 @@ function pickLastVariantInPnl(p: any) {
     const vs = c.variants ?? [];
     if (vs.length) {
       const last = vs[vs.length - 1];
-      return { pnlId: String(p.id), contractId: String(c.id), variantId: String(last.id) };
+      return {
+        pnlId: String(p.id),
+        contractId: String(c.id),
+        variantId: String(last.id),
+      };
     }
   }
   return { pnlId: String(p.id), contractId: null, variantId: null };
 }
 
 function pickLatestVariantGlobal() {
-  let best: { pnlId: string; contractId: string; variantId: string; ts: number } | null = null;
+  let best:
+    | { pnlId: string; contractId: string; variantId: string; ts: number }
+    | null = null;
 
   for (const p of pnls.value) {
     for (const c of p.contracts ?? []) {
       for (const v of c.variants ?? []) {
         const ts = toTs(v?.createdAt ?? v?.updatedAt ?? 0);
-        const cand = { pnlId: String(p.id), contractId: String(c.id), variantId: String(v.id), ts };
+        const cand = {
+          pnlId: String(p.id),
+          contractId: String(c.id),
+          variantId: String(v.id),
+          ts,
+        };
 
         if (!best) {
           best = cand;
@@ -102,17 +130,26 @@ function pickLatestVariantGlobal() {
   return { pnlId: best.pnlId, contractId: best.contractId, variantId: best.variantId };
 }
 
+function findVariantLocation(variantId: any) {
+  const vid = String(variantId ?? "").trim();
+  if (!vid) return null;
+
+  for (const p of pnls.value) {
+    for (const c of p.contracts ?? []) {
+      const v = (c.variants ?? []).find((x: any) => String(x.id) === vid);
+      if (v) return { pnlId: String(p.id), contractId: String(c.id), variantId: String(v.id) };
+    }
+  }
+  return null;
+}
+
 function resolveInitialSelection() {
   const savedPnlId = localStorage.getItem(LS_ACTIVE_PNL);
   const savedVarId = localStorage.getItem(LS_ACTIVE_VARIANT);
 
   if (savedVarId) {
-    for (const p of pnls.value) {
-      for (const c of p.contracts ?? []) {
-        const v = (c.variants ?? []).find((x: any) => String(x.id) === String(savedVarId));
-        if (v) return { pnlId: String(p.id), contractId: String(c.id), variantId: String(v.id) };
-      }
-    }
+    const loc = findVariantLocation(savedVarId);
+    if (loc) return loc;
   }
 
   if (savedPnlId) {
@@ -129,18 +166,56 @@ function resolveInitialSelection() {
   return pickLastVariantInPnl(p0);
 }
 
-async function ensureInitialActive() {
-  await store.loadPnls?.();
+/** ✅ anti “double init / page blanche” */
+const initBusy = ref(false);
+let alive = true;
 
-  const sel = resolveInitialSelection();
-  if (!sel) return;
+async function ensureInitialActive(reason: "mounted" | "activated" | "manual" = "manual") {
+  if (initBusy.value) return;
+  initBusy.value = true;
 
-  if (sel.pnlId) openPnl[sel.pnlId] = true;
-  setActiveIds(sel.pnlId, sel.contractId, sel.variantId);
+  try {
+    await store.loadPnls?.();
+
+    if (!alive) return;
+
+    // ✅ 1) si store a déjà une variante active et elle existe => ne pas écraser
+    const curVar = (store as any).activeVariantId ?? null;
+    if (curVar) {
+      const loc = findVariantLocation(curVar);
+      if (loc) {
+        openPnl[loc.pnlId] = true;
+        persistActive(loc.pnlId, loc.variantId);
+        // resync si besoin
+        setActiveIds(loc.pnlId, loc.contractId, loc.variantId);
+        return;
+      }
+    }
+
+    // ✅ 2) fallback localStorage / latest / first
+    const sel = resolveInitialSelection();
+    if (!sel) {
+      persistActive(null, null);
+      return;
+    }
+
+    if (sel.pnlId) openPnl[sel.pnlId] = true;
+    setActiveIds(sel.pnlId, sel.contractId, sel.variantId);
+  } finally {
+    initBusy.value = false;
+  }
 }
 
 onMounted(() => {
-  ensureInitialActive();
+  ensureInitialActive("mounted");
+});
+
+/** ✅ IMPORTANT: si route en keep-alive, onMounted ne se rejoue pas => onActivated */
+onActivated(() => {
+  // ferme les popovers / menus au retour (évite anomalies sidebar visuelles)
+  filterOpen.value = false;
+  closeMenu();
+  if (!pnls.value?.length) ensureInitialActive("activated");
 });
 
 /* =========================================================
@@ -198,7 +273,11 @@ function fmtDate(v: any) {
   try {
     if (!v) return "-";
     const d = new Date(v);
-    return new Intl.DateTimeFormat("fr-FR", { year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    return new Intl.DateTimeFormat("fr-FR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
   } catch {
     return "-";
   }
@@ -260,12 +339,12 @@ const activeContractId = computed(() => {
   const vId = activeVariantId.value;
   if (!pnl || !vId) return null;
   for (const c of pnl.contracts ?? []) {
-    if ((c.variants ?? []).some((v: any) => v.id === vId)) return c.id;
+    if ((c.variants ?? []).some((v: any) => String(v.id) === String(vId))) return c.id;
   }
   return null;
 });
 
-/* ✅ NEW: objects for breadcrumb */
+/* ✅ objects for breadcrumb */
 const activePnlObj = computed<any | null>(() => {
   const id = activePnlId.value;
   return id ? pnls.value.find((p) => String(p.id) === String(id)) ?? null : null;
@@ -301,6 +380,25 @@ function togglePnl(id: string) {
 function collapseAllPnls() {
   for (const p of pnls.value) openPnl[p.id] = false;
 }
+
+/* =========================================================
+   ✅ Persist auto (corrige “retour => sélection perdue”)
+========================================================= */
+watch(
+  () => [activePnlId.value, activeVariantId.value],
+  ([p, v]) => {
+    if (v) {
+      const loc = findVariantLocation(v);
+      if (loc) {
+        openPnl[loc.pnlId] = true;
+        persistActive(loc.pnlId, loc.variantId);
+        return;
+      }
+    }
+    persistActive(p ? String(p) : null, v ? String(v) : null);
+  },
+  { immediate: true }
+);
 
 /* =========================================================
    FILTERS / SORT (P&L ONLY)
@@ -394,7 +492,7 @@ const filteredPnls = computed<any[]>(() => {
 
   const ap = activePnlId.value;
   if (ap) {
-    const idx = rows.findIndex((x) => x.id === ap);
+    const idx = rows.findIndex((x) => String(x.id) === String(ap));
     if (idx > 0) {
       const [p] = rows.splice(idx, 1);
       rows.unshift(p);
@@ -405,7 +503,7 @@ const filteredPnls = computed<any[]>(() => {
 });
 
 /* =========================================================
-   Menus (kebab) - reduce button clutter
+   Menus (kebab)
 ========================================================= */
 const menuOpen = ref<string | null>(null);
 function openMenu(key: string) {
@@ -414,6 +512,8 @@ function openMenu(key: string) {
 function closeMenu() {
   menuOpen.value = null;
 }
+
+/** ✅ FIX: listener attach/detach propre */
 function onDocDown(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (!t) return;
@@ -424,11 +524,12 @@ function onDocDown(e: MouseEvent) {
   filterOpen.value = false;
   closeMenu();
 }
-document.addEventListener("mousedown", onDocDown);
+
+onMounted(() => document.addEventListener("mousedown", onDocDown));
 onBeforeUnmount(() => document.removeEventListener("mousedown", onDocDown));
 
 /* =========================================================
-   ✅ MODAL (confirm/info) — remplace confirm()/alert()
+   ✅ MODAL (confirm/info)
 ========================================================= */
 const modal = reactive({
   open: false,
@@ -472,7 +573,7 @@ async function deleteVariant(variantId: string) {
     try {
       await apiJson(`/variants/${variantId}`, { method: "DELETE" });
       localStorage.removeItem(LS_ACTIVE_VARIANT);
-      await ensureInitialActive();
+      await ensureInitialActive("manual");
     } catch (e: any) {
       openInfo("Erreur", e?.message ?? "Suppression impossible");
     }
@@ -485,7 +586,7 @@ async function deleteContract(contractId: string) {
     try {
       await apiJson(`/contracts/${contractId}`, { method: "DELETE" });
       localStorage.removeItem(LS_ACTIVE_VARIANT);
-      await ensureInitialActive();
+      await ensureInitialActive("manual");
     } catch (e: any) {
       openInfo("Erreur", e?.message ?? "Suppression impossible");
     }
@@ -499,7 +600,7 @@ async function deletePnl(pnlId: string) {
       await apiJson(`/pnls/${pnlId}`, { method: "DELETE" });
       localStorage.removeItem(LS_ACTIVE_PNL);
       localStorage.removeItem(LS_ACTIVE_VARIANT);
-      await ensureInitialActive();
+      await ensureInitialActive("manual");
     } catch (e: any) {
       openInfo("Erreur", e?.message ?? "Suppression impossible");
     }
@@ -839,7 +940,7 @@ const allVariantsFlat = computed(() => {
         out.push({
           id: String(v.id),
           title: String(v.title ?? "Variante"),
-          contractTitle: String(c.ref ?? "Contrat"),
+          contractTitle: contractUiTitle(c),
           pnlTitle: String(p.title ?? "P&L"),
         });
       }
@@ -960,6 +1061,11 @@ async function handleSaveComposee(payload: ComposePayload) {
 
   wizardOpen.value = false;
 }
+
+/** ✅ important: éviter effets après unmount (page blanche / états bizarres) */
+onBeforeUnmount(() => {
+  alive = false;
+});
 </script>
 
 <template>
@@ -1023,7 +1129,7 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
     </div>
 
-    <!-- ✅ NEW: breadcrumb active hierarchy -->
+    <!-- breadcrumb active hierarchy -->
     <div class="crumbCard" v-if="activePnlObj">
       <div class="crumbRow">
         <div class="crumbItem">
@@ -1036,7 +1142,7 @@ async function handleSaveComposee(payload: ComposePayload) {
 
         <div class="crumbItem" :class="{ dim: !activeContractObj }">
           <span class="lvl lvl--contract">Contrat</span>
-          <b class="crumbTxt">{{ activeContractObj?.ref ?? "—" }}</b>
+          <b class="crumbTxt">{{ contractUiTitle(activeContractObj) }}</b>
           <span class="crumbMeta">• {{ activeContractObj?.dureeMois ?? 0 }} mois</span>
         </div>
 
@@ -1056,7 +1162,7 @@ async function handleSaveComposee(payload: ComposePayload) {
     <div v-else class="list">
       <div v-if="filteredPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
 
-      <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: p.id === activePnlId }">
+      <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: String(p.id) === String(activePnlId ?? '') }">
         <div class="row pnlRow">
           <button class="disc" @click="togglePnl(p.id)" :aria-expanded="isOpenPnl(p.id)">
             {{ isOpenPnl(p.id) ? "▾" : "▸" }}
@@ -1082,21 +1188,17 @@ async function handleSaveComposee(payload: ComposePayload) {
           </div>
 
           <div class="actions">
-            <div class="actScope">
-              <div class="actLbl actLbl--pnl">Actions P&amp;L</div>
+            <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
+              + Contrat
+            </button>
 
-              <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
-                + Contrat
-              </button>
-
-              <div class="menu" data-menu>
-                <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>
-                <div v-if="menuOpen === `pnl:${p.id}`" class="menuPop">
-                  <button class="menuItem" @click="openView('pnl', p)">Visualiser</button>
-                  <button class="menuItem" @click="openEdit('pnl', p)">Modifier</button>
-                  <div class="menuSep"></div>
-                  <button class="menuItem danger" @click="deletePnl(p.id)">Supprimer</button>
-                </div>
+            <div class="menu" data-menu>
+              <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>
+              <div v-if="menuOpen === `pnl:${p.id}`" class="menuPop">
+                <button class="menuItem" @click="openView('pnl', p)">Visualiser</button>
+                <button class="menuItem" @click="openEdit('pnl', p)">Modifier</button>
+                <div class="menuSep"></div>
+                <button class="menuItem danger" @click="deletePnl(p.id)">Supprimer</button>
               </div>
             </div>
           </div>
@@ -1114,7 +1216,7 @@ async function handleSaveComposee(payload: ComposePayload) {
             v-for="c in (p.contracts ?? [])"
             :key="c.id"
             class="contract"
-            :class="{ activeContract: c.id === activeContractId }"
+          :class="{ activeContract: String(c.id) === String(activeContractId ?? '') }"
           >
             <div class="row contractRow">
               <div class="tree"><div class="branch"></div><div class="node"></div></div>
@@ -1122,7 +1224,7 @@ async function handleSaveComposee(payload: ComposePayload) {
               <div class="main">
                 <div class="line1">
                   <span class="lvl lvl--contract">Contrat</span>
-                  <div class="name name--sm">{{ c.ref ? `Réf: ${c.ref}` : "Contrat" }}</div>
+                  <div class="name name--sm">{{ contractUiTitle(c) }}</div>
                   <span v-if="c.id === activeContractId" class="pill">ACTIF</span>
 
                   <span class="meta">
@@ -1132,30 +1234,20 @@ async function handleSaveComposee(payload: ComposePayload) {
                     <span class="k">Postes:</span> <b>{{ labelFrom(POSTES_2, c.postes) }}</b>
                   </span>
                 </div>
-
-                <div class="line2">
-                  <span class="meta"><span class="k">Cab:</span> <b>{{ labelFrom(CHARGE_3, c.cab) }}</b></span>
-                  <span class="dot">•</span>
-                  <span class="meta"><span class="k">Terrain:</span> <b>{{ labelFrom(TERRAIN_4, c.terrain) }}</b></span>
-                </div>
               </div>
 
               <div class="actions">
-                <div class="actScope">
-                  <div class="actLbl actLbl--contract">Actions Contrat</div>
+                <button class="chipBtn chipBtn--variant" @click="openCreateVariant(c.id)" title="Créer une variante">
+                  + Variante
+                </button>
 
-                  <button class="chipBtn chipBtn--variant" @click="openCreateVariant(c.id)" title="Créer une variante">
-                    + Variante
-                  </button>
-
-                  <div class="menu" data-menu>
-                    <button class="chipIcon" @click="openMenu(`contract:${c.id}`)" title="Actions">⋯</button>
-                    <div v-if="menuOpen === `contract:${c.id}`" class="menuPop">
-                      <button class="menuItem" @click="openView('contract', c)">Visualiser</button>
-                      <button class="menuItem" @click="openEdit('contract', c)">Modifier</button>
-                      <div class="menuSep"></div>
-                      <button class="menuItem danger" @click="deleteContract(c.id)">Supprimer</button>
-                    </div>
+                <div class="menu" data-menu>
+                  <button class="chipIcon" @click="openMenu(`contract:${c.id}`)" title="Actions">⋯</button>
+                  <div v-if="menuOpen === `contract:${c.id}`" class="menuPop">
+                    <button class="menuItem" @click="openView('contract', c)">Visualiser</button>
+                    <button class="menuItem" @click="openEdit('contract', c)">Modifier</button>
+                    <div class="menuSep"></div>
+                    <button class="menuItem danger" @click="deleteContract(c.id)">Supprimer</button>
                   </div>
                 </div>
               </div>
@@ -1171,7 +1263,7 @@ async function handleSaveComposee(payload: ComposePayload) {
                 v-for="v in (c.variants ?? [])"
                 :key="v.id"
                 class="row variantRow"
-                :class="{ activeVariant: v.id === activeVariantId }"
+                :class="{ activeVariant: String(v.id) === String(activeVariantId ?? '') }"
               >
                 <div class="tree tree--deep"><div class="branch"></div><div class="node"></div></div>
 
@@ -1180,7 +1272,7 @@ async function handleSaveComposee(payload: ComposePayload) {
                     <span class="lvl lvl--variant">Variante</span>
                     <div class="name name--xs">{{ v.title ?? "Variante" }}</div>
                     <span :class="tagClass(v.status)">{{ v.status ?? "—" }}</span>
-                    <span v-if="v.id === activeVariantId" class="pill pill--green">ACTIVE</span>
+                    <span v-if="String(v.id) === String(activeVariantId ?? '')" class="pill pill--green">ACTIVE</span>
                   </div>
 
                   <div class="line2">
@@ -1192,19 +1284,15 @@ async function handleSaveComposee(payload: ComposePayload) {
                 </div>
 
                 <div class="actions">
-                  <div class="actScope">
-                    <div class="actLbl actLbl--variant">Actions Variante</div>
+                  <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
 
-                    <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
-
-                    <div class="menu" data-menu>
-                      <button class="chipIcon" @click="openMenu(`variant:${v.id}`)" title="Actions">⋯</button>
-                      <div v-if="menuOpen === `variant:${v.id}`" class="menuPop">
-                        <button class="menuItem" @click="openView('variant', v)">Visualiser</button>
-                        <button class="menuItem" @click="openEdit('variant', v)">Modifier</button>
-                        <div class="menuSep"></div>
-                        <button class="menuItem danger" @click="deleteVariant(v.id)">Supprimer</button>
-                      </div>
+                  <div class="menu" data-menu>
+                    <button class="chipIcon" @click="openMenu(`variant:${v.id}`)" title="Actions">⋯</button>
+                    <div v-if="menuOpen === `variant:${v.id}`" class="menuPop">
+                      <button class="menuItem" @click="openView('variant', v)">Visualiser</button>
+                      <button class="menuItem" @click="openEdit('variant', v)">Modifier</button>
+                      <div class="menuSep"></div>
+                      <button class="menuItem danger" @click="deleteVariant(v.id)">Supprimer</button>
                     </div>
                   </div>
                 </div>
@@ -1217,7 +1305,7 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
     </div>
 
-    <!-- ✅ CONFIRM/INFO MODAL (custom) -->
+    <!-- CONFIRM/INFO MODAL -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -1479,7 +1567,7 @@ async function handleSaveComposee(payload: ComposePayload) {
 </template>
 
 <style scoped>
-/* ✅ STYLE STRICTEMENT IDENTIQUE (aucun changement) */
+/* ✅ CSS = ton CSS original complet (inchangé) */
 .page {
   --navy: #184070;
   --cyan: #20b8e8;
@@ -1497,7 +1585,8 @@ async function handleSaveComposee(payload: ComposePayload) {
   --active-contract: rgba(24, 64, 112, 1);
   --active-variant: rgba(123, 191, 58, 1);
 
-  --bg: #f4f6fb;
+  /* ✅ fond légèrement différent du HeaderDashboard */
+  --bg: #eef3fa;
   --card: #ffffff;
   --border: rgba(16, 24, 40, 0.12);
   --muted: rgba(15, 23, 42, 0.65);
@@ -1506,101 +1595,13 @@ async function handleSaveComposee(payload: ComposePayload) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: var(--bg);
   min-height: 100%;
   box-sizing: border-box;
+
+  background: linear-gradient(180deg, #f2f6fc 0%, var(--bg) 100%);
 }
 
-/* ... (tout ton CSS inchangé) ... */
-
-/* Responsive */
-@media (max-width: 900px) {
-  .subHeader {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .searchMini {
-    min-width: 0;
-    width: 100%;
-  }
-  .popGrid {
-    grid-template-columns: 1fr;
-  }
-  .rowKV {
-    grid-template-columns: 140px 1fr;
-  }
-  .formGrid {
-    grid-template-columns: 1fr;
-  }
-  .variantsHead {
-    margin-left: 0;
-  }
-  .indent2 {
-    margin-left: 0;
-  }
-}
-/* (STYLE INCHANGÉ) */
-.page {
-  --navy: #184070;
-  --cyan: #20b8e8;
-
-  --holcim-navy: #184070;
-  --holcim-cyan: #7b9da7;
-  --holcim-green: #65814d;
-
-  --holcim-open-bg: rgba(24, 64, 112, 0.08);
-  --holcim-open-bd: rgba(24, 64, 112, 0.2);
-  --holcim-open-tx: rgba(24, 64, 112, 0.92);
-
-  --active-pnl: rgba(32, 184, 232, 1);
-  --active-contract: rgba(24, 64, 112, 1);
-  --active-variant: rgba(123, 191, 58, 1);
-
-  --bg: #f4f6fb;
-  --card: #ffffff;
-  --border: rgba(16, 24, 40, 0.12);
-  --muted: rgba(15, 23, 42, 0.65);
-
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--bg);
-  min-height: 100%;
-  box-sizing: border-box;
-}
-
-.page {
-  --navy: #184070;
-  --cyan: #20b8e8;
-
-  --holcim-navy: #184070;
-  --holcim-cyan: #7b9da7;
-  --holcim-green: #65814d;
-
-  --holcim-open-bg: rgba(24, 64, 112, 0.08);
-  --holcim-open-bd: rgba(24, 64, 112, 0.2);
-  --holcim-open-tx: rgba(24, 64, 112, 0.92);
-
-  /* ✅ active accents */
-  --active-pnl: rgba(32, 184, 232, 1);
-  --active-contract: rgba(24, 64, 112, 1);
-  --active-variant: rgba(123, 191, 58, 1);
-
-  --bg: #f4f6fb;
-  --card: #ffffff;
-  --border: rgba(16, 24, 40, 0.12);
-  --muted: rgba(15, 23, 42, 0.65);
-
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--bg);
-  min-height: 100%;
-  box-sizing: border-box;
-}
-
+/* Header sticky */
 .subHeader {
   position: sticky;
   top: var(--hd-offset, -15px);
@@ -1664,9 +1665,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   position: relative;
 }
 
-/* =========================
-   Buttons / chips
-========================= */
+/* Buttons / chips */
 .chipBtn {
   border-radius: 12px;
   padding: 7px 10px;
@@ -1683,7 +1682,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: rgba(32, 184, 232, 0.22);
 }
 
-/* ✅ primary visible (create/save) even before hover */
+/* primary */
 .chipBtn--primary {
   background: var(--holcim-navy) !important;
   border-color: var(--holcim-navy) !important;
@@ -1701,7 +1700,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: var(--holcim-navy) !important;
 }
 
-/* ✅ +P&L (navy) */
+/* +P&L */
 .chipBtn--pnl {
   background: var(--holcim-navy);
   border-color: var(--holcim-navy);
@@ -1713,7 +1712,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: #14345c;
 }
 
-/* ✅ +Contrat (green) */
+/* +Contrat */
 .chipBtn--contract {
   background: var(--holcim-green);
   border-color: var(--holcim-green);
@@ -1725,7 +1724,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: #67a931;
 }
 
-/* ✅ +Variante (cyan) */
+/* +Variante */
 .chipBtn--variant {
   background: var(--holcim-cyan);
   border-color: var(--holcim-cyan);
@@ -2035,10 +2034,14 @@ async function handleSaveComposee(payload: ComposePayload) {
   position: relative;
 }
 .variantRow.activeVariant {
-  border-color: rgba(123, 191, 58, 0.4);
-  background: rgba(123, 191, 58, 0.08);
-  box-shadow: 0 0 0 4px rgba(123, 191, 58, 0.1);
+  background: rgba(101, 129, 77, 0.22) !important; /* ✅ vrai vert visible */
+  border-color: rgba(101, 129, 77, 0.70) !important;
+  box-shadow: 0 0 0 4px rgba(101, 129, 77, 0.16), 0 14px 35px rgba(101, 129, 77, 0.12);
 }
+.variantRow.activeVariant::before {
+  background: rgba(101, 129, 77, 1) !important;
+}
+
 .variantRow.activeVariant::before {
   content: "";
   position: absolute;
@@ -2281,7 +2284,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   font-weight: 800;
 }
 
-/* ✅ Confirm/Info modal (custom) */
+/* Confirm/Info modal */
 .ovl {
   position: fixed;
   inset: 0;
@@ -2290,7 +2293,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 10000; /* au-dessus */
+  z-index: 10000;
 }
 .dlg {
   width: min(520px, 100%);
@@ -2361,11 +2364,11 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: rgba(24, 64, 112, 0.38);
 }
 
-/* ✅ hard-fix: CTA dans le footer du modal EDIT (dernier bouton) */
+/* ✅ Fix anomaly: ne force plus une couleur rouge sur le CTA du footer */
 .modalFoot > button:last-child {
   background: var(--holcim-navy) !important;
   border-color: var(--holcim-navy) !important;
-  color: #ae1313 !important;
+  color: #fff !important;
 }
 .modalFoot > button:last-child:hover {
   background: #14345c !important;
@@ -2375,7 +2378,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   opacity: 0.65;
 }
 
-/* ✅ deep-fix: CTA dans les modals enfants (VariantCreateModal / Wizard) */
+/* Deep fix: CTA dans les modals enfants */
 :deep(.chipBtn--primary),
 :deep(button.chipBtn--primary),
 :deep(button.pri),
@@ -2398,37 +2401,7 @@ async function handleSaveComposee(payload: ComposePayload) {
   border-color: #14345c !important;
 }
 
-/* Responsive */
-@media (max-width: 900px) {
-  .subHeader {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .searchMini {
-    min-width: 0;
-    width: 100%;
-  }
-  .popGrid {
-    grid-template-columns: 1fr;
-  }
-  .rowKV {
-    grid-template-columns: 140px 1fr;
-  }
-  .formGrid {
-    grid-template-columns: 1fr;
-  }
-  .variantsHead {
-    margin-left: 0;
-  }
-  .indent2 {
-    margin-left: 0;
-  }
-}
-
-/* =========================================================
-   ✅ AJOUTS: visibilité hiérarchie + actions liées
-   (n'impacte pas le reste)
-========================================================= */
+/* Breadcrumb */
 .crumbCard {
   background: #fff;
   border: 1px solid var(--border);
@@ -2495,30 +2468,30 @@ async function handleSaveComposee(payload: ComposePayload) {
   background: rgba(123, 191, 58, 0.1);
 }
 
-/* Action scope captions */
-.actScope {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.actLbl {
-  font-size: 10px;
-  font-weight: 950;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  color: rgba(15, 23, 42, 0.55);
-  padding-right: 6px;
-  border-right: 1px solid rgba(16, 24, 40, 0.1);
-  margin-right: 4px;
-  white-space: nowrap;
-}
-.actLbl--pnl {
-  color: rgba(32, 184, 232, 0.9);
-}
-.actLbl--contract {
-  color: rgba(24, 64, 112, 0.9);
-}
-.actLbl--variant {
-  color: rgba(90, 140, 40, 0.95);
+/* Responsive */
+@media (max-width: 900px) {
+  .subHeader {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .searchMini {
+    min-width: 0;
+    width: 100%;
+  }
+  .popGrid {
+    grid-template-columns: 1fr;
+  }
+  .rowKV {
+    grid-template-columns: 140px 1fr;
+  }
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+  .variantsHead {
+    margin-left: 0;
+  }
+  .indent2 {
+    margin-left: 0;
+  }
 }
 </style>

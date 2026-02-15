@@ -120,7 +120,7 @@ function goToSidebarItem(item: string) {
     MP: "Mp",
 
     Maintenance: "Maintenance",
-"Cout au m3": "CoutM3",
+    "Cout au m3": "CoutM3",
     "Cout au mois": "CoutMensuel",
     "Cout employés": "CoutEmployes",
     "Couts occasionnels": "CoutsOccasionnels",
@@ -533,18 +533,18 @@ function expandAll() {
   padding: 0 10px 12px;
 }
 
-/* ✅ sticky header under HeaderDashboard (hauteur compacte) */
+/* ✅ sticky header : PAS de top négatif (évite chevauchement/hauteur “bizarre”) */
 .pageHead{
   position: sticky;
-  top: -15px; /* adapte si nécessaire */
-  z-index: 30;
+  top: 0;            /* ✅ reste sous HeaderDashboard si la page est déjà sous lui */
+  z-index: 20;       /* ✅ au-dessus du contenu mais sous les modals globaux */
 
   display:flex;
   justify-content:space-between;
   align-items:flex-end;
   gap:10px;
 
-  padding: 8px 0;              /* ✅ compact */
+  padding: 8px 0;    /* ✅ compact */
   background: rgba(248,250,252,0.92);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid rgba(16,24,40,0.08);
@@ -553,11 +553,11 @@ function expandAll() {
 .headL{
   display:flex;
   flex-direction:column;
-  gap:4px;                     /* ✅ compact */
+  gap:4px;
   min-width:0;
 }
 .h1{
-  font-size:14px;              /* ✅ idem style projet */
+  font-size:14px;
   font-weight:1000;
   color: var(--text);
   line-height:1.05;
@@ -581,7 +581,7 @@ function expandAll() {
   border:1px solid rgba(16,24,40,0.10);
   background: rgba(255,255,255,0.82);
   border-radius: 999px;
-  padding: 2px 8px;            /* ✅ compact */
+  padding: 2px 8px;
   font-size: 11px;
   font-weight: 950;
   color: rgba(15,23,42,0.78);
@@ -650,14 +650,14 @@ function expandAll() {
   align-items:stretch;
   justify-content:space-between;
   gap:10px;
-  padding:7px 10px;            /* ✅ compact */
+  padding:7px 10px;
 }
 .row.parent{ background: rgba(15,23,42,0.02); }
 .row.parent:hover{ background: rgba(32,184,232,0.06); }
 .row.child{
   border-top:1px solid rgba(16,24,40,0.08);
   background:#fff;
-  padding:6px 10px;            /* ✅ compact */
+  padding:6px 10px;
 }
 
 /* label area */

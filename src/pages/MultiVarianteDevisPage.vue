@@ -1,12 +1,12 @@
-<!-- src/pages/MultiVarianteDevisPage.vue (FICHIER COMPLET) -->
+<!-- ✅ src/pages/MultiVarianteDevisPage.vue (FICHIER COMPLET — MAJ: titres contrats/variantes sans id) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { contractUiTitle } from "@/services/contractTitle";
 
 import {
   ArrowPathIcon,
   ArrowDownTrayIcon,
-  CheckBadgeIcon,
   ExclamationTriangleIcon,
 } from "@heroicons/vue/24/outline";
 
@@ -33,6 +33,10 @@ function todayFr() {
 }
 function int(v: any) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n(v));
+}
+function vTitle(v: any) {
+  // ✅ pas de fallback sur id
+  return String(v?.title ?? v?.name ?? v?.label ?? "Variante");
 }
 
 /* =========================
@@ -140,7 +144,7 @@ function initPicks() {
 
     // si active variant est dans ce contrat, on la preselect
     const hit = activeVid && vars.some((v) => String(v?.id ?? "") === activeVid);
-if (hit) ensurePick(cid).variantId = activeVid;
+    if (hit) ensurePick(cid).variantId = activeVid;
   }
 
   // init meta depuis pnl
@@ -221,10 +225,10 @@ watch(
         <div class="title">Devis multi-variantes</div>
         <div class="subline">
           <span class="muted">P&L :</span>
-          <b class="ell">{{ pnl?.title ?? "—" }}</b>
+          <b class="ell">{{ pnl?.title ?? pnl?.name ?? "—" }}</b>
           <span class="sep">•</span>
           <span class="muted">Client :</span>
-          <b class="ell">{{ pnl?.client ?? "—" }}</b>
+          <b class="ell">{{ pnl?.client ?? pnl?.clientName ?? "—" }}</b>
         </div>
       </div>
 
@@ -264,7 +268,7 @@ watch(
             <span>Inclure surcharges devis</span>
           </label>
 
-          <div class="muted" style="margin-top:8px;">
+          <div class="muted" style="margin-top: 8px">
             Règle : <b>1 seule variante par contrat</b>. Tu peux sélectionner 0 ou 1 variante pour chaque contrat.
           </div>
         </div>
@@ -291,10 +295,10 @@ watch(
             </div>
           </div>
 
-          <div class="k" style="margin-top:10px;">Introduction</div>
+          <div class="k" style="margin-top: 10px">Introduction</div>
           <textarea class="ta" v-model="meta.intro" rows="3"></textarea>
 
-          <div class="k" style="margin-top:10px;">Validité</div>
+          <div class="k" style="margin-top: 10px">Validité</div>
           <textarea class="ta" v-model="meta.validiteTexte" rows="2"></textarea>
         </div>
       </div>
@@ -318,7 +322,7 @@ watch(
         </div>
       </div>
 
-      <div class="muted" style="margin-top:8px;">
+      <div class="muted" style="margin-top: 8px">
         Date affichée : <b>{{ todayFr() }}</b> • Sélection : <b>{{ selectedVariantIds.length }}</b> proposition(s)
       </div>
     </div>
@@ -333,7 +337,8 @@ watch(
         <div v-for="c in contracts" :key="String(c?.id ?? '')" class="contractCard">
           <div class="contractHead">
             <div class="contractTitle">
-              <div class="ctName">{{ c?.title ?? c?.label ?? `Contrat ${String(c?.id ?? '').slice(0,6)}` }}</div>
+              <!-- ✅ titre contrat: via helper, pas d'id -->
+              <div class="ctName">{{ contractUiTitle(c) }}</div>
               <div class="ctSub muted">
                 Durée : <b>{{ int(c?.dureeMois) }}</b> mois
                 <span class="sep">•</span>
@@ -359,7 +364,8 @@ watch(
               />
               <div class="varInfo">
                 <div class="varTitle">
-                  <b class="ell">{{ v?.title ?? `Variante ${String(v?.id ?? '').slice(0,6)}` }}</b>
+                  <!-- ✅ titre variante: pas d'id -->
+                  <b class="ell">{{ vTitle(v) }}</b>
                 </div>
                 <div class="muted varSub">(Export = proposition dédiée à ce contrat)</div>
               </div>
@@ -381,11 +387,9 @@ watch(
         </div>
       </div>
 
-      <div v-if="!canExport" class="alert warn" style="margin-top:10px;">
+      <div v-if="!canExport" class="alert warn" style="margin-top: 10px">
         <ExclamationTriangleIcon class="ic" />
-        <div>
-          Sélectionne au moins <b>une</b> variante (et max <b>une</b> par contrat) pour activer l’export.
-        </div>
+        <div>Sélectionne au moins <b>une</b> variante (et max <b>une</b> par contrat) pour activer l’export.</div>
       </div>
     </div>
   </div>

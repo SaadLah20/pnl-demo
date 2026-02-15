@@ -13,6 +13,8 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
+import { contractUiTitle } from "@/services/contractTitle";
+
 
 import {
   ArrowPathIcon,
@@ -139,11 +141,9 @@ function vTitle(v: any) {
   return String(v?.title ?? v?.name ?? v?.label ?? v?.id ?? "Variante");
 }
 function cTitle(c: any) {
-  const client = c?.client ?? c?.clientName ?? null;
-  const name = c?.title ?? c?.name ?? null;
-  const bits = [client, name].filter(Boolean);
-  return bits.length ? bits.join(" — ") : String(c?.id ?? "Contrat");
+  return contractUiTitle(c);
 }
+
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
@@ -503,9 +503,9 @@ const scatter = computed(() => {
         <div
           class="hSub ellipsis"
           v-if="activePnl"
-          :title="String(activePnl?.title ?? activePnl?.name ?? activePnl?.id)"
+        :title="String(activePnl?.title ?? activePnl?.name ?? '—')"
         >
-          PNL: <b>{{ activePnl?.title ?? activePnl?.name ?? activePnl?.id }}</b>
+          PNL: <b>{{ activePnl?.title ?? activePnl?.name ?? "—" }}</b>
           <span class="sep">•</span>
           Variantes (valides): <b>{{ rowsScopeRaw.length }}</b>
           <span class="sep">•</span>
