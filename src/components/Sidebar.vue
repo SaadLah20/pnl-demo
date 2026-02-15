@@ -119,7 +119,6 @@ const routeByItem: Record<string, string> = {
   "Comparateur de variantes": "ComparateurVariantes",
   Devis: "Devis",
   "Générer devis multi-variantes": "MultiVarianteDevis",
-
 };
 
 function goToPage(item: string) {
@@ -251,47 +250,6 @@ const generalItems = computed(() => [
 ]);
 
 /* =====================
-   VARIANT SELECTOR
-===================== */
-const activePnl = computed(() => store.activePnl);
-
-type VariantOption = {
-  contractId: string;
-  contractLabel: string;
-  variantId: string;
-  variantLabel: string;
-};
-
-const variantOptions = computed<VariantOption[]>(() => {
-  const pnl = activePnl.value;
-  if (!pnl?.contracts?.length) return [];
-
-  const out: VariantOption[] = [];
-  for (const c of pnl.contracts ?? []) {
-    const cId = String(c.id ?? "");
-    const cLabel = c?.title ? String(c.title) : cId ? `Contrat ${cId.slice(0, 6)}` : "Contrat";
-    for (const v of c.variants ?? []) {
-      out.push({
-        contractId: cId,
-        contractLabel: cLabel,
-        variantId: String(v.id),
-        variantLabel: String(v.title ?? `Variante ${String(v.id).slice(0, 6)}`),
-      });
-    }
-  }
-  return out;
-});
-
-const activeVariantId = computed(() => String(store.activeVariantId ?? ""));
-
-function setActiveVariant(id: string) {
-  const anyStore: any = store as any;
-  if (typeof anyStore.setActiveVariant === "function") anyStore.setActiveVariant(id);
-  else if (typeof anyStore.setActiveVariantId === "function") anyStore.setActiveVariantId(id);
-  else anyStore.activeVariantId = id;
-}
-
-/* =====================
    UI helpers
 ===================== */
 function toggle(key: keyof OpenState) {
@@ -311,21 +269,27 @@ function setAllVariantSections(expand: boolean) {
   open.value.couts = expand;
   open.value.devis = expand;
 }
+
+// ✅ (optionnel) logique “UX fluide” : désactiver la navigation “Variante active” si aucune variante active
+const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
 </script>
 
 <template>
   <aside class="sb">
-    <!-- TOP (now scrolls too) -->
+    <!-- TOP (compact) -->
     <div class="sb__top">
-      <div class="sb__brand">
-        <div class="sb__logoWrap">
+      <div class="sb__brandRow">
+        <div class="sb__logoWrap" title="Holcim">
           <img class="sb__logo" :src="holcimLogoUrl" alt="Holcim" />
         </div>
 
-        <div class="sb__title">P&L Creator</div>
-        <div class="sb__subtitle">Analyse & marges</div>
+        <div class="sb__brandText">
+          <div class="sb__title">P&L Creator</div>
+          <div class="sb__subtitle">Analyse & marges</div>
+        </div>
       </div>
 
+      <!-- profile compact -->
       <div class="sb__profile">
         <img
           class="sb__avatar"
@@ -339,7 +303,7 @@ function setAllVariantSections(expand: boolean) {
       </div>
     </div>
 
-    <!-- CONTENT (was sb__scroll) -->
+    <!-- CONTENT -->
     <div class="sb__contentScroll">
       <!-- GENERAL -->
       <section class="sb__block">
@@ -363,7 +327,7 @@ function setAllVariantSections(expand: boolean) {
         </nav>
       </section>
 
-      <!-- VARIANTE ACTIVE -->
+      <!-- VARIANTE ACTIVE (sans sélecteur) -->
       <section class="sb__block sb__block--accent">
         <header class="sb__blockHead" @click="toggle('varianteActive')">
           <div class="sb__blockTitle">Variante active</div>
@@ -371,36 +335,14 @@ function setAllVariantSections(expand: boolean) {
         </header>
 
         <div v-show="open.varianteActive" class="sb__content">
-          <!-- selector -->
-          <div class="sb__card">
-            <select
-              class="sb__select"
-              :value="activeVariantId"
-              @change="setActiveVariant(($event.target as HTMLSelectElement).value)"
-            >
-              <option value="" disabled>— Choisir une variante —</option>
-
-              <template v-for="c in Array.from(new Set(variantOptions.map((v) => v.contractLabel)))" :key="c">
-                <optgroup :label="c">
-                  <option
-                    v-for="v in variantOptions.filter((x) => x.contractLabel === c)"
-                    :key="v.variantId"
-                    :value="v.variantId"
-                  >
-                    {{ v.variantLabel }}
-                  </option>
-                </optgroup>
-              </template>
-            </select>
-          </div>
-
-          <!-- TREE -->
-          <div class="sb__tree">
+          <div class="sb__tree" :class="{ 'is-disabled': !hasActiveVariant }">
             <button
               type="button"
               class="sb__leaf"
               :class="{ 'is-active': activeItem === 'Détails' }"
+              :disabled="!hasActiveVariant"
               @click="goToPage('Détails')"
+              :title="!hasActiveVariant ? 'Sélectionne une variante pour accéder aux sections' : ''"
             >
               <component :is="icons['Détails']" class="sb__icon" />
               <span class="sb__label">Détails</span>
@@ -408,7 +350,12 @@ function setAllVariantSections(expand: boolean) {
 
             <!-- Sections + quick expand/collapse -->
             <div class="sb__row">
-              <button type="button" class="sb__parent sb__parent--row" @click="toggle('sections')">
+              <button
+                type="button"
+                class="sb__parent sb__parent--row"
+                :disabled="!hasActiveVariant"
+                @click="toggle('sections')"
+              >
                 <component :is="open.sections ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
                 <span class="sb__parentTitle">Sections</span>
               </button>
@@ -416,8 +363,9 @@ function setAllVariantSections(expand: boolean) {
               <button
                 type="button"
                 class="sb__miniBtn"
+                :disabled="!hasActiveVariant"
                 @click="setAllVariantSections(!allExpanded)"
-                :title="allExpanded ? 'Tout replier' : 'Tout déplier'"
+                :title="!hasActiveVariant ? 'Sélectionne une variante' : allExpanded ? 'Tout replier' : 'Tout déplier'"
               >
                 {{ allExpanded ? "Replier" : "Déplier" }}
               </button>
@@ -425,7 +373,12 @@ function setAllVariantSections(expand: boolean) {
 
             <div v-show="open.sections" class="sb__children">
               <!-- Approvisionnement -->
-              <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('appro')">
+              <button
+                type="button"
+                class="sb__parent sb__parent--lvl2"
+                :disabled="!hasActiveVariant"
+                @click="toggle('appro')"
+              >
                 <component :is="open.appro ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
                 <component :is="icons['Approvisionnement']" class="sb__icon" />
                 <span class="sb__parentTitle">Approvisionnement</span>
@@ -435,6 +388,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'MP' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('MP')"
                 >
                   <component :is="icons['MP']" class="sb__icon" />
@@ -444,6 +398,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Transport' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Transport')"
                 >
                   <component :is="icons['Transport']" class="sb__icon" />
@@ -452,7 +407,12 @@ function setAllVariantSections(expand: boolean) {
               </div>
 
               <!-- Formules -->
-              <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('formules')">
+              <button
+                type="button"
+                class="sb__parent sb__parent--lvl2"
+                :disabled="!hasActiveVariant"
+                @click="toggle('formules')"
+              >
                 <component :is="open.formules ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
                 <component :is="icons['Formules']" class="sb__icon" />
                 <span class="sb__parentTitle">Formules</span>
@@ -462,6 +422,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Formules' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Formules')"
                 >
                   <component :is="icons['Formules']" class="sb__icon" />
@@ -471,6 +432,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Qté et MOMD' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Qté et MOMD')"
                 >
                   <component :is="icons['Qté et MOMD']" class="sb__icon" />
@@ -479,7 +441,12 @@ function setAllVariantSections(expand: boolean) {
               </div>
 
               <!-- Coûts -->
-              <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('couts')">
+              <button
+                type="button"
+                class="sb__parent sb__parent--lvl2"
+                :disabled="!hasActiveVariant"
+                @click="toggle('couts')"
+              >
                 <component :is="open.couts ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
                 <component :is="icons['Coûts']" class="sb__icon" />
                 <span class="sb__parentTitle">Coûts</span>
@@ -489,6 +456,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'CAB' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('CAB')"
                 >
                   <component :is="icons['CAB']" class="sb__icon" />
@@ -498,6 +466,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Maintenance' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Maintenance')"
                 >
                   <component :is="icons['Maintenance']" class="sb__icon" />
@@ -507,6 +476,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Cout au m3' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Cout au m3')"
                 >
                   <component :is="icons['Cout au m3']" class="sb__icon" />
@@ -516,6 +486,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Cout au mois' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Cout au mois')"
                 >
                   <component :is="icons['Cout au mois']" class="sb__icon" />
@@ -525,6 +496,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Cout employés' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Cout employés')"
                 >
                   <component :is="icons['Cout employés']" class="sb__icon" />
@@ -534,6 +506,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Couts occasionnels' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Couts occasionnels')"
                 >
                   <component :is="icons['Couts occasionnels']" class="sb__icon" />
@@ -543,6 +516,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Autres couts' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Autres couts')"
                 >
                   <component :is="icons['Autres couts']" class="sb__icon" />
@@ -551,7 +525,12 @@ function setAllVariantSections(expand: boolean) {
               </div>
 
               <!-- Devis -->
-              <button type="button" class="sb__parent sb__parent--lvl2" @click="toggle('devis')">
+              <button
+                type="button"
+                class="sb__parent sb__parent--lvl2"
+                :disabled="!hasActiveVariant"
+                @click="toggle('devis')"
+              >
                 <component :is="open.devis ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
                 <component :is="icons['Devis']" class="sb__icon" />
                 <span class="sb__parentTitle">Devis</span>
@@ -561,6 +540,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Majorations' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Majorations')"
                 >
                   <component :is="icons['Majorations']" class="sb__icon" />
@@ -570,6 +550,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Devis' }"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Devis')"
                 >
                   <component :is="DocumentPlusIcon" class="sb__icon" />
@@ -609,29 +590,26 @@ function setAllVariantSections(expand: boolean) {
   --text: #0f172a;
   --muted: rgba(15, 23, 42, 0.62);
 
-  width: 268px; /* ✅ un peu plus étroit */
+  width: 268px;
   height: 100vh;
-
-  /* ✅ CHANGE: the whole sidebar scrolls (top + content + bottom) */
   overflow: auto;
 
   background: var(--bg);
   border-right: 1px solid var(--border);
-  padding: 10px; /* ✅ plus compact */
+  padding: 10px;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 
   display: flex;
   flex-direction: column;
 }
 
-/* ✅ NEW wrapper replacing old sb__scroll */
+/* scroll */
 .sb__contentScroll {
   display: block;
-  padding-right: 2px; /* petit confort scrollbar */
-  padding-bottom: 14px; /* ✅ évite que le dernier bloc soit mangé */
+  padding-right: 2px;
+  padding-bottom: 14px;
 }
 
-/* ✅ Optional: nicer scrollbar (Chrome/Edge) */
 .sb::-webkit-scrollbar {
   width: 10px;
 }
@@ -644,52 +622,60 @@ function setAllVariantSections(expand: boolean) {
   background: rgba(15, 23, 42, 0.24);
 }
 
+/* TOP compact */
 .sb__top {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 10px;
 }
 
-.sb__bottom {
-  margin-top: 10px;
-  padding-bottom: 10px; /* ✅ */
-}
-
-
-.sb__brand {
-  display: grid;
-  gap: 5px;
+.sb__brandRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .sb__logoWrap {
+  width: 54px;
+  height: 36px;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 2px 3px;
+  padding: 2px 6px;
+  display: grid;
+  place-items: center;
 }
 
 .sb__logo {
-  display: block;
   width: 100%;
-  height: 44px; /* ✅ réduit */
+  height: 100%;
   object-fit: contain;
+  display: block;
+}
+
+.sb__brandText {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
 }
 
 .sb__title {
-  font-weight: 800;
+  font-weight: 850;
   letter-spacing: -0.2px;
   color: var(--navy);
-  font-size: 1.02rem;
+  font-size: 0.98rem;
   line-height: 1.1;
 }
 
 .sb__subtitle {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--muted);
+  line-height: 1.1;
 }
 
+/* profile compact */
 .sb__profile {
   display: flex;
   align-items: center;
@@ -697,12 +683,12 @@ function setAllVariantSections(expand: boolean) {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 9px; /* ✅ réduit */
+  padding: 8px;
 }
 
 .sb__avatar {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: #fff;
@@ -713,19 +699,19 @@ function setAllVariantSections(expand: boolean) {
   display: grid;
   gap: 2px;
 }
-
 .sb__name {
-  font-weight: 700;
-  font-size: 0.88rem;
+  font-weight: 750;
+  font-size: 0.86rem;
   color: var(--text);
   line-height: 1.1;
 }
-
 .sb__role {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--muted);
+  line-height: 1.1;
 }
 
+/* blocks */
 .sb__block {
   margin-top: 10px;
   background: var(--panel);
@@ -742,14 +728,14 @@ function setAllVariantSections(expand: boolean) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px; /* ✅ réduit */
+  padding: 8px 10px;
   background: rgba(255, 255, 255, 0.6);
   cursor: pointer;
   user-select: none;
 }
 
 .sb__blockTitle {
-  font-weight: 800;
+  font-weight: 850;
   font-size: 0.84rem;
   color: var(--navy);
 }
@@ -759,6 +745,7 @@ function setAllVariantSections(expand: boolean) {
   color: var(--muted);
 }
 
+/* nav items */
 .sb__nav {
   display: grid;
   gap: 5px;
@@ -773,7 +760,7 @@ function setAllVariantSections(expand: boolean) {
   width: 100%;
   border: 1px solid transparent;
   background: transparent;
-  padding: 7px 9px; /* ✅ réduit */
+  padding: 7px 9px;
   border-radius: 10px;
   cursor: pointer;
   color: var(--text);
@@ -805,35 +792,14 @@ function setAllVariantSections(expand: boolean) {
   white-space: nowrap;
 }
 
+/* content */
 .sb__content {
   padding: 9px 9px 10px;
   display: grid;
   gap: 9px;
 }
 
-.sb__card {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 9px;
-}
-
-.sb__select {
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid rgba(16, 24, 40, 0.14);
-  border-radius: 10px;
-  background: #fff;
-  color: var(--text);
-  font-size: 0.84rem;
-  outline: none;
-}
-
-.sb__select:focus {
-  border-color: rgba(32, 184, 232, 0.55);
-  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.18);
-}
-
+/* tree */
 .sb__tree {
   background: #fff;
   border: 1px solid var(--border);
@@ -841,6 +807,10 @@ function setAllVariantSections(expand: boolean) {
   padding: 8px;
   display: grid;
   gap: 6px;
+}
+
+.sb__tree.is-disabled {
+  opacity: 0.72;
 }
 
 .sb__leaf {
@@ -869,6 +839,10 @@ function setAllVariantSections(expand: boolean) {
   color: #fff;
 }
 
+.sb__leaf:disabled {
+  cursor: not-allowed;
+}
+
 .sb__leaf--small {
   padding: 6px 9px;
   font-size: 0.84rem;
@@ -894,6 +868,10 @@ function setAllVariantSections(expand: boolean) {
   text-align: left;
 }
 
+.sb__parent:disabled {
+  cursor: not-allowed;
+}
+
 .sb__parent--row {
   flex: 1 1 auto;
 }
@@ -908,7 +886,7 @@ function setAllVariantSections(expand: boolean) {
 }
 
 .sb__parentTitle {
-  font-weight: 800;
+  font-weight: 850;
   font-size: 0.84rem;
   color: var(--text);
 }
@@ -927,7 +905,7 @@ function setAllVariantSections(expand: boolean) {
   border-radius: 10px;
   padding: 7px 10px;
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 850;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -935,6 +913,11 @@ function setAllVariantSections(expand: boolean) {
 .sb__miniBtn:hover {
   background: rgba(32, 184, 232, 0.12);
   border-color: rgba(32, 184, 232, 0.24);
+}
+
+.sb__miniBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
 }
 
 .sb__children {
@@ -950,12 +933,13 @@ function setAllVariantSections(expand: boolean) {
   border-left-style: dashed;
 }
 
-/* bottom archives */
+/* bottom */
 .sb__bottom {
   flex: 0 0 auto;
   padding-top: 10px;
   border-top: 1px solid var(--border);
   margin-top: 10px;
+  padding-bottom: 10px;
 }
 
 .sb__archiveBtn {

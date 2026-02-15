@@ -265,6 +265,26 @@ const activeContractId = computed(() => {
   return null;
 });
 
+/* ✅ NEW: objects for breadcrumb */
+const activePnlObj = computed<any | null>(() => {
+  const id = activePnlId.value;
+  return id ? pnls.value.find((p) => String(p.id) === String(id)) ?? null : null;
+});
+
+const activeContractObj = computed<any | null>(() => {
+  const pnl = activePnlObj.value;
+  const cid = activeContractId.value;
+  if (!pnl || !cid) return null;
+  return (pnl.contracts ?? []).find((c: any) => String(c.id) === String(cid)) ?? null;
+});
+
+const activeVariantObj = computed<any | null>(() => {
+  const c = activeContractObj.value;
+  const vid = activeVariantId.value;
+  if (!c || !vid) return null;
+  return (c.variants ?? []).find((v: any) => String(v.id) === String(vid)) ?? null;
+});
+
 /* =========================================================
    UI state
 ========================================================= */
@@ -657,7 +677,6 @@ function openCreatePnl() {
   draft.client = "";
   draft.city = "";
   draft.status = "ENCOURS";
-  // ✅ choix par défaut valide
   draft.model = PNL_MODELS[0];
   draft.startDate = new Date().toISOString().slice(0, 10);
 }
@@ -695,7 +714,6 @@ async function saveEdit() {
   try {
     if (editMode.value === "pnl") {
       if (isCreate.value) {
-        // ✅ sécurité: obligation côté logique
         if (!String(draft.model ?? "").trim()) {
           throw new Error("Veuillez choisir un modèle.");
         }
@@ -1005,6 +1023,33 @@ async function handleSaveComposee(payload: ComposePayload) {
       </div>
     </div>
 
+    <!-- ✅ NEW: breadcrumb active hierarchy -->
+    <div class="crumbCard" v-if="activePnlObj">
+      <div class="crumbRow">
+        <div class="crumbItem">
+          <span class="lvl lvl--pnl">P&amp;L</span>
+          <b class="crumbTxt">{{ activePnlObj?.title ?? "-" }}</b>
+          <span class="crumbMeta">• {{ activePnlObj?.client ?? "-" }}</span>
+        </div>
+
+        <span class="crumbArrow">›</span>
+
+        <div class="crumbItem" :class="{ dim: !activeContractObj }">
+          <span class="lvl lvl--contract">Contrat</span>
+          <b class="crumbTxt">{{ activeContractObj?.ref ?? "—" }}</b>
+          <span class="crumbMeta">• {{ activeContractObj?.dureeMois ?? 0 }} mois</span>
+        </div>
+
+        <span class="crumbArrow">›</span>
+
+        <div class="crumbItem" :class="{ dim: !activeVariantObj }">
+          <span class="lvl lvl--variant">Variante</span>
+          <b class="crumbTxt">{{ activeVariantObj?.title ?? "—" }}</b>
+          <span class="crumbMeta">• {{ activeVariantObj?.status ?? "—" }}</span>
+        </div>
+      </div>
+    </div>
+
     <div v-if="store.loading" class="card">Chargement…</div>
     <div v-else-if="store.error" class="card card--error"><b>Erreur :</b> {{ store.error }}</div>
 
@@ -1019,6 +1064,7 @@ async function handleSaveComposee(payload: ComposePayload) {
 
           <div class="main">
             <div class="line1">
+              <span class="lvl lvl--pnl">P&amp;L</span>
               <div class="name">{{ p.title }}</div>
               <span :class="tagClass(p.status)">{{ p.status ?? "—" }}</span>
               <span v-if="p.id === activePnlId" class="pill">ACTIF</span>
@@ -1036,17 +1082,21 @@ async function handleSaveComposee(payload: ComposePayload) {
           </div>
 
           <div class="actions">
-            <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
-              + Contrat
-            </button>
+            <div class="actScope">
+              <div class="actLbl actLbl--pnl">Actions P&amp;L</div>
 
-            <div class="menu" data-menu>
-              <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>
-              <div v-if="menuOpen === `pnl:${p.id}`" class="menuPop">
-                <button class="menuItem" @click="openView('pnl', p)">Visualiser</button>
-                <button class="menuItem" @click="openEdit('pnl', p)">Modifier</button>
-                <div class="menuSep"></div>
-                <button class="menuItem danger" @click="deletePnl(p.id)">Supprimer</button>
+              <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
+                + Contrat
+              </button>
+
+              <div class="menu" data-menu>
+                <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>
+                <div v-if="menuOpen === `pnl:${p.id}`" class="menuPop">
+                  <button class="menuItem" @click="openView('pnl', p)">Visualiser</button>
+                  <button class="menuItem" @click="openEdit('pnl', p)">Modifier</button>
+                  <div class="menuSep"></div>
+                  <button class="menuItem danger" @click="deletePnl(p.id)">Supprimer</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1071,9 +1121,11 @@ async function handleSaveComposee(payload: ComposePayload) {
 
               <div class="main">
                 <div class="line1">
-                  <div class="name name--sm">Contrat</div>
+                  <span class="lvl lvl--contract">Contrat</span>
+                  <div class="name name--sm">{{ c.ref ? `Réf: ${c.ref}` : "Contrat" }}</div>
+                  <span v-if="c.id === activeContractId" class="pill">ACTIF</span>
+
                   <span class="meta">
-                    <span class="k">Réf:</span> <b>{{ c.ref ?? "-" }}</b>
                     <span class="dot">•</span>
                     <span class="k">Durée:</span> <b>{{ c.dureeMois ?? 0 }}</b> mois
                     <span class="dot">•</span>
@@ -1089,17 +1141,21 @@ async function handleSaveComposee(payload: ComposePayload) {
               </div>
 
               <div class="actions">
-                <button class="chipBtn chipBtn--variant" @click="openCreateVariant(c.id)" title="Créer une variante">
-                  + Variante
-                </button>
+                <div class="actScope">
+                  <div class="actLbl actLbl--contract">Actions Contrat</div>
 
-                <div class="menu" data-menu>
-                  <button class="chipIcon" @click="openMenu(`contract:${c.id}`)" title="Actions">⋯</button>
-                  <div v-if="menuOpen === `contract:${c.id}`" class="menuPop">
-                    <button class="menuItem" @click="openView('contract', c)">Visualiser</button>
-                    <button class="menuItem" @click="openEdit('contract', c)">Modifier</button>
-                    <div class="menuSep"></div>
-                    <button class="menuItem danger" @click="deleteContract(c.id)">Supprimer</button>
+                  <button class="chipBtn chipBtn--variant" @click="openCreateVariant(c.id)" title="Créer une variante">
+                    + Variante
+                  </button>
+
+                  <div class="menu" data-menu>
+                    <button class="chipIcon" @click="openMenu(`contract:${c.id}`)" title="Actions">⋯</button>
+                    <div v-if="menuOpen === `contract:${c.id}`" class="menuPop">
+                      <button class="menuItem" @click="openView('contract', c)">Visualiser</button>
+                      <button class="menuItem" @click="openEdit('contract', c)">Modifier</button>
+                      <div class="menuSep"></div>
+                      <button class="menuItem danger" @click="deleteContract(c.id)">Supprimer</button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1121,6 +1177,7 @@ async function handleSaveComposee(payload: ComposePayload) {
 
                 <div class="main">
                   <div class="line1">
+                    <span class="lvl lvl--variant">Variante</span>
                     <div class="name name--xs">{{ v.title ?? "Variante" }}</div>
                     <span :class="tagClass(v.status)">{{ v.status ?? "—" }}</span>
                     <span v-if="v.id === activeVariantId" class="pill pill--green">ACTIVE</span>
@@ -1135,15 +1192,19 @@ async function handleSaveComposee(payload: ComposePayload) {
                 </div>
 
                 <div class="actions">
-                  <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
+                  <div class="actScope">
+                    <div class="actLbl actLbl--variant">Actions Variante</div>
 
-                  <div class="menu" data-menu>
-                    <button class="chipIcon" @click="openMenu(`variant:${v.id}`)" title="Actions">⋯</button>
-                    <div v-if="menuOpen === `variant:${v.id}`" class="menuPop">
-                      <button class="menuItem" @click="openView('variant', v)">Visualiser</button>
-                      <button class="menuItem" @click="openEdit('variant', v)">Modifier</button>
-                      <div class="menuSep"></div>
-                      <button class="menuItem danger" @click="deleteVariant(v.id)">Supprimer</button>
+                    <button class="chipBtn chipBtn--open" @click="openVariant(p.id, c.id, v.id)">Ouvrir</button>
+
+                    <div class="menu" data-menu>
+                      <button class="chipIcon" @click="openMenu(`variant:${v.id}`)" title="Actions">⋯</button>
+                      <div v-if="menuOpen === `variant:${v.id}`" class="menuPop">
+                        <button class="menuItem" @click="openView('variant', v)">Visualiser</button>
+                        <button class="menuItem" @click="openEdit('variant', v)">Modifier</button>
+                        <div class="menuSep"></div>
+                        <button class="menuItem danger" @click="deleteVariant(v.id)">Supprimer</button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1284,7 +1345,6 @@ async function handleSaveComposee(payload: ComposePayload) {
                 </select>
               </div>
 
-              <!-- ✅ MODEL: obligatoire + 3 choix en création; verrouillé en édition -->
               <div class="f">
                 <div class="k">Modèle</div>
                 <select v-if="isCreate" class="in" v-model="draft.model">
@@ -1371,7 +1431,6 @@ async function handleSaveComposee(payload: ComposePayload) {
                 <input class="in" v-model="draft.title" placeholder="Titre de la variante" />
               </div>
 
-              <!-- ✅ MODIF: Statut variante (uniquement ici) -->
               <div class="f">
                 <div class="k">Statut</div>
                 <select class="in" v-model="draft.status">
@@ -2364,5 +2423,102 @@ async function handleSaveComposee(payload: ComposePayload) {
   .indent2 {
     margin-left: 0;
   }
+}
+
+/* =========================================================
+   ✅ AJOUTS: visibilité hiérarchie + actions liées
+   (n'impacte pas le reste)
+========================================================= */
+.crumbCard {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 8px 10px;
+  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+}
+.crumbRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.crumbItem {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.crumbItem.dim {
+  opacity: 0.55;
+}
+.crumbTxt {
+  font-size: 12.5px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.92);
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crumbMeta {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.6);
+}
+.crumbArrow {
+  color: rgba(15, 23, 42, 0.25);
+  font-weight: 950;
+}
+
+/* Level badges */
+.lvl {
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.02);
+  color: rgba(15, 23, 42, 0.72);
+}
+.lvl--pnl {
+  border-color: rgba(32, 184, 232, 0.3);
+  background: rgba(32, 184, 232, 0.1);
+}
+.lvl--contract {
+  border-color: rgba(24, 64, 112, 0.28);
+  background: rgba(24, 64, 112, 0.08);
+}
+.lvl--variant {
+  border-color: rgba(123, 191, 58, 0.28);
+  background: rgba(123, 191, 58, 0.1);
+}
+
+/* Action scope captions */
+.actScope {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.actLbl {
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.55);
+  padding-right: 6px;
+  border-right: 1px solid rgba(16, 24, 40, 0.1);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.actLbl--pnl {
+  color: rgba(32, 184, 232, 0.9);
+}
+.actLbl--contract {
+  color: rgba(24, 64, 112, 0.9);
+}
+.actLbl--variant {
+  color: rgba(90, 140, 40, 0.95);
 }
 </style>

@@ -1,13 +1,10 @@
+<!-- ✅ HeaderDashboard.vue (FICHIER COMPLET / clair + pro + P&L dominant + EBIT hero conservé) -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import HeaderActionsModals from "@/components/HeaderActionsModals.vue";
 
-
 const actionsRef = ref<InstanceType<typeof HeaderActionsModals> | null>(null);
-
-
-
 
 // Heroicons
 import {
@@ -34,21 +31,13 @@ type KpiName =
   | "EBIT"
   | "Amortissement";
 
-type KpiValues = {
-  total: number;
-  m3: number;
-  month: number;
-  percent: number;
-};
-
+type KpiValues = { total: number; m3: number; month: number; percent: number };
 type Metrics = Record<KpiName, KpiValues>;
 
 const store = usePnlStore();
 
-
-
 /* =========================
-   ✅ TOGGLES (AJOUT)
+   ✅ TOGGLES
 ========================= */
 const withMajorations = computed<boolean>({
   get: () => Boolean((store as any).headerUseMajorations ?? false),
@@ -239,7 +228,7 @@ const kpiLeftRow1: KpiName[] = ["ASP", "CMP", "Transport", "MOMD"];
 const kpiLeftRow2: KpiName[] = ["Production", "EBITDA", "Amortissement", "EBIT"];
 
 /* =========================
-   Buttons (placeholders)
+   Buttons
 ========================= */
 function viewPnl() {
   actionsRef.value?.openViewPnl();
@@ -259,10 +248,8 @@ function newVariant() {
 function editVariant() {
   actionsRef.value?.openEditVariant();
 }
-
 function duplicateVariant() {
-  console.log("CLICK DUP / method =", (actionsRef.value as any)?.openDuplicateVariant);
-  actionsRef.value?.openDuplicateVariant();
+  actionsRef.value?.openDuplicateVariant?.();
 }
 
 /* =========================
@@ -312,15 +299,16 @@ function calcDropdownPosition() {
 
   const r = btn.getBoundingClientRect();
   const gap = 8;
-  const maxW = 560;
 
-  const left = Math.min(Math.max(8, r.left), window.innerWidth - 8);
-  const width = Math.min(maxW, window.innerWidth - 16);
+  // ✅ touche: dropdown plus large + aligné avec le selector P&L
+  const desired = Math.min(760, Math.max(560, r.width)); // >= 560, jusqu'à 760
+  const width = Math.min(desired, window.innerWidth - 16);
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - width - 8);
 
   ddStyle.value = {
     position: "fixed",
     top: `${Math.min(window.innerHeight - 12, r.bottom + gap)}px`,
-    left: `${Math.min(left, window.innerWidth - width - 8)}px`,
+    left: `${left}px`,
     width: `${width}px`,
     zIndex: "100000",
   };
@@ -330,7 +318,6 @@ function openPnlDropdown() {
   if (collapsed.value) collapsed.value = false;
   pnlOpen.value = !pnlOpen.value;
 }
-
 function closePnlDropdown() {
   pnlOpen.value = false;
 }
@@ -347,7 +334,6 @@ function onDocClick(e: MouseEvent) {
 
   closePnlDropdown();
 }
-
 function onEsc(e: KeyboardEvent) {
   if (e.key === "Escape") closePnlDropdown();
 }
@@ -366,7 +352,6 @@ onMounted(() => {
   document.addEventListener("mousedown", onDocClick, true);
   document.addEventListener("keydown", onEsc);
 });
-
 onBeforeUnmount(() => {
   window.removeEventListener("resize", calcDropdownPosition);
   window.removeEventListener("scroll", calcDropdownPosition, true as any);
@@ -382,6 +367,10 @@ onBeforeUnmount(() => {
       <div class="pill pnl control">
         <button ref="pnlBtnRef" type="button" class="pill__head" @click="openPnlDropdown">
           <span class="pill__label">P&L</span>
+
+          <!-- ✅ touche: petite pastille "actif" discrète -->
+          <span class="pill__badge" title="P&L actif">Actif</span>
+
           <span class="pill__value" :title="projectName">{{ projectName }}</span>
           <ChevronDownIcon class="pill__chev" :class="{ rot: pnlOpen }" />
         </button>
@@ -392,7 +381,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- ✅ Toggles à droite du P&L -->
+      <!-- Toggles -->
       <div class="hdToggles" aria-label="Options header">
         <label class="toggSm">
           <input class="toggSm__cb" type="checkbox" v-model="withMajorations" />
@@ -430,7 +419,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Variante selector (comme pnl/contrat) -->
+      <!-- Variante selector -->
       <div class="pill variant control">
         <div class="pill__head contractHead">
           <Squares2X2Icon class="pill__miniic" />
@@ -606,11 +595,12 @@ onBeforeUnmount(() => {
       </div>
     </teleport>
   </header>
+
   <HeaderActionsModals ref="actionsRef" />
 </template>
 
 <style scoped>
-/* ===== Header frame (Holcim + Sidebar coherent) ===== */
+/* ===== Header frame ===== */
 .hd {
   --navy: #184070;
   --cyan: #20b8e8;
@@ -624,49 +614,53 @@ onBeforeUnmount(() => {
   z-index: 9999;
   isolation: isolate;
 
-  /* ✅ plus “clean” comme la sidebar */
+  /* ✅ clair + séparation forte avec contenu (objectif) */
   background: #f2f5fa;
   border-bottom: 1px solid var(--border);
-
-  /* ✅ plus compact */
-  padding: 4px 8px;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08); /* ✅ séparation visuelle */
+  padding: 6px 10px;
   display: grid;
-  gap: 4px;
+  gap: 6px;
 
   overflow-x: hidden;
 }
 .hd.collapsed {
   gap: 0;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.07);
 }
 
 /* ===== Top bar ===== */
 .bar {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   align-items: stretch;
   width: 100%;
   min-width: 0;
 }
 
-/* sizing: keep same behavior but slightly tighter */
+/* ✅ P&L width +50% minimum + dominance */
 .pill.pnl {
-  flex: 0 1 340px;
-  max-width: 420px;
+  flex: 1 1 520px;   /* >= +50% vs 340 */
+  max-width: 760px;  /* on autorise titres longs */
+  min-width: 520px;  /* garde l'UX stable */
 }
 .pill.contract {
-  flex: 1 1 420px;
-}
-.pill.variant {
   flex: 1 1 360px;
 }
+.pill.variant {
+  flex: 1 1 320px;
+}
+
+/* Responsive */
 @media (max-width: 900px) {
   .pill.pnl,
   .pill.contract,
   .pill.variant {
     flex: 1 1 100%;
     max-width: none;
+    min-width: 0;
   }
   .hdToggles {
     width: 100%;
@@ -677,35 +671,33 @@ onBeforeUnmount(() => {
 .pill {
   position: relative;
   min-width: 0;
-
   background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 14px;
 
-  /* ✅ plus compact en hauteur */
-  padding: 3px 8px;
+  padding: 4px 10px; /* ✅ compact mais “premium” */
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 
-/* Controls => more visible (P&L / Contrat / Variante) */
+/* Controls => more visible */
 .pill.control {
   border-color: rgba(15, 23, 42, 0.18);
 }
 
-/* ✅ Each selector gets a light distinct background */
+/* Light distinct backgrounds */
 .pill.pnl.control {
-  background: #fff7e6; /* light beige */
+  background: #fff7e6;
 }
 .pill.contract.control {
-  background: #ffffff; /* clean white */
+  background: #ffffff;
 }
 .pill.variant.control {
-  background: #eef6ff; /* light blue */
+  background: #eef6ff;
 }
 
-/* hover keeps the same feel but a bit more “pop” */
+/* hover */
 .pill.pnl.control:hover {
   background: #fff1d6;
   border-color: rgba(32, 184, 232, 0.28);
@@ -733,7 +725,19 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* mini icon */
+/* ✅ petite badge discrète */
+.pill__badge {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.78);
+  background: rgba(32, 184, 232, 0.12);
+  border: 1px solid rgba(32, 184, 232, 0.22);
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .pill__miniic {
   width: 16px;
   height: 16px;
@@ -741,7 +745,6 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* ✅ label compact + net */
 .pill__label {
   font-size: 10px;
   font-weight: 950;
@@ -750,11 +753,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* ✅ valeur beaucoup plus lisible (demande principale) */
 .pill__value {
-  font-size: 13px; /* ↑ lisibilité */
-  font-weight: 950;
-  color: var(--navy); /* Holcim navy */
+  font-size: 14px; /* ✅ un poil plus grand */
+  font-weight: 1000;
+  letter-spacing: 0.15px;
+  color: var(--navy);
   line-height: 1.1;
 
   min-width: 0;
@@ -783,11 +786,10 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
-/* ✅ icons encore plus compacts */
 .iconbtn {
-  width: 22px;
-  height: 22px;
-  border-radius: 9px;
+  width: 24px;
+  height: 24px;
+  border-radius: 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.04);
   display: inline-flex;
@@ -796,7 +798,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .iconbtn:hover {
-  background: rgba(32, 184, 232, 0.10);
+  background: rgba(32, 184, 232, 0.1);
   border-color: rgba(32, 184, 232, 0.22);
 }
 .ic {
@@ -805,7 +807,7 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.75);
 }
 
-/* ✅ Toggles container : compact & aligned */
+/* Toggles */
 .hdToggles {
   display: inline-flex;
   align-items: center;
@@ -815,7 +817,7 @@ onBeforeUnmount(() => {
   background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.14);
   border-radius: 14px;
-  padding: 3px 8px;
+  padding: 4px 10px;
 
   min-width: 0;
   overflow: hidden;
@@ -826,15 +828,14 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.10);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
   line-height: 1;
   user-select: none;
-
   min-width: 0;
-  max-width: 180px;
+  max-width: 190px;
 }
 .toggSm__cb {
   width: 13px;
@@ -851,14 +852,14 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* Select overlay clickable (tight) */
+/* Select overlay */
 .contractHead {
   position: relative;
-  min-height: 22px; /* ✅ plus compact */
+  min-height: 22px;
 }
 .pill__selectOverlay {
   position: absolute;
-  inset: -4px; /* ✅ moins agressif que -6 (évite “décalages” visuels) */
+  inset: -4px;
   width: calc(100% + 8px);
   height: calc(100% + 8px);
   opacity: 0;
@@ -876,7 +877,7 @@ onBeforeUnmount(() => {
   height: 30px;
   border-radius: 13px;
   border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.92);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -884,7 +885,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 .foldBtn:hover {
-  background: rgba(32, 184, 232, 0.10);
+  background: rgba(32, 184, 232, 0.1);
   border-color: rgba(32, 184, 232, 0.22);
 }
 .foldIc {
@@ -897,7 +898,7 @@ onBeforeUnmount(() => {
   transform: rotate(180deg);
 }
 
-/* ===== Dropdown (kept, just palette aligned) ===== */
+/* Dropdown */
 .dd {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -930,7 +931,7 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.88);
 }
 .dd__list {
-  max-height: 260px;
+  max-height: 300px; /* ✅ un peu plus grand */
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -976,7 +977,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-/* ===== Cockpit / KPI / Summary (UNCHANGED from your original) ===== */
+/* ===== Cockpit / KPI / Summary (inchangé) ===== */
 .cockpit {
   display: grid;
   grid-template-columns: 1fr 185px;
@@ -1022,7 +1023,7 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ===== KPI flat + compact height (as in your file) ===== */
+/* KPI */
 .kpi {
   position: relative;
   --accent: rgba(148, 163, 184, 0.9);
@@ -1106,7 +1107,8 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.7);
   font-variant-numeric: tabular-nums;
 }
-.mini__left, .mini__right {
+.mini__left,
+.mini__right {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
@@ -1123,7 +1125,7 @@ onBeforeUnmount(() => {
 .u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.45); }
 .u.m3u { color: rgba(24, 64, 112, 0.6); font-weight: 950; }
 
-/* ===== EBIT HERO (as your file) ===== */
+/* ✅ EBIT HERO conservé + attractif */
 .kpi.ebit.hero {
   border-left-width: 6px;
   outline: 2px solid rgba(15, 23, 42, 0.08);
@@ -1182,7 +1184,7 @@ onBeforeUnmount(() => {
   background: rgba(16, 185, 129, 0.07);
 }
 
-/* ===== Summary (unchanged) ===== */
+/* Summary */
 .summary {
   background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.12);

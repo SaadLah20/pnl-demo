@@ -1,104 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch, onBeforeUnmount, onMounted, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
-import { nextTick } from "vue";
-
-// ...
-
-const dupOpen = ref(false);
-const dupBusy = ref(false);
-const dupErr = ref<string | null>(null);
-
-const dupTitleRef = ref<HTMLInputElement | null>(null);
-
-const dupDraft = reactive({
-  title: "",
-});
-
-function openDuplicateVariant() {
-  const v = activeVariant.value;
-  const c = activeContract.value;
-  if (!v?.id || !c?.id) return;
-
-  dupErr.value = null;
-  dupBusy.value = false;
-
-  const baseTitle = String(v.title ?? "Variante");
-  dupDraft.title = `${baseTitle} (copie)`;
-
-  dupOpen.value = true;
-
-  // ✅ focus + select pour permettre rename rapide
-  nextTick(() => {
-    dupTitleRef.value?.focus();
-    dupTitleRef.value?.select();
-  });
-}
-
-function closeDuplicate() {
-  dupOpen.value = false;
-  dupBusy.value = false;
-  dupErr.value = null;
-}
-
-async function confirmDuplicate() {
-  const v = activeVariant.value;
-  const c = activeContract.value;
-  if (!v?.id || !c?.id) return;
-
-  dupErr.value = null;
-  dupBusy.value = true;
-
-  try {
-const sourceId = String(v.id);
-
-const body = {
-  contractId: String(c.id),
-  title: String(dupDraft.title || "Variante (copie)"),
-  description: v.description ?? null,
-  status: String(v.status ?? "INITIALISEE"),
-  createMode: "COMPOSEE",
-  composee: {
-    baseVariantId: sourceId,
-    // importAll n'est pas pris en compte côté backend, mais on peut le laisser
-    importAll: true,
-    bySection: {
-      transport: sourceId,
-      cab: sourceId,
-      maintenance: sourceId,
-      coutM3: sourceId,
-      coutMensuel: sourceId,
-      coutOccasionnel: sourceId,
-      employes: sourceId,
-      autresCouts: sourceId,
-      formules: sourceId,
-      devis: sourceId,
-      majorations: sourceId,
-    },
-  },
-};
-
-
-    const created = await apiJson(`/variants`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-
-    const newVarId = String(created?.id ?? "");
-    if (newVarId) {
-      await store.loadPnls?.();
-      if ((store as any).setActiveVariant) (store as any).setActiveVariant(newVarId);
-      else (store as any).activeVariantId = newVarId;
-    }
-
-    closeDuplicate();
-  } catch (e: any) {
-    dupErr.value = e?.message ?? String(e);
-  } finally {
-    dupBusy.value = false;
-  }
-}
-
 
 import VariantCreateModal, {
   type VariantCreateNextPayload,
@@ -111,6 +13,9 @@ import VariantWizardModal, {
   type VariantCreateMode,
 } from "@/components/VariantWizardModal.vue";
 
+/* =========================================================
+   API
+========================================================= */
 const API = "http://localhost:3001";
 
 async function apiJson(url: string, opts?: RequestInit) {
@@ -140,7 +45,7 @@ async function apiJson(url: string, opts?: RequestInit) {
 const store = usePnlStore();
 
 /* =========================
-   ACTIVE (robuste comme HeaderDashboard)
+   ACTIVE
 ========================= */
 const pnls = computed<any[]>(() => store.pnls ?? []);
 const activePnl = computed<any | null>(() => store.activePnl ?? null);
@@ -160,7 +65,7 @@ const activeContract = computed<any | null>(() => {
 });
 
 /* =========================================================
-   ENUMS (Contrat) — identique MesPnlPage
+   ENUMS
 ========================================================= */
 type Opt = { value: any; label: string };
 
@@ -244,7 +149,7 @@ function fromDateInput(v: any): string | null {
 }
 
 /* =========================================================
-   VIEW MODAL — identique MesPnlPage (pnl/contract/variant)
+   VIEW MODAL
 ========================================================= */
 type ViewMode = "pnl" | "contract" | "variant";
 const viewOpen = ref(false);
@@ -262,7 +167,7 @@ function closeView() {
 }
 
 /* =========================================================
-   EDIT MODAL — identique MesPnlPage (update only ici)
+   EDIT MODAL
 ========================================================= */
 type EditMode = "pnl" | "contract" | "variant";
 const editOpen = ref(false);
@@ -270,14 +175,11 @@ const editMode = ref<EditMode>("pnl");
 const editBusy = ref(false);
 const editErr = ref<string | null>(null);
 
-/** create flags (désactivés dans le header) */
 const isCreate = ref(false);
 const createPnlId = ref<string | null>(null);
 
 const draft = reactive<any>({
   id: "",
-
-  // pnl
   title: "",
   client: "",
   model: "",
@@ -286,7 +188,6 @@ const draft = reactive<any>({
   createdAt: "",
   startDate: "",
 
-  // contract
   ref: "",
   dureeMois: 0,
   cab: "LHM",
@@ -306,53 +207,56 @@ const draft = reactive<any>({
   delayPenalty: 0,
   chillerRent: 0,
 
-  // variant
   description: "",
 });
 
+
+
 function resetDraft() {
-  draft.id = "";
-
-  draft.title = "";
-  draft.client = "";
-  draft.model = "";
-  draft.city = "";
-  draft.status = "";
-  draft.createdAt = "";
-  draft.startDate = "";
-
-  draft.ref = "";
-  draft.dureeMois = 0;
-
-  draft.cab = "LHM";
-  draft.installation = "LHM";
-  draft.genieCivil = "LHM";
-  draft.transport = "LHM";
-  draft.terrain = "LHM";
-  draft.matierePremiere = "LHM";
-  draft.maintenance = "LHM";
-  draft.chargeuse = "LHM";
-
-  draft.branchementEau = "LHM";
-  draft.consoEau = "LHM";
-  draft.branchementElec = "LHM";
-  draft.consoElec = "LHM";
-
-  draft.postes = 1;
-  draft.sundayPrice = 0;
-  draft.delayPenalty = 0;
-  draft.chillerRent = 0;
-
-  draft.description = "";
+  Object.assign(draft, {
+    id: "",
+    title: "",
+    client: "",
+    model: "",
+    city: "",
+    status: "",
+    createdAt: "",
+    startDate: "",
+    ref: "",
+    dureeMois: 0,
+    cab: "LHM",
+    installation: "LHM",
+    genieCivil: "LHM",
+    transport: "LHM",
+    terrain: "LHM",
+    matierePremiere: "LHM",
+    maintenance: "LHM",
+    chargeuse: "LHM",
+    branchementEau: "LHM",
+    consoEau: "LHM",
+    branchementElec: "LHM",
+    consoElec: "LHM",
+    postes: 1,
+    sundayPrice: 0,
+    delayPenalty: 0,
+    chillerRent: 0,
+    description: "",
+  });
 }
+
+/* ✅ UX: tabs pour contrat */
+type ContractTab = "general" | "charges" | "utilities" | "penalites";
+const contractTab = ref<ContractTab>("general");
 
 function openEdit(mode: EditMode, data: any) {
   resetDraft();
-  isCreate.value = false; // header = update only
+  isCreate.value = false;
   createPnlId.value = null;
 
   editMode.value = mode;
   editOpen.value = true;
+  editErr.value = null;
+  contractTab.value = "general";
 
   if (mode === "pnl") {
     draft.id = String(data.id);
@@ -368,7 +272,6 @@ function openEdit(mode: EditMode, data: any) {
   if (mode === "contract") {
     draft.id = String(data.id);
     draft.ref = String(data.ref ?? "");
-
     draft.dureeMois = Number(data.dureeMois ?? 0);
     draft.cab = String(data.cab ?? "LHM");
     draft.installation = String(data.installation ?? "LHM");
@@ -477,7 +380,121 @@ async function saveEdit() {
 }
 
 /* =========================================================
-   VARIANT CREATION (2-step modals) — identique MesPnlPage
+   DUPLICATE VARIANT
+========================================================= */
+const dupOpen = ref(false);
+const dupBusy = ref(false);
+const dupErr = ref<string | null>(null);
+const dupTitleRef = ref<HTMLInputElement | null>(null);
+
+const dupDraft = reactive({ title: "" });
+
+const dupTitleLen = computed(() => String(dupDraft.title ?? "").trim().length);
+const dupTitleOk = computed(() => dupTitleLen.value >= 2 && dupTitleLen.value <= 80);
+
+function openDuplicateVariant() {
+  const v = activeVariant.value;
+  const c = activeContract.value;
+  if (!v?.id || !c?.id) return;
+
+  dupErr.value = null;
+  dupBusy.value = false;
+
+  const baseTitle = String(v.title ?? "Variante");
+  dupDraft.title = `${baseTitle} (copie)`;
+
+  dupOpen.value = true;
+
+  nextTick(() => {
+    dupTitleRef.value?.focus();
+    dupTitleRef.value?.select();
+  });
+}
+
+function closeDuplicate() {
+  dupOpen.value = false;
+  dupBusy.value = false;
+  dupErr.value = null;
+}
+
+function resetDupTitle() {
+  const v = activeVariant.value;
+  const baseTitle = String(v?.title ?? "Variante");
+  dupDraft.title = `${baseTitle} (copie)`;
+  nextTick(() => {
+    dupTitleRef.value?.focus();
+    dupTitleRef.value?.select();
+  });
+}
+
+async function confirmDuplicate() {
+  const v = activeVariant.value;
+  const c = activeContract.value;
+  if (!v?.id || !c?.id) return;
+
+  const title = String(dupDraft.title ?? "").trim();
+  if (!title) {
+    dupErr.value = "Le titre est requis.";
+    return;
+  }
+  if (!dupTitleOk.value) {
+    dupErr.value = "Titre invalide (2 à 80 caractères).";
+    return;
+  }
+
+  dupErr.value = null;
+  dupBusy.value = true;
+
+  try {
+    const sourceId = String(v.id);
+
+    const body = {
+      contractId: String(c.id),
+      title,
+      description: v.description ?? null,
+      status: String(v.status ?? "INITIALISEE"),
+      createMode: "COMPOSEE",
+      composee: {
+        baseVariantId: sourceId,
+        importAll: true,
+        bySection: {
+          transport: sourceId,
+          cab: sourceId,
+          maintenance: sourceId,
+          coutM3: sourceId,
+          coutMensuel: sourceId,
+          coutOccasionnel: sourceId,
+          employes: sourceId,
+          autresCouts: sourceId,
+          formules: sourceId,
+          devis: sourceId,
+          majorations: sourceId,
+        },
+      },
+    };
+
+    const created = await apiJson(`/variants`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+
+    const newVarId = String(created?.id ?? "");
+    if (newVarId) {
+      await store.loadPnls?.();
+      if ((store as any).setActiveVariant) (store as any).setActiveVariant(newVarId);
+      else (store as any).activeVariantId = newVarId;
+    }
+
+    closeDuplicate();
+  } catch (e: any) {
+    dupErr.value = e?.message ?? String(e);
+  } finally {
+    dupBusy.value = false;
+  }
+}
+
+/* =========================================================
+   VARIANT CREATION (2-step) — unchanged
 ========================================================= */
 const allVariantsFlat = computed(() => {
   const out: Array<{ id: string; title: string; contractTitle?: string | null; pnlTitle?: string | null }> = [];
@@ -606,7 +623,7 @@ async function handleSaveComposee(payload: ComposePayload) {
 }
 
 /* =========================================================
-   EXPOSE: API pour HeaderDashboard
+   EXPOSE
 ========================================================= */
 function openViewPnl() {
   const p = activePnl.value;
@@ -636,72 +653,148 @@ function openEditVariantFromHeader() {
   openEdit("variant", v);
 }
 
+/* =========================================================
+   GLOBAL MODAL UX (ESC + body scroll lock)
+========================================================= */
+const anyModalOpen = computed(
+  () => viewOpen.value || editOpen.value || dupOpen.value || createOpen.value || wizardOpen.value
+);
+
+function onEsc(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  // fermer dans un ordre logique
+  if (dupOpen.value) return closeDuplicate();
+  if (editOpen.value) return closeEdit();
+  if (viewOpen.value) return closeView();
+  if (wizardOpen.value) return closeWizardModal();
+  if (createOpen.value) return closeCreateModal();
+}
+watch(anyModalOpen, (v) => {
+  const cls = "modalLock";
+  if (v) document.documentElement.classList.add(cls);
+  else document.documentElement.classList.remove(cls);
+});
+onMounted(() => document.addEventListener("keydown", onEsc));
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onEsc);
+  document.documentElement.classList.remove("modalLock");
+});
+
 defineExpose({
-  // P&L
   openViewPnl,
   openEditPnl,
-  // Contrat
   openViewContract,
   openEditContract,
-  // Variante
   openNewVariant: openCreateVariantFromHeader,
   openEditVariant: openEditVariantFromHeader,
   openDuplicateVariant,
-
 });
-
 </script>
 
 <template>
   <Teleport to="body">
     <!-- =========================
-         VIEW MODAL
+         VIEW MODAL (nicer + sections)
     ========================= -->
     <div v-if="viewOpen" class="modalOverlay" @click.self="closeView()">
-      <div class="modalCard">
+      <div class="modalCard modalCard--view" role="dialog" aria-modal="true">
         <div class="modalHead">
-          <b v-if="viewMode === 'pnl'">Détails P&amp;L</b>
-          <b v-else-if="viewMode === 'contract'">Détails Contrat</b>
-          <b v-else>Détails Variante</b>
-          <button class="x" type="button" @click="closeView()">✕</button>
+          <div class="modalTitle">
+            <b v-if="viewMode === 'pnl'">Détails P&amp;L</b>
+            <b v-else-if="viewMode === 'contract'">Détails Contrat</b>
+            <b v-else>Détails Variante</b>
+            <div class="modalSub">
+              <span v-if="viewMode === 'pnl'">{{ viewData?.client ?? "-" }}</span>
+              <span v-else-if="viewMode === 'contract'">{{ viewData?.ref ?? "-" }}</span>
+              <span v-else>{{ viewData?.status ?? "-" }}</span>
+            </div>
+          </div>
+
+          <button class="x" type="button" @click="closeView()" aria-label="Fermer">✕</button>
         </div>
 
         <div class="modalBody">
-          <div v-if="viewMode === 'pnl'" class="kv">
-            <div class="rowKV"><div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Client</div><div class="v">{{ viewData?.client ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Ville</div><div class="v">{{ viewData?.city ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Modèle</div><div class="v">{{ viewData?.model ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Créé le</div><div class="v">{{ fmtDate(viewData?.createdAt) }}</div></div>
-            <div class="rowKV"><div class="k">Démarrage</div><div class="v">{{ fmtDate(viewData?.startDate) }}</div></div>
+          <!-- PNL -->
+          <div v-if="viewMode === 'pnl'" class="viewGrid">
+            <div class="sec">
+              <div class="sec__t">Général</div>
+              <div class="kv2">
+                <div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div>
+                <div class="k">Client</div><div class="v">{{ viewData?.client ?? "-" }}</div>
+                <div class="k">Ville</div><div class="v">{{ viewData?.city ?? "-" }}</div>
+                <div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div>
+              </div>
+            </div>
+
+            <div class="sec">
+              <div class="sec__t">Dates</div>
+              <div class="kv2">
+                <div class="k">Créé le</div><div class="v">{{ fmtDate(viewData?.createdAt) }}</div>
+                <div class="k">Démarrage</div><div class="v">{{ fmtDate(viewData?.startDate) }}</div>
+                <div class="k">Modèle</div><div class="v">{{ viewData?.model ?? "-" }}</div>
+              </div>
+            </div>
           </div>
 
-          <div v-else-if="viewMode === 'contract'" class="kv">
-            <div class="rowKV"><div class="k">Référence</div><div class="v">{{ viewData?.ref ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Durée</div><div class="v">{{ viewData?.dureeMois ?? 0 }} mois</div></div>
-            <div class="rowKV"><div class="k">Postes</div><div class="v">{{ labelFrom(POSTES_2, viewData?.postes) }}</div></div>
-            <div class="rowKV"><div class="k">Cab</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.cab) }}</div></div>
-            <div class="rowKV"><div class="k">Installation</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.installation) }}</div></div>
-            <div class="rowKV"><div class="k">Génie civil</div><div class="v">{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</div></div>
-            <div class="rowKV"><div class="k">Transport</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.transport) }}</div></div>
-            <div class="rowKV"><div class="k">Terrain</div><div class="v">{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</div></div>
-            <div class="rowKV"><div class="k">Matière première</div><div class="v">{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</div></div>
-            <div class="rowKV"><div class="k">Maintenance</div><div class="v">{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</div></div>
-            <div class="rowKV"><div class="k">Chargeuse</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</div></div>
-            <div class="rowKV"><div class="k">Branchement Eau</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</div></div>
-            <div class="rowKV"><div class="k">Consommation Eau</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</div></div>
-            <div class="rowKV"><div class="k">Branchement Électricité</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</div></div>
-            <div class="rowKV"><div class="k">Consommation Électricité</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</div></div>
-            <div class="rowKV"><div class="k">Prix dimanches/fériés</div><div class="v">{{ viewData?.sundayPrice ?? 0 }}</div></div>
-            <div class="rowKV"><div class="k">Pénalité délai</div><div class="v">{{ viewData?.delayPenalty ?? 0 }}</div></div>
-            <div class="rowKV"><div class="k">Location Chiller</div><div class="v">{{ viewData?.chillerRent ?? 0 }}</div></div>
+          <!-- CONTRACT -->
+          <div v-else-if="viewMode === 'contract'" class="viewGrid">
+            <div class="sec">
+              <div class="sec__t">Général</div>
+              <div class="kv2">
+                <div class="k">Référence</div><div class="v">{{ viewData?.ref ?? "-" }}</div>
+                <div class="k">Durée</div><div class="v">{{ viewData?.dureeMois ?? 0 }} mois</div>
+                <div class="k">Postes</div><div class="v">{{ labelFrom(POSTES_2, viewData?.postes) }}</div>
+              </div>
+            </div>
+
+            <div class="sec">
+              <div class="sec__t">Charges</div>
+              <div class="kv2">
+                <div class="k">Cab</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.cab) }}</div>
+                <div class="k">Installation</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.installation) }}</div>
+                <div class="k">Génie civil</div><div class="v">{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</div>
+                <div class="k">Transport</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.transport) }}</div>
+                <div class="k">Terrain</div><div class="v">{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</div>
+                <div class="k">Matière</div><div class="v">{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</div>
+                <div class="k">Maintenance</div><div class="v">{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</div>
+                <div class="k">Chargeuse</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</div>
+              </div>
+            </div>
+
+            <div class="sec">
+              <div class="sec__t">Eau &amp; Électricité</div>
+              <div class="kv2">
+                <div class="k">Branchement Eau</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</div>
+                <div class="k">Conso Eau</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</div>
+                <div class="k">Branchement Élec</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</div>
+                <div class="k">Conso Élec</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</div>
+              </div>
+            </div>
+
+            <div class="sec">
+              <div class="sec__t">Pénalités &amp; Options</div>
+              <div class="kv2">
+                <div class="k">Dimanches/Fériés</div><div class="v">{{ viewData?.sundayPrice ?? 0 }}</div>
+                <div class="k">Pénalité délai</div><div class="v">{{ viewData?.delayPenalty ?? 0 }}</div>
+                <div class="k">Location Chiller</div><div class="v">{{ viewData?.chillerRent ?? 0 }}</div>
+              </div>
+            </div>
           </div>
 
-          <div v-else class="kv">
-            <div class="rowKV"><div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div></div>
-            <div class="rowKV"><div class="k">Description</div><div class="v">{{ viewData?.description ?? "-" }}</div></div>
+          <!-- VARIANT -->
+          <div v-else class="viewGrid">
+            <div class="sec">
+              <div class="sec__t">Général</div>
+              <div class="kv2">
+                <div class="k">Titre</div><div class="v">{{ viewData?.title ?? "-" }}</div>
+                <div class="k">Statut</div><div class="v">{{ viewData?.status ?? "-" }}</div>
+              </div>
+            </div>
+
+            <div class="sec">
+              <div class="sec__t">Description</div>
+              <div class="descBox">{{ viewData?.description ?? "-" }}</div>
+            </div>
           </div>
         </div>
 
@@ -711,44 +804,96 @@ defineExpose({
       </div>
     </div>
 
-    <!-- ✅ DUPLICATE VARIANT -->
-<div v-if="dupOpen" class="modalOverlay" @click.self="closeDuplicate()">
-  <div class="modalCard">
-    <div class="modalHead">
-      <b>Dupliquer la variante</b>
-      <button class="x" type="button" @click="closeDuplicate()">✕</button>
-    </div>
+    <!-- =========================
+         DUPLICATE VARIANT (better)
+    ========================= -->
+    <div v-if="dupOpen" class="modalOverlay" @click.self="closeDuplicate()">
+      <div class="modalCard" role="dialog" aria-modal="true">
+        <div class="modalHead">
+          <div class="modalTitle">
+            <b>Dupliquer la variante</b>
+            <div class="modalSub">
+              <span>{{ activeVariant?.title ?? "-" }}</span>
+              <span class="sep">•</span>
+              <span>{{ activeContract?.ref ?? activeContract?.title ?? "-" }}</span>
+            </div>
+          </div>
+          <button class="x" type="button" @click="closeDuplicate()" aria-label="Fermer">✕</button>
+        </div>
 
-    <div class="modalBody">
-      <div v-if="dupErr" class="err">{{ dupErr }}</div>
+        <div class="modalBody">
+          <div v-if="dupErr" class="err">{{ dupErr }}</div>
 
-      <div class="grid">
-        <div class="f f--full">
-          <div class="k">Titre de la nouvelle variante</div>
-          <input ref="dupTitleRef" class="in" v-model="dupDraft.title" />
+          <div class="grid">
+            <div class="f f--full">
+              <div class="kRow">
+                <div class="k">Titre de la nouvelle variante</div>
+                <div class="hint" :class="{ bad: !dupTitleOk }">{{ dupTitleLen }}/80</div>
+              </div>
+
+              <input
+                ref="dupTitleRef"
+                class="in"
+                v-model="dupDraft.title"
+                :class="{ inBad: !dupTitleOk && dupTitleLen > 0 }"
+                placeholder="Ex: Variante X (copie)"
+              />
+
+              <div class="miniActions">
+                <button class="btn btn--ghost" type="button" @click="resetDupTitle" :disabled="dupBusy">
+                  Reset
+                </button>
+                <div class="miniNote">
+                  Astuce: tu peux renommer vite puis <b>Entrée</b>.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modalFoot">
+          <button class="btn" :disabled="dupBusy" @click="closeDuplicate()">Annuler</button>
+          <button class="btn btn--primary" :disabled="dupBusy || !dupTitleOk" @click="confirmDuplicate()">
+            {{ dupBusy ? "Duplication…" : "Créer la copie" }}
+          </button>
         </div>
       </div>
     </div>
 
-    <div class="modalFoot">
-      <button class="btn" :disabled="dupBusy" @click="closeDuplicate()">Annuler</button>
-      <button class="btn btn--primary" :disabled="dupBusy" @click="confirmDuplicate()">
-        {{ dupBusy ? "Duplication…" : "Créer la copie" }}
-      </button>
-    </div>
-  </div>
-</div>
-
     <!-- =========================
-         EDIT MODAL (update only)
+         EDIT MODAL (organized)
     ========================= -->
     <div v-if="editOpen" class="modalOverlay" @click.self="closeEdit()">
-      <div class="modalCard">
+      <div class="modalCard modalCard--edit" role="dialog" aria-modal="true">
         <div class="modalHead">
-          <b v-if="editMode === 'pnl'">Modifier P&amp;L</b>
-          <b v-else-if="editMode === 'contract'">Modifier Contrat</b>
-          <b v-else>Modifier Variante</b>
-          <button class="x" type="button" @click="closeEdit()">✕</button>
+          <div class="modalTitle">
+            <b v-if="editMode === 'pnl'">Modifier P&amp;L</b>
+            <b v-else-if="editMode === 'contract'">Modifier Contrat</b>
+            <b v-else>Modifier Variante</b>
+            <div class="modalSub">
+              <span v-if="editMode === 'pnl'">{{ draft.client || "—" }}</span>
+              <span v-else-if="editMode === 'contract'">{{ activeContract?.ref ?? "—" }}</span>
+              <span v-else>{{ draft.status || "—" }}</span>
+            </div>
+          </div>
+
+          <button class="x" type="button" @click="closeEdit()" aria-label="Fermer">✕</button>
+        </div>
+
+        <!-- ✅ tabs uniquement pour contrat -->
+        <div v-if="editMode === 'contract'" class="tabs">
+          <button class="tab" :class="{ on: contractTab === 'general' }" @click="contractTab = 'general'">
+            Général
+          </button>
+          <button class="tab" :class="{ on: contractTab === 'charges' }" @click="contractTab = 'charges'">
+            Charges
+          </button>
+          <button class="tab" :class="{ on: contractTab === 'utilities' }" @click="contractTab = 'utilities'">
+            Eau &amp; Élec
+          </button>
+          <button class="tab" :class="{ on: contractTab === 'penalites' }" @click="contractTab = 'penalites'">
+            Pénalités
+          </button>
         </div>
 
         <div class="modalBody">
@@ -781,108 +926,117 @@ defineExpose({
               <input class="in in--disabled" :value="fmtDate(draft.createdAt)" disabled />
             </div>
           </div>
+
           <!-- CONTRACT -->
-          <div v-else-if="editMode === 'contract'" class="grid">
-            <div class="f">
-              <div class="k">Durée (mois)</div>
-              <input class="in" type="number" v-model="draft.dureeMois" />
-            </div>
-            <div class="f">
-              <div class="k">Postes</div>
-              <select class="in" v-model="draft.postes">
-                <option v-for="o in POSTES_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-
-            <div class="f">
-              <div class="k">Cab</div>
-              <select class="in" v-model="draft.cab">
-                <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="f">
-              <div class="k">Installation</div>
-              <select class="in" v-model="draft.installation">
-                <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
+          <div v-else-if="editMode === 'contract'">
+            <div v-if="contractTab === 'general'" class="grid">
+              <div class="f">
+                <div class="k">Durée (mois)</div>
+                <input class="in" type="number" v-model="draft.dureeMois" />
+              </div>
+              <div class="f">
+                <div class="k">Postes</div>
+                <select class="in" v-model="draft.postes">
+                  <option v-for="o in POSTES_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
             </div>
 
-            <div class="f">
-              <div class="k">Génie civil</div>
-              <select class="in" v-model="draft.genieCivil">
-                <option v-for="o in GENIE_CIVIL_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="f">
-              <div class="k">Transport</div>
-              <select class="in" v-model="draft.transport">
-                <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
+            <div v-else-if="contractTab === 'charges'" class="grid">
+              <div class="f">
+                <div class="k">Cab</div>
+                <select class="in" v-model="draft.cab">
+                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Installation</div>
+                <select class="in" v-model="draft.installation">
+                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+
+              <div class="f">
+                <div class="k">Génie civil</div>
+                <select class="in" v-model="draft.genieCivil">
+                  <option v-for="o in GENIE_CIVIL_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Transport</div>
+                <select class="in" v-model="draft.transport">
+                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+
+              <div class="f">
+                <div class="k">Terrain</div>
+                <select class="in" v-model="draft.terrain">
+                  <option v-for="o in TERRAIN_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Matière première</div>
+                <select class="in" v-model="draft.matierePremiere">
+                  <option v-for="o in MATIERE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+
+              <div class="f">
+                <div class="k">Maintenance</div>
+                <select class="in" v-model="draft.maintenance">
+                  <option v-for="o in MAINTENANCE_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Chargeuse</div>
+                <select class="in" v-model="draft.chargeuse">
+                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
             </div>
 
-            <div class="f">
-              <div class="k">Terrain</div>
-              <select class="in" v-model="draft.terrain">
-                <option v-for="o in TERRAIN_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="f">
-              <div class="k">Matière première</div>
-              <select class="in" v-model="draft.matierePremiere">
-                <option v-for="o in MATIERE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
+            <div v-else-if="contractTab === 'utilities'" class="grid">
+              <div class="f">
+                <div class="k">Branchement Eau</div>
+                <select class="in" v-model="draft.branchementEau">
+                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Consommation Eau</div>
+                <select class="in" v-model="draft.consoEau">
+                  <option v-for="o in CONSOMMATION_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+
+              <div class="f">
+                <div class="k">Branchement Électricité</div>
+                <select class="in" v-model="draft.branchementElec">
+                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="f">
+                <div class="k">Consommation Électricité</div>
+                <select class="in" v-model="draft.consoElec">
+                  <option v-for="o in CONSOMMATION_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                </select>
+              </div>
             </div>
 
-            <div class="f">
-              <div class="k">Maintenance</div>
-              <select class="in" v-model="draft.maintenance">
-                <option v-for="o in MAINTENANCE_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="f">
-              <div class="k">Chargeuse</div>
-              <select class="in" v-model="draft.chargeuse">
-                <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-
-            <div class="f">
-              <div class="k">Branchement Eau</div>
-              <select class="in" v-model="draft.branchementEau">
-                <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="f">
-              <div class="k">Consommation Eau</div>
-              <select class="in" v-model="draft.consoEau">
-                <option v-for="o in CONSOMMATION_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-
-            <div class="f">
-              <div class="k">Branchement Électricité</div>
-              <select class="in" v-model="draft.branchementElec">
-                <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="f">
-              <div class="k">Consommation Électricité</div>
-              <select class="in" v-model="draft.consoElec">
-                <option v-for="o in CONSOMMATION_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-
-            <div class="f">
-              <div class="k">Prix dimanches/fériés</div>
-              <input class="in" type="number" v-model="draft.sundayPrice" />
-            </div>
-            <div class="f">
-              <div class="k">Pénalité délai</div>
-              <input class="in" type="number" v-model="draft.delayPenalty" />
-            </div>
-            <div class="f">
-              <div class="k">Location Chiller</div>
-              <input class="in" type="number" v-model="draft.chillerRent" />
+            <div v-else class="grid">
+              <div class="f">
+                <div class="k">Prix dimanches/fériés</div>
+                <input class="in" type="number" v-model="draft.sundayPrice" />
+              </div>
+              <div class="f">
+                <div class="k">Pénalité délai</div>
+                <input class="in" type="number" v-model="draft.delayPenalty" />
+              </div>
+              <div class="f">
+                <div class="k">Location Chiller</div>
+                <input class="in" type="number" v-model="draft.chillerRent" />
+              </div>
             </div>
           </div>
 
@@ -898,7 +1052,7 @@ defineExpose({
             </div>
             <div class="f f--full">
               <div class="k">Description</div>
-              <textarea class="in" rows="4" v-model="draft.description"></textarea>
+              <textarea class="in" rows="5" v-model="draft.description"></textarea>
             </div>
           </div>
         </div>
@@ -913,7 +1067,7 @@ defineExpose({
     </div>
 
     <!-- =========================
-         VARIANT CREATE + WIZARD
+         VARIANT CREATE + WIZARD (unchanged)
     ========================= -->
     <VariantCreateModal
       :open="createOpen"
@@ -936,52 +1090,109 @@ defineExpose({
 </template>
 
 <style scoped>
-/* ✅ ultra safe au-dessus du header (9999) */
+/* ✅ body scroll lock */
+:global(html.modalLock),
+:global(body.modalLock) {
+  overflow: hidden;
+}
+
+/* ========= Overlay ========= */
 .modalOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(15, 23, 42, 0.46);
   backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000000;
+  padding: 12px;
+  animation: fadeIn 120ms ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
+/* ========= Card ========= */
 .modalCard {
-  width: min(860px, calc(100vw - 24px));
-  max-height: calc(100vh - 24px);          /* ✅ clé */
+  width: min(980px, 100%);
+  max-height: calc(100vh - 24px);
   background: #fff;
   border-radius: 16px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.25);
-  overflow: hidden;                        /* ✅ évite le débordement */
-  display: flex;                           /* ✅ permet scroll body */
+  overflow: hidden;
+  display: flex;
   flex-direction: column;
+  transform: translateY(0);
+  animation: popIn 140ms ease;
+}
+@keyframes popIn {
+  from { transform: translateY(6px) scale(0.99); opacity: 0.85; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
 }
 
+/* sizes per mode */
+.modalCard--view { width: min(980px, 100%); }
+.modalCard--edit { width: min(1040px, 100%); }
+
+/* ========= Head / Foot sticky ========= */
 .modalHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
+  border-bottom: 1px solid rgba(16, 24, 40, 0.10);
+  background: linear-gradient(to bottom, rgba(243, 246, 251, 0.9), rgba(255, 255, 255, 0.9));
 }
+.modalTitle b {
+  font-size: 13px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.92);
+}
+.modalSub {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.58);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sep { opacity: 0.5; }
+
 .x {
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   border-radius: 10px;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   cursor: pointer;
+}
+.x:hover {
+  background: rgba(32, 184, 232, 0.10);
+  border-color: rgba(32, 184, 232, 0.22);
 }
 
 .modalBody {
-  flex: 1 1 auto;                          /* ✅ prend le reste */
-  overflow: auto;                          /* ✅ scroll interne */
+  flex: 1 1 auto;
+  overflow: auto;
   padding: 12px 14px;
   -webkit-overflow-scrolling: touch;
 }
+
+.modalFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+/* ========= Error ========= */
 .err {
   background: rgba(220, 38, 38, 0.08);
   border: 1px solid rgba(220, 38, 38, 0.22);
@@ -993,15 +1204,37 @@ defineExpose({
   margin-bottom: 10px;
 }
 
-.kv {
+/* ========= View layout ========= */
+.viewGrid {
   display: grid;
-  gap: 8px;
-}
-.rowKV {
-  display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+@media (max-width: 900px) {
+  .viewGrid { grid-template-columns: 1fr; }
+}
+.sec {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  border-radius: 14px;
+  padding: 10px 10px 8px;
+  background: rgba(243, 246, 251, 0.55);
+}
+.sec__t {
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.70);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+}
+.kv2 {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px 10px;
   align-items: baseline;
+}
+@media (max-width: 700px) {
+  .kv2 { grid-template-columns: 1fr; }
 }
 .k {
   font-size: 11px;
@@ -1014,15 +1247,42 @@ defineExpose({
   color: rgba(15, 23, 42, 0.88);
   word-break: break-word;
 }
+.descBox {
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.86);
+  white-space: pre-wrap;
+}
 
+/* ========= Forms ========= */
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-.f--full {
-  grid-column: 1 / -1;
+@media (max-width: 980px) {
+  .grid { grid-template-columns: 1fr; }
 }
+.f--full { grid-column: 1 / -1; }
+
+.kRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.hint {
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.55);
+}
+.hint.bad { color: rgba(185, 28, 28, 0.95); }
+
 .in {
   width: 100%;
   border: 1px solid rgba(16, 24, 40, 0.14);
@@ -1031,36 +1291,56 @@ defineExpose({
   font-size: 12px;
   font-weight: 900;
   outline: none;
+  background: #fff;
 }
-.in--disabled {
-  background: rgba(15, 23, 42, 0.03);
-}
+.in--disabled { background: rgba(15, 23, 42, 0.03); }
 .in:focus {
   border-color: rgba(32, 184, 232, 0.35);
+  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.10);
+}
+.inBad {
+  border-color: rgba(220, 38, 38, 0.30);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.10);
 }
 
-.modalFoot {
+.miniActions {
+  margin-top: 8px;
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 14px;
-  border-top: 1px solid rgba(16, 24, 40, 0.1);
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.miniNote {
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.55);
 }
 
-/* ✅ Grille: le contrat devient vite trop large -> 1 colonne plus tôt */
-@media (max-width: 980px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
+/* ========= Tabs (contract) ========= */
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px 0;
+  background: rgba(255, 255, 255, 0.96);
+}
+.tab {
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+  color: rgba(15, 23, 42, 0.72);
+}
+.tab.on {
+  background: rgba(32, 184, 232, 0.12);
+  border-color: rgba(32, 184, 232, 0.25);
+  color: rgba(15, 23, 42, 0.86);
 }
 
-/* (Optionnel) rend les labels "view" lisibles sur mobile */
-@media (max-width: 820px) {
-  .rowKV {
-    grid-template-columns: 1fr;
-  }
-}
-
+/* ========= Buttons ========= */
 .btn {
   padding: 8px 12px;
   border-radius: 12px;
@@ -1070,18 +1350,22 @@ defineExpose({
   font-weight: 950;
   cursor: pointer;
 }
+.btn:hover {
+  background: rgba(32, 184, 232, 0.10);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
 .btn--primary {
   background: #184070;
   border-color: rgba(24, 64, 112, 0.35);
   color: #fff;
 }
-
-@media (max-width: 820px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-  .rowKV {
-    grid-template-columns: 1fr;
-  }
+.btn--primary:hover {
+  background: #163a66;
+  border-color: rgba(24, 64, 112, 0.45);
+}
+.btn--ghost {
+  background: transparent;
 }
 </style>
