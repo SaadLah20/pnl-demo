@@ -155,7 +155,7 @@ function initPicks() {
   if (!meta.intro.trim()) {
     meta.intro =
       `Nous vous prions de trouver ci-dessous nos propositions de prix relatives au projet "${meta.titreProjet}". ` +
-      `Chaque proposition correspond à une variante (une seule variante par contrat).`;
+      `Chaque proposition correspond à une variante.`;
   }
 }
 

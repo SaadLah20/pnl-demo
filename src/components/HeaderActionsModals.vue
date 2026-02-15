@@ -1,6 +1,13 @@
+<!-- ✅ src/components/HeaderActionsModals.vue
+     - Modals identiques à MesPnlPage (VIEW/EDIT/DUPLICATE + tabs contrat)
+     - ✅ Edit PNL: dropdown status comme MesPnlPage
+     - ✅ Edit Variant: dropdown status comme la création (VARIANT_STATUS_OPTS)
+     - Teleport body + scroll lock + ESC close
+-->
 <script setup lang="ts">
 import { computed, reactive, ref, watch, onBeforeUnmount, onMounted, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
 
 import VariantCreateModal, {
   type VariantCreateNextPayload,
@@ -112,6 +119,15 @@ const POSTES_2: Opt[] = [
   { value: 2, label: "2 postes" },
 ];
 
+/* ✅ PNL status dropdown (comme MesPnlPage) */
+type PnlStatusUi = "ENCOURS" | "PERDU" | "ADJUGE" | "ARCHIVED";
+const PNL_STATUS_OPTS: Array<{ value: PnlStatusUi; label: string }> = [
+  { value: "ENCOURS", label: "En cours" },
+  { value: "PERDU", label: "Perdu" },
+  { value: "ADJUGE", label: "Adjugé" },
+  { value: "ARCHIVED", label: "Archivé" },
+] as const;
+
 function labelFrom(opts: Opt[], value: any) {
   const f = opts.find((o) => String(o.value) === String(value));
   return f?.label ?? (value === null || value === undefined || value === "" ? "-" : String(value));
@@ -175,9 +191,6 @@ const editMode = ref<EditMode>("pnl");
 const editBusy = ref(false);
 const editErr = ref<string | null>(null);
 
-const isCreate = ref(false);
-const createPnlId = ref<string | null>(null);
-
 const draft = reactive<any>({
   id: "",
   title: "",
@@ -210,8 +223,6 @@ const draft = reactive<any>({
   description: "",
 });
 
-
-
 function resetDraft() {
   Object.assign(draft, {
     id: "",
@@ -222,6 +233,7 @@ function resetDraft() {
     status: "",
     createdAt: "",
     startDate: "",
+
     ref: "",
     dureeMois: 0,
     cab: "LHM",
@@ -240,6 +252,7 @@ function resetDraft() {
     sundayPrice: 0,
     delayPenalty: 0,
     chillerRent: 0,
+
     description: "",
   });
 }
@@ -250,8 +263,6 @@ const contractTab = ref<ContractTab>("general");
 
 function openEdit(mode: EditMode, data: any) {
   resetDraft();
-  isCreate.value = false;
-  createPnlId.value = null;
 
   editMode.value = mode;
   editOpen.value = true;
@@ -264,7 +275,7 @@ function openEdit(mode: EditMode, data: any) {
     draft.client = String(data.client ?? "");
     draft.model = String(data.model ?? "");
     draft.city = String(data.city ?? "");
-    draft.status = String(data.status ?? "");
+    draft.status = String(data.status ?? "ENCOURS");
     draft.createdAt = data.createdAt ?? "";
     draft.startDate = toDateInput(data.startDate);
   }
@@ -296,7 +307,7 @@ function openEdit(mode: EditMode, data: any) {
   if (mode === "variant") {
     draft.id = String(data.id);
     draft.title = String(data.title ?? "");
-    draft.status = String(data.status ?? "");
+    draft.status = String(data.status ?? "ENCOURS");
     draft.description = String(data.description ?? "");
   }
 }
@@ -319,7 +330,7 @@ async function saveEdit() {
           title: draft.title,
           client: draft.client,
           city: draft.city,
-          status: draft.status,
+          status: draft.status, // ✅ dropdown MesPnlPage
           startDate: fromDateInput(draft.startDate),
         }),
       });
@@ -357,7 +368,7 @@ async function saveEdit() {
         method: "PUT",
         body: JSON.stringify({
           title: draft.title,
-          status: draft.status,
+          status: draft.status, // ✅ dropdown VARIANT_STATUS_OPTS
           description: draft.description,
         }),
       });
@@ -387,7 +398,15 @@ const dupBusy = ref(false);
 const dupErr = ref<string | null>(null);
 const dupTitleRef = ref<HTMLInputElement | null>(null);
 
-const dupDraft = reactive({ title: "" });
+const dupDraft = reactive<{
+  title: string;
+  status: VariantStatusUi;
+  description: string;
+}>({
+  title: "",
+  status: "ENCOURS",
+  description: "",
+});
 
 const dupTitleLen = computed(() => String(dupDraft.title ?? "").trim().length);
 const dupTitleOk = computed(() => dupTitleLen.value >= 2 && dupTitleLen.value <= 80);
@@ -402,6 +421,8 @@ function openDuplicateVariant() {
 
   const baseTitle = String(v.title ?? "Variante");
   dupDraft.title = `${baseTitle} (copie)`;
+dupDraft.status = (String(v.status ?? "ENCOURS") as VariantStatusUi);
+dupDraft.description = String(v.description ?? "");
 
   dupOpen.value = true;
 
@@ -421,6 +442,9 @@ function resetDupTitle() {
   const v = activeVariant.value;
   const baseTitle = String(v?.title ?? "Variante");
   dupDraft.title = `${baseTitle} (copie)`;
+  dupDraft.status = (String(activeVariant.value?.status ?? "ENCOURS") as VariantStatusUi);
+dupDraft.description = String(activeVariant.value?.description ?? "");
+
   nextTick(() => {
     dupTitleRef.value?.focus();
     dupTitleRef.value?.select();
@@ -451,8 +475,9 @@ async function confirmDuplicate() {
     const body = {
       contractId: String(c.id),
       title,
-      description: v.description ?? null,
-      status: String(v.status ?? "INITIALISEE"),
+description: (dupDraft.description ?? "").trim() || null,
+status: dupDraft.status,
+
       createMode: "COMPOSEE",
       composee: {
         baseVariantId: sourceId,
@@ -524,13 +549,13 @@ const createBase = reactive<{
   contractId: string;
   title: string;
   description: string | null;
-  status: "INITIALISEE" | "ENCOURS" | "ANNULEE" | "CLOTUREE";
+  status: VariantStatusUi;
   createMode: "ZERO" | "INITIEE" | "COMPOSEE";
 }>({
   contractId: "",
   title: "Variante",
   description: null,
-  status: "INITIALISEE",
+  status: "ENCOURS",
   createMode: "ZERO",
 });
 
@@ -572,7 +597,8 @@ function handleCreateNext(payload: VariantCreateNextPayload) {
   createBase.contractId = payload.contractId;
   createBase.title = payload.title;
   createBase.description = payload.description;
-  createBase.status = payload.status;
+  // ✅ on accepte ce que renvoie le modal (et ton backend), tout en gardant VariantStatusUi côté UI
+  createBase.status = String((payload as any).status ?? "ENCOURS") as VariantStatusUi;
   createBase.createMode = payload.createMode;
 
   wizardMode.value = payload.createMode;
@@ -662,22 +688,31 @@ const anyModalOpen = computed(
 
 function onEsc(e: KeyboardEvent) {
   if (e.key !== "Escape") return;
-  // fermer dans un ordre logique
   if (dupOpen.value) return closeDuplicate();
   if (editOpen.value) return closeEdit();
   if (viewOpen.value) return closeView();
   if (wizardOpen.value) return closeWizardModal();
   if (createOpen.value) return closeCreateModal();
 }
+
 watch(anyModalOpen, (v) => {
   const cls = "modalLock";
-  if (v) document.documentElement.classList.add(cls);
-  else document.documentElement.classList.remove(cls);
+  const html = document.documentElement;
+  const body = document.body;
+  if (v) {
+    html.classList.add(cls);
+    body.classList.add(cls);
+  } else {
+    html.classList.remove(cls);
+    body.classList.remove(cls);
+  }
 });
+
 onMounted(() => document.addEventListener("keydown", onEsc));
 onBeforeUnmount(() => {
   document.removeEventListener("keydown", onEsc);
   document.documentElement.classList.remove("modalLock");
+  document.body.classList.remove("modalLock");
 });
 
 defineExpose({
@@ -838,6 +873,21 @@ defineExpose({
                 :class="{ inBad: !dupTitleOk && dupTitleLen > 0 }"
                 placeholder="Ex: Variante X (copie)"
               />
+<div class="grid" style="margin-top:10px;">
+  <div class="f">
+    <div class="k">Statut</div>
+    <select class="in" v-model="dupDraft.status">
+      <option v-for="o in VARIANT_STATUS_OPTS" :key="o.value" :value="o.value">
+        {{ o.label }}
+      </option>
+    </select>
+  </div>
+
+  <div class="f f--full">
+    <div class="k">Description</div>
+    <textarea class="in" rows="4" v-model="dupDraft.description" placeholder="Optionnel"></textarea>
+  </div>
+</div>
 
               <div class="miniActions">
                 <button class="btn btn--ghost" type="button" @click="resetDupTitle" :disabled="dupBusy">
@@ -915,7 +965,9 @@ defineExpose({
             </div>
             <div class="f">
               <div class="k">Statut</div>
-              <input class="in" v-model="draft.status" />
+              <select class="in" v-model="draft.status">
+                <option v-for="o in PNL_STATUS_OPTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
             </div>
             <div class="f">
               <div class="k">Démarrage</div>
@@ -1048,7 +1100,9 @@ defineExpose({
             </div>
             <div class="f">
               <div class="k">Statut</div>
-              <input class="in" v-model="draft.status" />
+              <select class="in" v-model="draft.status">
+                <option v-for="o in VARIANT_STATUS_OPTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
             </div>
             <div class="f f--full">
               <div class="k">Description</div>

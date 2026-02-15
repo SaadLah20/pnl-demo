@@ -60,7 +60,7 @@ model Variant {
   id          String  @id @default(uuid())
   title       String
   description String?
-  status      String  @default("INITIALISEE")
+  status      String  @default("ENCOURS")
 
   contractId String
   contract   Contract @relation(fields: [contractId], references: [id])

@@ -543,7 +543,7 @@ async function seed() {
     data: {
       title: "Terrain d’AFSOU",
       description: "Centrale LHM et Terrain Client",
-      status: "INITIALISEE",
+      status: "ENCOURS",
       contractId: c1.id,
     },
   });
@@ -553,7 +553,7 @@ async function seed() {
   await createFullVariant(v1.id, {
     title: v1.title,
     description: v1.description ?? "",
-    status: "INITIALISEE",
+    status: "ENCOURS",
     transportPrixMoyen: 79.6,
     volumePompePct: 0,
     prixAchatPompe: 0,
@@ -662,7 +662,7 @@ async function seed() {
 
   const c2a = pnl2.contracts[0];
   const v2a = await prisma.variant.create({
-    data: { title: "Variante Base", description: "Seed test", status: "INITIALISEE", contractId: c2a.id },
+    data: { title: "Variante Base", description: "Seed test", status: "ENCOURS", contractId: c2a.id },
   });
 
   const b2a = z0();
@@ -724,7 +724,7 @@ async function seed() {
   const c2b = pnl2.contracts[1];
 
   const v2b1 = await prisma.variant.create({
-    data: { title: "Variante Optimisée", description: "CAB achat + volume", status: "INITIALISEE", contractId: c2b.id },
+    data: { title: "Variante Optimisée", description: "CAB achat + volume", status: "ENCOURS", contractId: c2b.id },
   });
 
   const b2b1 = z0();
@@ -799,7 +799,7 @@ async function seed() {
   });
 
   const v2b2 = await prisma.variant.create({
-    data: { title: "Variante Location", description: "CAB location + coûts récurrents", status: "INITIALISEE", contractId: c2b.id },
+    data: { title: "Variante Location", description: "CAB location + coûts récurrents", status: "ENCOURS", contractId: c2b.id },
   });
 
   const b2b2 = z0();
@@ -911,7 +911,7 @@ async function seed() {
   const c3 = pnl3.contracts[0];
 
   const v3a = await prisma.variant.create({
-    data: { title: "Variante Compact", description: "Petit chantier", status: "INITIALISEE", contractId: c3.id },
+    data: { title: "Variante Compact", description: "Petit chantier", status: "ENCOURS", contractId: c3.id },
   });
 
   const b3a = z0();
@@ -940,7 +940,7 @@ async function seed() {
   });
 
   const v3b = await prisma.variant.create({
-    data: { title: "Variante Pompage", description: "Pompage + hébergement", status: "INITIALISEE", contractId: c3.id },
+    data: { title: "Variante Pompage", description: "Pompage + hébergement", status: "ENCOURS", contractId: c3.id },
   });
 
   const b3b = z0();

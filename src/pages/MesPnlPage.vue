@@ -9,8 +9,11 @@ import {
   ref,
   watch,
 } from "vue";
+
 import { usePnlStore } from "@/stores/pnl.store";
 import { contractUiTitle } from "@/services/contractTitle";
+import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
+
 
 import VariantCreateModal, {
   type VariantCreateNextPayload,
@@ -21,6 +24,7 @@ import VariantWizardModal, {
   type InitieePayload,
   type VariantCreateMode,
 } from "@/components/VariantWizardModal.vue";
+
 
 const API = "http://localhost:3001";
 
@@ -313,9 +317,7 @@ function statusKey(raw: any): string {
   if (!s) return "";
   if (s === "ADJUGE" || s === "ADJUGEE") return "ADJUGE";
   if (s === "EN COURS") return "ENCOURS";
-  if (s === "INITIALISEE") return "INITIALISEE";
   if (s === "ANNULEE") return "ANNULEE";
-  if (s === "CLOTUREE") return "CLOTUREE";
   if (s === "ARCHIVE") return "ARCHIVED";
   return s;
 }
@@ -326,6 +328,18 @@ function tagClass(status?: string) {
   if (s.includes("ENCO") || s.includes("ACT") || s.includes("ADJ")) return "tag tag--on";
   return "tag";
 }
+
+function isBlank(v: any) {
+  return String(v ?? "").trim().length === 0;
+}
+function req(v: any, msg: string) {
+  if (isBlank(v)) throw new Error(msg);
+}
+function reqNumGt(v: any, min: number, msg: string) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= min) throw new Error(msg);
+}
+
 
 /* =========================================================
    Data
@@ -814,6 +828,18 @@ async function saveEdit() {
 
   try {
     if (editMode.value === "pnl") {
+        req(draft.title, "Titre P&L obligatoire.");
+  req(draft.client, "Client obligatoire.");
+  req(draft.city, "Ville obligatoire.");
+  req(draft.status, "Statut obligatoire.");
+  req(draft.startDate, "Date de démarrage obligatoire.");
+
+  if (isCreate.value) {
+    req(draft.model, "Veuillez choisir un modèle.");
+  } else {
+    // en modification: model existe mais on garde une sécurité
+    req(draft.model, "Modèle manquant (invalide).");
+  }
       if (isCreate.value) {
         if (!String(draft.model ?? "").trim()) {
           throw new Error("Veuillez choisir un modèle.");
@@ -856,6 +882,21 @@ async function saveEdit() {
     }
 
     if (editMode.value === "contract") {
+      reqNumGt(draft.dureeMois, 0, "Durée (mois) doit être > 0.");
+req(draft.cab, "Cab obligatoire.");
+req(draft.installation, "Installation obligatoire.");
+req(draft.genieCivil, "Génie civil obligatoire.");
+req(draft.transport, "Transport obligatoire.");
+req(draft.terrain, "Terrain obligatoire.");
+req(draft.matierePremiere, "Matière première obligatoire.");
+req(draft.maintenance, "Maintenance obligatoire.");
+req(draft.chargeuse, "Chargeuse obligatoire.");
+req(draft.branchementEau, "Branchement eau obligatoire.");
+req(draft.consoEau, "Consommation eau obligatoire.");
+req(draft.branchementElec, "Branchement électricité obligatoire.");
+req(draft.consoElec, "Consommation électricité obligatoire.");
+reqNumGt(draft.postes, 0, "Nombre de postes obligatoire.");
+
       const payload = {
         dureeMois: Number(draft.dureeMois ?? 0),
         cab: draft.cab,
@@ -894,6 +935,10 @@ async function saveEdit() {
     }
 
     if (editMode.value === "variant") {
+      req(draft.title, "Titre de la variante obligatoire.");
+req(draft.status, "Statut de la variante obligatoire.");
+// description seule peut être vide ✅
+
       await apiJson(`/variants/${draft.id}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -960,15 +1005,16 @@ const createBase = reactive<{
   contractId: string;
   title: string;
   description: string | null;
-  status: "INITIALISEE" | "ENCOURS" | "ANNULEE" | "CLOTUREE";
+  status: VariantStatusUi; // ✅ unifié
   createMode: "ZERO" | "INITIEE" | "COMPOSEE";
 }>({
   contractId: "",
   title: "Variante",
   description: null,
-  status: "INITIALISEE",
+  status: "ENCOURS",
   createMode: "ZERO",
 });
+
 
 function openCreateVariant(contractId: string) {
   createContractId.value = contractId;
@@ -1521,12 +1567,12 @@ onBeforeUnmount(() => {
 
               <div class="f">
                 <div class="k">Statut</div>
-                <select class="in" v-model="draft.status">
-                  <option value="ENCOURS">Encours</option>
-                  <option value="CLOTUREE">Cloturée</option>
-                  <option value="ADJUGE">Adjugée</option>
-                  <option value="ARCHIVED">Archivée</option>
-                </select>
+<select class="in" v-model="draft.status">
+  <option v-for="s in VARIANT_STATUS_OPTS" :key="s.value" :value="s.value">
+    {{ s.label }}
+  </option>
+</select>
+
               </div>
 
               <div class="f f--full">
@@ -2034,10 +2080,11 @@ onBeforeUnmount(() => {
   position: relative;
 }
 .variantRow.activeVariant {
-  background: rgba(101, 129, 77, 0.22) !important; /* ✅ vrai vert visible */
-  border-color: rgba(101, 129, 77, 0.70) !important;
-  box-shadow: 0 0 0 4px rgba(101, 129, 77, 0.16), 0 14px 35px rgba(101, 129, 77, 0.12);
+  background: rgba(101, 129, 77, 0.14) !important; /* ✅ plus clair */
+  border-color: rgba(101, 129, 77, 0.78) !important;
+  box-shadow: 0 0 0 4px rgba(101, 129, 77, 0.14), 0 12px 30px rgba(101, 129, 77, 0.10);
 }
+
 .variantRow.activeVariant::before {
   background: rgba(101, 129, 77, 1) !important;
 }
@@ -2096,15 +2143,17 @@ onBeforeUnmount(() => {
 .menuPop {
   position: absolute;
   right: 0;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 8px); /* ✅ vers le haut */
+  top: auto;
   min-width: 170px;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
   padding: 6px;
-  z-index: 100;
+  z-index: 200; /* un peu plus */
 }
+
 .menuItem {
   width: 100%;
   text-align: left;
@@ -2141,7 +2190,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 18px;
-  z-index: 9999;
+  z-index: 100200;
 }
 .modal {
   width: min(760px, 100%);
@@ -2293,7 +2342,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 10000;
+  z-index: 100200;
 }
 .dlg {
   width: min(520px, 100%);
