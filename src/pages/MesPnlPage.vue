@@ -66,6 +66,11 @@ function persistActive(pnlId: string | null, variantId: string | null) {
   else localStorage.removeItem(LS_ACTIVE_VARIANT);
 }
 
+function isCabFixePnl(p: any) {
+  return String(p?.model ?? "").toLowerCase().includes("cab fixe");
+}
+
+
 function setActiveIds(
   pnlId: string | null,
   contractId: string | null,
@@ -797,6 +802,8 @@ function openCreatePnl() {
 }
 
 function openCreateContract(pnlId: string) {
+  const pnl = pnls.value.find((x:any) => String(x.id) === String(pnlId));
+  if (pnl && isCabFixePnl(pnl)) return; // CAB FIXE => contrat auto backend
   resetDraft();
   editMode.value = "contract";
   editOpen.value = true;
@@ -827,29 +834,33 @@ async function saveEdit() {
   editBusy.value = true;
 
   try {
+    /* =========================
+       PNL
+    ========================= */
     if (editMode.value === "pnl") {
-        req(draft.title, "Titre P&L obligatoire.");
-  req(draft.client, "Client obligatoire.");
-  req(draft.city, "Ville obligatoire.");
-  req(draft.status, "Statut obligatoire.");
-  req(draft.startDate, "Date de démarrage obligatoire.");
+      // ✅ validations communes
+      req(draft.title, "Titre P&L obligatoire.");
+      req(draft.city, "Ville obligatoire.");
+      req(draft.status, "Statut obligatoire.");
+      req(draft.startDate, "Date de démarrage obligatoire.");
+      req(draft.model, "Veuillez choisir un modèle.");
 
-  if (isCreate.value) {
-    req(draft.model, "Veuillez choisir un modèle.");
-  } else {
-    // en modification: model existe mais on garde une sécurité
-    req(draft.model, "Modèle manquant (invalide).");
-  }
+      const cabFixe = isCabFixePnl({ model: draft.model });
+
+      // ✅ client obligatoire uniquement pour CAB Mobile
+      if (!cabFixe) {
+        req(draft.client, "Client obligatoire.");
+      } else {
+        // optionnel: neutraliser côté UI (évite persistance)
+        draft.client = "";
+      }
+
       if (isCreate.value) {
-        if (!String(draft.model ?? "").trim()) {
-          throw new Error("Veuillez choisir un modèle.");
-        }
-
         const created = await apiJson(`/pnls`, {
           method: "POST",
           body: JSON.stringify({
             title: draft.title,
-            client: draft.client,
+            client: cabFixe ? null : draft.client,
             city: draft.city,
             status: draft.status,
             model: draft.model,
@@ -869,11 +880,12 @@ async function saveEdit() {
         return;
       }
 
+      // ✅ update PnL (CAB FIXE => client null)
       await apiJson(`/pnls/${draft.id}`, {
         method: "PUT",
         body: JSON.stringify({
           title: draft.title,
-          client: draft.client,
+          client: cabFixe ? null : draft.client,
           city: draft.city,
           status: draft.status,
           startDate: fromDateInput(draft.startDate),
@@ -881,21 +893,25 @@ async function saveEdit() {
       });
     }
 
+    /* =========================
+       CONTRACT
+    ========================= */
     if (editMode.value === "contract") {
+      // ✅ validations originales
       reqNumGt(draft.dureeMois, 0, "Durée (mois) doit être > 0.");
-req(draft.cab, "Cab obligatoire.");
-req(draft.installation, "Installation obligatoire.");
-req(draft.genieCivil, "Génie civil obligatoire.");
-req(draft.transport, "Transport obligatoire.");
-req(draft.terrain, "Terrain obligatoire.");
-req(draft.matierePremiere, "Matière première obligatoire.");
-req(draft.maintenance, "Maintenance obligatoire.");
-req(draft.chargeuse, "Chargeuse obligatoire.");
-req(draft.branchementEau, "Branchement eau obligatoire.");
-req(draft.consoEau, "Consommation eau obligatoire.");
-req(draft.branchementElec, "Branchement électricité obligatoire.");
-req(draft.consoElec, "Consommation électricité obligatoire.");
-reqNumGt(draft.postes, 0, "Nombre de postes obligatoire.");
+      req(draft.cab, "Cab obligatoire.");
+      req(draft.installation, "Installation obligatoire.");
+      req(draft.genieCivil, "Génie civil obligatoire.");
+      req(draft.transport, "Transport obligatoire.");
+      req(draft.terrain, "Terrain obligatoire.");
+      req(draft.matierePremiere, "Matière première obligatoire.");
+      req(draft.maintenance, "Maintenance obligatoire.");
+      req(draft.chargeuse, "Chargeuse obligatoire.");
+      req(draft.branchementEau, "Branchement eau obligatoire.");
+      req(draft.consoEau, "Consommation eau obligatoire.");
+      req(draft.branchementElec, "Branchement électricité obligatoire.");
+      req(draft.consoElec, "Consommation électricité obligatoire.");
+      reqNumGt(draft.postes, 0, "Nombre de postes obligatoire.");
 
       const payload = {
         dureeMois: Number(draft.dureeMois ?? 0),
@@ -934,10 +950,13 @@ reqNumGt(draft.postes, 0, "Nombre de postes obligatoire.");
       }
     }
 
+    /* =========================
+       VARIANT
+    ========================= */
     if (editMode.value === "variant") {
       req(draft.title, "Titre de la variante obligatoire.");
-req(draft.status, "Statut de la variante obligatoire.");
-// description seule peut être vide ✅
+      req(draft.status, "Statut de la variante obligatoire.");
+      // description seule peut être vide ✅
 
       await apiJson(`/variants/${draft.id}`, {
         method: "PUT",
@@ -949,6 +968,9 @@ req(draft.status, "Statut de la variante obligatoire.");
       });
     }
 
+    /* =========================
+       Reload + restore selection (ton flow)
+    ========================= */
     const keepPnl = activePnlId.value;
     const keepVar = activeVariantId.value;
 
@@ -964,6 +986,7 @@ req(draft.status, "Statut de la variante obligatoire.");
     editBusy.value = false;
   }
 }
+
 
 /* =========================================================
    VARIANT CREATION (2-step modals)
@@ -1234,9 +1257,15 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="actions">
-            <button class="chipBtn chipBtn--contract" @click="openCreateContract(p.id)" title="Créer un contrat">
-              + Contrat
-            </button>
+<button
+  v-if="!isCabFixePnl(p)"
+  class="chipBtn chipBtn--contract"
+  @click="openCreateContract(p.id)"
+  title="Créer un contrat"
+>
+  + Contrat
+</button>
+
 
             <div class="menu" data-menu>
               <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>

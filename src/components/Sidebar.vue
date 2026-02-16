@@ -1,4 +1,4 @@
-<!-- Sidebar.vue (FICHIER COMPLET) -->
+<!-- Sidebar.vue (FICHIER COMPLET / ✅ verrouillages CAB Fixe + auto-redirect) -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -34,6 +34,25 @@ import {
 const router = useRouter();
 const route = useRoute();
 const store = usePnlStore();
+
+/* =====================
+   CAB Fixe vs Mobile helpers
+===================== */
+function norm(s: any) {
+  return String(s ?? "").trim().toLowerCase();
+}
+function isCabFixePnl(p: any) {
+  return norm(p?.model).includes("cab fixe");
+}
+function isCabMobilePnl(p: any) {
+  return norm(p?.model).includes("cab mobile");
+}
+function isCabFixeExistantePnl(p: any) {
+  return norm(p?.model).includes("cab fixe") && norm(p?.model).includes("existante");
+}
+function isCabFixeNouvellePnl(p: any) {
+  return norm(p?.model).includes("cab fixe") && norm(p?.model).includes("nouvelle");
+}
 
 /* =====================
    STATE
@@ -121,7 +140,59 @@ const routeByItem: Record<string, string> = {
   "Générer devis multi-variantes": "MultiVarianteDevis",
 };
 
+/* =====================
+   MODE / RULES (based on active P&L)
+===================== */
+const activePnl = computed<any | null>(() => (store as any)?.activePnl ?? null);
+const activePnlModel = computed(() => String(activePnl.value?.model ?? "").trim());
+
+// ✅ variante active ?
+const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
+
+// ✅ models
+const isCabMobile = computed(() => isCabMobilePnl({ model: activePnlModel.value }));
+const isCabFixe = computed(() => isCabFixePnl({ model: activePnlModel.value }));
+const isCabFixeExistante = computed(() => isCabFixeExistantePnl({ model: activePnlModel.value }));
+const isCabFixeNouvelle = computed(() => isCabFixeNouvellePnl({ model: activePnlModel.value }));
+
+// ✅ verrouillages demandés
+// - Devis & multi devis: interdits pour TOUS les CAB FIXE
+const devisAllowed = computed(() => hasActiveVariant.value && !isCabFixe.value);
+const multiDevisAllowed = computed(() => !isCabFixe.value);
+
+// - CAB & Couts occasionnels: verrouillés uniquement pour CAB fixe - existante
+const cabSectionAllowed = computed(() => hasActiveVariant.value && !isCabFixeExistante.value);
+const coutsOccasionnelsAllowed = computed(() => hasActiveVariant.value && !isCabFixeExistante.value);
+
+const devisDisabledReason = computed(() => {
+  if (!hasActiveVariant.value) return "Sélectionne une variante pour accéder aux sections.";
+  if (isCabFixe.value) return "Devis non disponible pour les P&L CAB FIXE.";
+  return "";
+});
+const multiDevisDisabledReason = computed(() => {
+  if (isCabFixe.value) return "Devis multi-variantes non disponible pour les P&L CAB FIXE.";
+  return "";
+});
+const cabDisabledReason = computed(() => {
+  if (!hasActiveVariant.value) return "Sélectionne une variante pour accéder aux sections.";
+  if (isCabFixeExistante.value) return "Section CAB verrouillée pour “CAB fixe - existante”.";
+  return "";
+});
+const coutsOccDisabledReason = computed(() => {
+  if (!hasActiveVariant.value) return "Sélectionne une variante pour accéder aux sections.";
+  if (isCabFixeExistante.value) return "Section Couts occasionnels verrouillée pour “CAB fixe - existante”.";
+  return "";
+});
+
 function goToPage(item: string) {
+  // ✅ hard stop si item non autorisé (anti-faille par click)
+  if (item === "Devis" && !devisAllowed.value) return;
+  if (item === "Majorations" && !devisAllowed.value) return;
+  if (item === "Générer devis multi-variantes" && !multiDevisAllowed.value) return;
+
+  if (item === "CAB" && !cabSectionAllowed.value) return;
+  if (item === "Couts occasionnels" && !coutsOccasionnelsAllowed.value) return;
+
   activeItem.value = item;
 
   const rn = routeByItem[item];
@@ -151,7 +222,49 @@ function goToPage(item: string) {
   router.push({ name: "PageView", params: { name: pageName } });
 }
 
-// keep active item synced with current route
+/* ✅ Auto-redirect anti-faille :
+   si on est sur une route non autorisée après changement P&L (via Header selectors),
+   on redirige vers une route safe.
+*/
+function redirectToSafe() {
+  const rn = String(route.name ?? "");
+
+  const isDevisRoute =
+    rn === "Devis" || rn === "Majorations" || rn === "MultiVarianteDevis" ||
+    (rn === "PageView" && typeof route.params?.name === "string" && route.params.name.includes("/Devis/"));
+
+  const isCabRoute =
+    rn === "CAB" ||
+    (rn === "PageView" && typeof route.params?.name === "string" && route.params.name.includes("/Couts/CAB"));
+
+  const isCoutsOccRoute =
+    rn === "CoutsOccasionnels" ||
+    (rn === "PageView" && typeof route.params?.name === "string" && route.params.name.includes("/Couts/Couts occasionnels"));
+
+  // Devis interdit => renvoyer vers Détails (si variante active) sinon MesPnls
+  if (isDevisRoute && (isCabFixe.value || (rn !== "MultiVarianteDevis" && !hasActiveVariant.value))) {
+    if (hasActiveVariant.value) router.replace({ name: "Details" });
+    else router.replace({ name: "MesPnls" });
+    return;
+  }
+  // CAB verrouillé (cab fixe existante) => redirect Details
+  if (isCabRoute && !cabSectionAllowed.value) {
+    router.replace({ name: hasActiveVariant.value ? "Details" : "MesPnls" });
+    return;
+  }
+  // Couts occasionnels verrouillé => redirect Details
+  if (isCoutsOccRoute && !coutsOccasionnelsAllowed.value) {
+    router.replace({ name: hasActiveVariant.value ? "Details" : "MesPnls" });
+    return;
+  }
+}
+
+// déclenche sur changement P&L model, variante active, ou route
+watch([activePnlModel, hasActiveVariant, () => route.name, () => route.params], () => {
+  redirectToSafe();
+});
+
+/* keep active item synced with current route */
 watch(
   () => route.name,
   () => {
@@ -269,9 +382,6 @@ function setAllVariantSections(expand: boolean) {
   open.value.couts = expand;
   open.value.devis = expand;
 }
-
-// ✅ (optionnel) logique “UX fluide” : désactiver la navigation “Variante active” si aucune variante active
-const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
 </script>
 
 <template>
@@ -319,6 +429,8 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
             type="button"
             class="sb__item"
             :class="{ 'is-active': activeItem === item }"
+            :disabled="item === 'Générer devis multi-variantes' && !multiDevisAllowed"
+            :title="item === 'Générer devis multi-variantes' && !multiDevisAllowed ? multiDevisDisabledReason : ''"
             @click="goToPage(item)"
           >
             <component :is="icons[item] || ChartBarIcon" class="sb__icon" />
@@ -456,12 +568,14 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'CAB' }"
-                  :disabled="!hasActiveVariant"
+                  :disabled="!cabSectionAllowed"
+                  :title="!cabSectionAllowed ? cabDisabledReason : ''"
                   @click="goToPage('CAB')"
                 >
                   <component :is="icons['CAB']" class="sb__icon" />
                   <span class="sb__label">CAB</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
@@ -472,6 +586,7 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
                   <component :is="icons['Maintenance']" class="sb__icon" />
                   <span class="sb__label">Maintenance</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
@@ -482,6 +597,7 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
                   <component :is="icons['Cout au m3']" class="sb__icon" />
                   <span class="sb__label">Cout au m3</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
@@ -492,6 +608,7 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
                   <component :is="icons['Cout au mois']" class="sb__icon" />
                   <span class="sb__label">Cout au mois</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
@@ -502,16 +619,19 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
                   <component :is="icons['Cout employés']" class="sb__icon" />
                   <span class="sb__label">Cout employés</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Couts occasionnels' }"
-                  :disabled="!hasActiveVariant"
+                  :disabled="!coutsOccasionnelsAllowed"
+                  :title="!coutsOccasionnelsAllowed ? coutsOccDisabledReason : ''"
                   @click="goToPage('Couts occasionnels')"
                 >
                   <component :is="icons['Couts occasionnels']" class="sb__icon" />
                   <span class="sb__label">Couts occasionnels</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
@@ -528,7 +648,8 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
               <button
                 type="button"
                 class="sb__parent sb__parent--lvl2"
-                :disabled="!hasActiveVariant"
+                :disabled="!hasActiveVariant || isCabFixe"
+                :title="isCabFixe ? 'Devis indisponible pour CAB FIXE.' : (!hasActiveVariant ? 'Sélectionne une variante.' : '')"
                 @click="toggle('devis')"
               >
                 <component :is="open.devis ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
@@ -540,17 +661,20 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Majorations' }"
-                  :disabled="!hasActiveVariant"
+                  :disabled="!devisAllowed"
+                  :title="!devisAllowed ? devisDisabledReason : ''"
                   @click="goToPage('Majorations')"
                 >
                   <component :is="icons['Majorations']" class="sb__icon" />
                   <span class="sb__label">Majorations</span>
                 </button>
+
                 <button
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Devis' }"
-                  :disabled="!hasActiveVariant"
+                  :disabled="!devisAllowed"
+                  :title="!devisAllowed ? devisDisabledReason : ''"
                   @click="goToPage('Devis')"
                 >
                   <component :is="DocumentPlusIcon" class="sb__icon" />
@@ -580,6 +704,7 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
 </template>
 
 <style scoped>
+/* ✅ Styles inchangés (ton fichier original) */
 .sb {
   --navy: #184070;
   --cyan: #20b8e8;
@@ -779,6 +904,11 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
   border-color: rgba(0, 0, 0, 0.06);
 }
 
+.sb__item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .sb__icon {
   width: 16px;
   height: 16px;
@@ -841,6 +971,7 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
 
 .sb__leaf:disabled {
   cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .sb__leaf--small {
@@ -870,6 +1001,7 @@ const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId
 
 .sb__parent:disabled {
   cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .sb__parent--row {

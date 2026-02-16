@@ -108,13 +108,6 @@ export function computeHeaderKpis(
 ): HeaderKPIs {
   // =========================
   // MOMD IMPUTATION (Majorations -> MOMD)
-  // - Persisted & preview are stored inside the same majorations map
-  // - Goal: neutralize the EBITDA/EBIT loss caused by majorations by
-  //   increasing MOMD (=> CA) while accounting for "frais généraux" (% of CA).
-  //
-  // Keys used inside majorations map:
-  // - momdImputation.enabled : 0/1
-  // - momdImputation.pct     : 0..100 (percentage of the loss to compensate)
   // =========================
   const IMP_ENABLED_KEY = "momdImputation.enabled";
   const IMP_PCT_KEY = "momdImputation.pct";
@@ -144,11 +137,6 @@ export function computeHeaderKpis(
   const volumeTotalM3 = sum(formulesItems, (f) => n(f?.volumeM3));
 
   // ✅ pre-pass: compute MOMD add-on per m3 if imputation ON
-  // We compute:
-  //   lossEBITDA = EBITDA_base(no majorations) - EBITDA_majorations(no imputation)
-  //   addCA = lossEBITDA * (impPct/100) / (1 - fraisGenPct)
-  //   addMomdM3 = addCA / volumeTotalM3
-  // This ensures EBITDA (and thus EBIT) comes back to base when impPct=100.
   let momdImputedAddM3 = 0;
   if (impEnabled && volumeTotalM3 > 0) {
     try {
@@ -244,19 +232,22 @@ export function computeHeaderKpis(
   const momdTotal = sum(formulesItems, (f: any) => momdEffM3(f) * n(f?.volumeM3));
 
   // ✅ CA total utilise momdEff (cohérent avec ebitda/ebit)
-  const caTotal = sum(formulesItems, (f: any) => {
+  // NOTE: on passe en "let" pour pouvoir ajouter le CA pompage si includePompage=true
+  let caTotal = sum(formulesItems, (f: any) => {
     const vol = n(f?.volumeM3);
     const cmp = cmpFormuleM3(f?.formule);
     const pv = cmp + transportMoyenM3 + momdEffM3(f);
     return pv * vol;
   });
 
-  const prixMoyenM3 = volumeTotalM3 > 0 ? caTotal / volumeTotalM3 : 0;
+  // (dépendants du CA -> "let" pour rester correct après ajout pompage)
+  let prixMoyenM3 = volumeTotalM3 > 0 ? caTotal / volumeTotalM3 : 0;
+
   const coutMpMoyenM3 = volumeTotalM3 > 0 ? coutMpTotal / volumeTotalM3 : 0;
   const momdMoyenM3 = volumeTotalM3 > 0 ? momdTotal / volumeTotalM3 : 0;
 
-  const margeBrute = caTotal - coutMpTotal;
-  const margeBrutePct = caTotal > 0 ? (margeBrute / caTotal) * 100 : null;
+  let margeBrute = caTotal - coutMpTotal;
+  let margeBrutePct = caTotal > 0 ? (margeBrute / caTotal) * 100 : null;
 
   // 5) Production
   const coutM3 = variant?.coutM3;
@@ -537,17 +528,30 @@ export function computeHeaderKpis(
 
   const volumePompeM3 = (volumePompePct / 100) * volumeTotalM3;
 
+  // ✅ AJOUT: CA pompage (PV * volume pompé) ajouté au CA uniquement si includePompage=true
+  const caPompageTotal = includePompage ? prixVentePompe * volumePompeM3 : 0;
+
   // Marge totale pompage = (PV - PA) * volume pompé
   const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
+
+  // ✅ AJOUT: on augmente le CA total et on recalcule les dépendants (prix moyen + marge brute)
+  if (includePompage && caPompageTotal !== 0) {
+    caTotal = caTotal + caPompageTotal;
+
+    prixMoyenM3 = volumeTotalM3 > 0 ? caTotal / volumeTotalM3 : 0;
+
+    margeBrute = caTotal - coutMpTotal;
+    margeBrutePct = caTotal > 0 ? (margeBrute / caTotal) * 100 : null;
+  }
 
   // 7) Frais généraux
   const fraisGenerauxTotal = (fraisGenPct / 100) * caTotal;
 
   // 8) EBITDA & EBIT
-   const amortissementMensuel = applyMajoration(
-  n(variant?.cab?.amortMois),
-  getMajorationPct("cab.amortMois", persistedMajorations, previewMajorations)
-   );
+  const amortissementMensuel = applyMajoration(
+    n(variant?.cab?.amortMois),
+    getMajorationPct("cab.amortMois", persistedMajorations, previewMajorations)
+  );
   const amortissementTotal = amortissementMensuel * duree;
 
   // ✅ EBITDA dépend de momdTotal → surcharge impacte EBITDA/EBIT naturellement

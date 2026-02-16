@@ -4,7 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { usePnlStore } from "@/stores/pnl.store";
 import HeaderActionsModals from "@/components/HeaderActionsModals.vue";
 import { contractUiTitle } from "@/services/contractTitle";
-
+import { useRoute, useRouter } from "vue-router";
 
 const actionsRef = ref<InstanceType<typeof HeaderActionsModals> | null>(null);
 
@@ -37,6 +37,83 @@ type KpiValues = { total: number; m3: number; month: number; percent: number };
 type Metrics = Record<KpiName, KpiValues>;
 
 const store = usePnlStore();
+const router = useRouter();
+const route = useRoute();
+
+function norm(s: any) {
+  return String(s ?? "").trim().toLowerCase();
+}
+function isCabFixePnl(p: any) {
+  return norm(p?.model).includes("cab fixe");
+}
+
+/* =========================
+   MINI TOAST
+========================= */
+const toastMsg = ref<string | null>(null);
+let toastTimer: any = null;
+
+function showToast(msg: string) {
+  toastMsg.value = msg;
+
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastMsg.value = null;
+  }, 2600);
+}
+
+
+// =========================
+// ✅ Store refs (déclarés tôt pour éviter TDZ)
+// =========================
+const pnls = computed<any[]>(() => store.pnls ?? []);
+const activePnl = computed<any | null>(() => store.activePnl ?? null);
+const activeVariant = computed<any | null>(() => store.activeVariant ?? null);
+const headerKpis = computed<any>(() => store.activeHeaderKPIs);
+
+// =========================
+// ✅ CAB Fixe rules (sans TDZ)
+// =========================
+const activePnlModel = computed(() => String((store as any)?.activePnl?.model ?? "").trim());
+const isCabFixe = computed(() => isCabFixePnl({ model: activePnlModel.value }));
+
+// ✅ Ta règle corrigée: verrouillage CAB & CoutsOcc seulement pour "CAB fixe - existante"
+const isCabFixeExist = computed(() => norm(activePnlModel.value).includes("cab fixe - existante"));
+
+// ✅ contrat non éditable pour CAB fixe (tous)
+const canEditContract = computed(() => !isCabFixe.value);
+const editContractTooltip = computed(() =>
+  canEditContract.value ? "Éditer" : "Contrat verrouillé pour les P&L CAB FIXE."
+);
+
+const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
+
+// ✅ Devis non dispo pour CAB fixe (si tu veux l’inverse, dis-moi, je te le bascule)
+const devisAllowed = computed(() => hasActiveVariant.value && !isCabFixe.value);
+const cabSectionAllowed = computed(() => hasActiveVariant.value && !isCabFixeExist.value);
+const coutsOccAllowed = computed(() => hasActiveVariant.value && !isCabFixeExist.value);
+
+// ✅ guard runtime: si on change P&L via selectors et route devient interdite => redirect
+watch(
+  [activePnlModel, () => (store as any)?.activePnl?.id, () => (store as any)?.activeVariantId, () => route.name],
+  () => {
+    const rn = String(route.name ?? "");
+
+    if ((rn === "Devis" || rn === "Majorations") && !devisAllowed.value) {
+      router.replace({ name: "Details" });
+      return;
+    }
+    if (rn === "CAB" && !cabSectionAllowed.value) {
+      router.replace({ name: "Details" });
+      return;
+    }
+    if (rn === "CoutsOccasionnels" && !coutsOccAllowed.value) {
+      router.replace({ name: "Details" });
+      return;
+    }
+  },
+  { immediate: true }
+);
 
 /* =========================
    ✅ TOGGLES
@@ -77,11 +154,6 @@ onMounted(() => {
   restoreCollapsedPref();
   if (store.pnls.length === 0) store.loadPnls();
 });
-
-const pnls = computed<any[]>(() => store.pnls ?? []);
-const activePnl = computed<any | null>(() => store.activePnl ?? null);
-const activeVariant = computed<any | null>(() => store.activeVariant ?? null);
-const headerKpis = computed<any>(() => store.activeHeaderKPIs);
 
 const activeContract = computed<any | null>(() => {
   const pnl = activePnl.value;
@@ -183,7 +255,6 @@ const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
 
 const contractName = computed(() => contractUiTitle(activeContract.value));
-
 
 /* =========================
    KPI METRICS
@@ -299,8 +370,7 @@ function calcDropdownPosition() {
   const r = btn.getBoundingClientRect();
   const gap = 8;
 
-  // ✅ touche: dropdown plus large + aligné avec le selector P&L
-  const desired = Math.min(760, Math.max(560, r.width)); // >= 560, jusqu'à 760
+  const desired = Math.min(760, Math.max(560, r.width));
   const width = Math.min(desired, window.innerWidth - 16);
   const left = Math.min(Math.max(8, r.left), window.innerWidth - width - 8);
 
@@ -366,8 +436,6 @@ onBeforeUnmount(() => {
       <div class="pill pnl control">
         <button ref="pnlBtnRef" type="button" class="pill__head" @click="openPnlDropdown">
           <span class="pill__label">P&L</span>
-
-          <!-- ✅ touche: petite pastille "actif" discrète -->
           <span class="pill__badge" title="P&L actif">Actif</span>
 
           <span class="pill__value" :title="projectName">{{ projectName }}</span>
@@ -406,20 +474,25 @@ onBeforeUnmount(() => {
             @change="onPickContract(($event.target as HTMLSelectElement).value)"
           >
             <option value="" disabled>—</option>
-<option
-  v-for="c in contractsOfActivePnl"
-  :key="c.id"
-  :value="String(c.id)"
->
-  {{ contractUiTitle(c) }}
-</option>
-
+            <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
+              {{ contractUiTitle(c) }}
+            </option>
           </select>
         </div>
 
         <div class="pill__actions">
           <button class="iconbtn" title="Voir" @click.stop="viewContract"><EyeIcon class="ic" /></button>
-          <button class="iconbtn" title="Éditer" @click.stop="editContract"><PencilSquareIcon class="ic" /></button>
+
+<button
+  class="iconbtn"
+  title="Éditer"
+  @click.stop="canEditContract ? editContract() : showToast('Contrat verrouillé pour les P&L CAB FIXE.')"
+>
+  <PencilSquareIcon class="ic" />
+</button>
+
+
+
         </div>
       </div>
 
@@ -598,6 +671,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </teleport>
+    <transition name="toast">
+  <div v-if="toastMsg" class="miniToast">
+    {{ toastMsg }}
+  </div>
+</transition>
+
   </header>
 
   <HeaderActionsModals ref="actionsRef" />
@@ -1239,4 +1318,37 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ===== Mini Toast ===== */
+.miniToast {
+  position: fixed;
+  top: 84px;
+  right: 22px;
+  background: #184070;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 10px 16px;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  z-index: 200000;
+  letter-spacing: 0.2px;
+}
+
+/* animation */
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 180ms ease;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.toast-enter-to,
+.toast-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 </style>

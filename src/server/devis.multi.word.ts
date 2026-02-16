@@ -1,4 +1,4 @@
-// src/server/devis.multi.word.ts (FICHIER COMPLET / docx-compatible + mutualisation sections + charges communes + prix compl. filtrés + ✅ prix compl commun en bas + ✅ majorations PV global)
+// src/server/devis.multi.word.ts (FICHIER COMPLET / docx-compatible + mutualisation sections + charges communes + prix compl. filtrés + ✅ prix compl commun en bas + ✅ majorations PV global + ✅ articles extras alignés comme devis.word)
 import path from "path";
 import fs from "fs";
 import {
@@ -116,6 +116,77 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
     if (k in map) return n((map as any)[k]);
   }
   return 0;
+}
+
+/* =========================
+   EXTRA ARTICLES (hors formules)
+   ✅ Alignement identique à devis.word :
+   - ajoutés au tableau "Prix"
+   - PU toujours en /m3 (pas d'unité affichée ailleurs)
+   - si qty absent/0 => afficher "-" dans Volume & Montant (non inclus dans totaux)
+========================= */
+
+type ExtraArticle = {
+  label: string;
+  puM3: number;
+  qtyM3?: number;
+};
+
+function normalizeExtraArticles(raw: any): ExtraArticle[] {
+  const arr = safeJsonParse(raw, []);
+  if (!Array.isArray(arr)) return [];
+
+  const out: ExtraArticle[] = [];
+  for (const it of arr) {
+    if (!it) continue;
+
+    const label = String(
+      (it as any)?.label ??
+        (it as any)?.designation ??
+        (it as any)?.name ??
+        (it as any)?.titre ??
+        (it as any)?.text ??
+        ""
+    ).trim();
+    if (!label) continue;
+
+    const puM3 = n(
+      (it as any)?.puM3 ??
+        (it as any)?.pu ??
+        (it as any)?.prix ??
+        (it as any)?.price ??
+        (it as any)?.unitPrice ??
+        0
+    );
+    if (puM3 <= 0) continue;
+
+    const qtyM3 = n(
+      (it as any)?.qtyM3 ??
+        (it as any)?.qty ??
+        (it as any)?.volumeM3 ??
+        (it as any)?.volume ??
+        (it as any)?.quantiteM3 ??
+        (it as any)?.quantite ??
+        0
+    );
+
+    out.push({ label, puM3, qtyM3: qtyM3 > 0 ? qtyM3 : undefined });
+  }
+
+  return out;
+}
+
+function readExtraArticlesFromDevis(v: any): ExtraArticle[] {
+  const d: any = v?.devis ?? null;
+
+  // 1) devis.extraArticles (champ direct, si présent)
+  const direct = (d as any)?.extraArticles;
+  const directNorm = normalizeExtraArticles(direct);
+  if (directNorm.length) return directNorm;
+
+  // 2) devis.meta.extraArticles
+  const meta = safeJsonParse((d as any)?.meta, {});
+  return normalizeExtraArticles((meta as any)?.extraArticles ?? (meta as any)?.articlesExtras ?? []);
 }
 
 /* =========================
@@ -536,6 +607,15 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
   type DocChild = Paragraph | Table;
   const docChildren: DocChild[] = [];
 
+  type TableLine = {
+    label: string;
+    pu: number;
+    vol: number;
+    total: number;
+    volDash?: boolean;
+    totalDash?: boolean;
+  };
+
   type VariantComputed = {
     idx: number;
     volumeTotal: number;
@@ -649,7 +729,8 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     // (optionnel) MOMD majoré si présent
     const momdPctKey = ["momd", "momd.m3", "mainOeuvre", "mo", "momdPct"];
 
-    const tableLines: Array<{ label: string; pu: number; vol: number; total: number }> = rows.map((r: any) => {
+    // ✅ lignes tableau formules
+    const tableLines: TableLine[] = rows.map((r: any) => {
       const label = String(r?.formule?.label ?? "—");
       const vol = n(r?.volumeM3);
 
@@ -662,7 +743,7 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
       // ✅ base PV
       const pvBase = cmp + transportUsed + momdUsed;
 
-      // ✅ majoration PV globale (sinon tu seras “moins que la réalité” vs DevisPage)
+      // ✅ majoration PV globale
       const pvMaj = pvGlobalPct ? applyMaj(pvBase, pvGlobalPct) : pvBase;
 
       const pvArr = roundTo5(pvMaj);
@@ -673,10 +754,29 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
       return { label, pu, vol, total: pu * vol };
     });
 
+    // ✅ Hydrofuge (meta)
     if (hydroPu > 0 && hydroQty > 0) {
       tableLines.push({ label: "Plus value Hydrofuge", pu: hydroPu, vol: hydroQty, total: hydroPu * hydroQty });
     }
 
+    // ✅ Articles extras (hors formules) — ajout au tableau comme dans devis.word
+    const extras = readExtraArticlesFromDevis(v);
+    for (const ex of extras) {
+      const pu = n(ex?.puM3);
+      const qty = n(ex?.qtyM3);
+      const hasQty = qty > 0;
+
+      tableLines.push({
+        label: String(ex?.label ?? "").trim(),
+        pu,
+        vol: hasQty ? qty : 0,
+        total: hasQty ? pu * qty : 0,
+        volDash: !hasQty,
+        totalDash: !hasQty,
+      });
+    }
+
+    // ✅ Totaux basés sur les lignes avec montants (les "dash" contribuent 0)
     const totalHT = tableLines.reduce((s, x) => s + n(x.total), 0);
     const tva = totalHT * 0.2;
     const totalTTC = totalHT + tva;
@@ -698,12 +798,13 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
           children: [
             cell([pTxtBody(x.label)]),
             cell([pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })]),
-            cell([pTxtBody(fmtMoney2(x.vol), { align: AlignmentType.RIGHT })]),
-            cell([pTxtBody(fmtMoney2(x.total), { align: AlignmentType.RIGHT })]),
+            cell([pTxtBody(x.volDash ? "-" : fmtMoney2(x.vol), { align: AlignmentType.RIGHT })]),
+            cell([pTxtBody(x.totalDash ? "-" : fmtMoney2(x.total), { align: AlignmentType.RIGHT })]),
           ],
         })
     );
 
+    // ✅ Total volume: on garde le volume formules (cohérent avec le calcul projet et ton doc actuel)
     const totalRow = new TableRow({
       height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [

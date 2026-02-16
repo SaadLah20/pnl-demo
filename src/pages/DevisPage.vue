@@ -1,13 +1,14 @@
-<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte lisible + compacte)
-     Objectifs demandés :
-     ✅ ZÉRO scroll horizontal sur le tableau des prix (on réduit à 4 colonnes + métriques en sous-ligne)
-     ✅ Contenu en 1 colonne (plus lisible), sections compactes + listes bullet clean
-     ✅ Style pro, pas chargé, actions claires
-     ✅ Logique/script inchangés (mêmes fonctions/états)
+<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI améliorée sans dégrader)
+     Objectifs:
+     ✅ Aucun débordement / superposition sur : En-tête, Prix complémentaires, Articles hors formules, Signature
+     ✅ Libellés EXACTEMENT au-dessus des champs
+     ✅ Articles hors formules : PU toujours en DH/m³ ⇒ unité supprimée (UI + modèle, sauvegarde force unit="m3" en compat)
+     ✅ Reste inchangé (logique, tri stable, dirty guard, surcharges, styles globaux)
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+
 import {
   InformationCircleIcon,
   ArrowPathIcon,
@@ -32,10 +33,6 @@ function n(x: any): number {
 function money2(v: any) {
   const x = n(v);
   return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
-}
-function money0(v: any) {
-  const x = n(v);
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(x);
 }
 function int(v: any) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n(v));
@@ -80,22 +77,13 @@ const variant = computed<any | null>(() => (store as any).activeVariant ?? null)
 const contract = computed<any | null>(() => (store as any).activeContract ?? null);
 
 const dureeMois = computed(() => n(contract.value?.dureeMois ?? 0));
-const rows = computed<any[]>(() => variant.value?.formules?.items ?? []);
-const volumeTotalFromFormules = computed(() => rows.value.reduce((s, r) => s + n(r?.volumeM3), 0));
-
-const quantiteProjetM3 = computed(() => {
-  const c = contract.value ?? {};
-  const maybe = n((c as any)?.quantiteM3) || n((c as any)?.volumeM3) || n((c as any)?.volumeTotalM3) || 0;
-  return maybe > 0 ? maybe : volumeTotalFromFormules.value;
-});
 
 /* =========================
-   TOGGLES (header)
+   TOGGLES (Dashboard preview)
 ========================= */
-
-const withDevisSurcharge = computed({
+const withDevisSurcharge = computed<boolean>({
   get: () => Boolean((store as any).headerUseDevisSurcharge),
-  set: (v: boolean) => (store as any).setHeaderUseDevisSurcharge(Boolean(v)),
+  set: (v) => (store as any).setHeaderUseDevisSurcharge?.(Boolean(v)),
 });
 
 /* =========================
@@ -105,6 +93,9 @@ const draft = reactive({
   surcharges: {} as Record<string, number>,
   applyToDashboardOnSave: true,
 });
+
+/* ✅ Surcharges enregistrées (tri stable) */
+const savedSurcharges = ref<Record<string, number>>({});
 
 function rowKey(r: any): string {
   return String(r?.id ?? r?.variantFormuleId ?? r?.formuleId ?? r?.formule?.id ?? "");
@@ -120,12 +111,30 @@ function setSurcharge(r: any, v: any) {
 function isRowTouched(r: any): boolean {
   return Math.abs(getSurcharge(r)) > 0;
 }
+function getSavedSurcharge(r: any): number {
+  const k = rowKey(r);
+  return n(savedSurcharges.value?.[k] ?? 0);
+}
 
 /* =========================
    LOAD persisted devis.* (surcharges + content)
 ========================= */
-type LineItem = { label: string; value?: string; locked?: boolean }; // locked=true => piloté contrat (non éditable)
+type LineItem = { label: string; value?: string; locked?: boolean };
 type PriceExtra = { label: string; unit?: string; value: number; note?: string };
+
+/* ✅ Articles hors formules (PU toujours DH/m³ => pas d'unité) */
+type ExtraArticle = {
+  label: string;
+  qty: number | null; // null => "-"
+  pu: number; // DH/m³
+};
+
+function defaultExtraArticles(): ExtraArticle[] {
+  return [
+    { label: "Plus value hydrofuge", qty: null, pu: 50 },
+    { label: "Prestation de pompage", qty: null, pu: 50 },
+  ];
+}
 
 const DELAY_PENALTY_LABEL = "Pénalité de dépassement de délai (selon conditions contractuelles)";
 
@@ -150,6 +159,7 @@ const content = reactive({
   chargeFournisseur: [] as LineItem[],
   chargeClient: [] as LineItem[],
   prixComplementaires: [] as PriceExtra[],
+  extraArticles: [] as ExtraArticle[],
   dureeQuantiteTexte: "",
   validiteTexte: "",
   signature: {
@@ -197,10 +207,26 @@ function normalizePriceExtras(x: any, fallback: PriceExtra[]): PriceExtra[] {
   return out.length ? out : fallback;
 }
 
+/* compat: on accepte meta.extraArticles ancien format (avec unit/qty/pu) et on ignore l'unité */
+function normalizeExtraArticles(x: any, fallback: ExtraArticle[]): ExtraArticle[] {
+  const arr = Array.isArray(x) ? x : [];
+  const out: ExtraArticle[] = [];
+  for (const it of arr) {
+    const label = String(it?.label ?? it?.designation ?? it?.name ?? "").trim();
+    if (!label) continue;
+
+    const qtyRaw = it?.qty ?? it?.quantity ?? it?.qte;
+    out.push({
+      label,
+      qty: qtyRaw === null || qtyRaw === undefined || String(qtyRaw).trim() === "-" || String(qtyRaw).trim() === "" ? null : n(qtyRaw),
+      pu: n(it?.pu ?? it?.prixUnitaire ?? it?.unitPrice ?? 0),
+    });
+  }
+  return out.length ? out : fallback;
+}
+
 /* =========================
-   ✅ Répartition depuis le contrat (source-of-truth) MAIS :
-   - Seules les phrases liées DIRECTEMENT au contrat sont "locked"
-   - Les phrases standard Word restent éditables (non locked) et ne sont pas régénérées
+   Répartition depuis le contrat (locked)
 ========================= */
 type Side = "CLIENT" | "LHM";
 
@@ -216,12 +242,9 @@ function normalizeChargeSide(v: any): Side | null {
 
   return null;
 }
-
-// ✅ si champ vide / non reconnu => LHM
 function decideSideFromContractField(fieldVal: any): Side {
   return normalizeChargeSide(fieldVal) ?? "LHM";
 }
-
 function normLabel(s: any): string {
   return String(s ?? "")
     .replace(/\s+/g, " ")
@@ -402,7 +425,7 @@ function buildDefaultPrixComplementaires(): PriceExtra[] {
 }
 
 /* =========================
-   ✅ Dirty tracking (export = version enregistrée)
+   Dirty tracking
 ========================= */
 const lastSavedSnapshot = ref<string>("");
 
@@ -424,6 +447,11 @@ function makeSnapshot(): string {
     value: n(x?.value),
     note: x?.note != null ? String(x.note) : "",
   });
+  const extraArt = (a: any) => ({
+    label: String(a?.label ?? ""),
+    qty: a?.qty == null ? null : n(a.qty),
+    pu: n(a?.pu),
+  });
 
   const snap = {
     surcharges: { ...(draft.surcharges ?? {}) },
@@ -435,6 +463,7 @@ function makeSnapshot(): string {
     chargeFournisseur: (content.chargeFournisseur ?? []).map(line),
     chargeClient: (content.chargeClient ?? []).map(line),
     prixComplementaires: (content.prixComplementaires ?? []).map(extra),
+    extraArticles: (content.extraArticles ?? []).map(extraArt),
     dureeQuantiteTexte: String(content.dureeQuantiteTexte ?? ""),
     validiteTexte: String(content.validiteTexte ?? ""),
     signature: { ...content.signature },
@@ -460,17 +489,92 @@ function closeExportGuard() {
 }
 
 /* =========================
+   BASE CALCS (/m3)
+========================= */
+function mpPrixUsed(mpId: string): number {
+  const mpItems = variant.value?.mp?.items ?? [];
+  const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
+  if (!vmp) return 0;
+  if (vmp?.prix != null) return n(vmp.prix);
+  return n(vmp?.mp?.prix);
+}
+
+function cmpFormuleBaseM3(formule: any): number {
+  const compo = formule?.items ?? [];
+  return (compo ?? []).reduce((s: number, it: any) => {
+    const mpId = String(it?.mpId ?? "");
+    const qtyKg = n(it?.qty);
+    const prixKg = pricePerKg(mpPrixUsed(mpId));
+    return s + qtyKg * prixKg;
+  }, 0);
+}
+
+const transportBaseM3 = computed(() => n(variant.value?.transport?.prixMoyen ?? 0));
+
+function pvBaseM3(r: any): number {
+  const cmp = cmpFormuleBaseM3(r?.formule);
+  const momd = n(r?.momd);
+  return cmp + transportBaseM3.value + momd;
+}
+
+function pvPondereM3(r: any): number {
+  const base = pvBaseM3(r);
+  return roundTo5(base);
+}
+function pvDefinitifM3(r: any): number {
+  return pvPondereM3(r) + getSurcharge(r);
+}
+function pvSavedDefinitifM3(r: any): number {
+  return pvPondereM3(r) + getSavedSurcharge(r);
+}
+
+/* =========================
+   ROWS + TOTALS
+   ✅ Tri stable: basé sur savedSurcharges (persisté)
+========================= */
+const rows = computed<any[]>(() => {
+  const list = (variant.value?.formules?.items ?? []).slice();
+  list.sort((a: any, b: any) => pvSavedDefinitifM3(b) - pvSavedDefinitifM3(a));
+  return list;
+});
+
+const volumeTotalFromFormules = computed(() => rows.value.reduce((s, r) => s + n(r?.volumeM3), 0));
+
+const quantiteProjetM3 = computed(() => {
+  const c = contract.value ?? {};
+  const maybe = n((c as any)?.quantiteM3) || n((c as any)?.volumeM3) || n((c as any)?.volumeTotalM3) || 0;
+  return maybe > 0 ? maybe : volumeTotalFromFormules.value;
+});
+
+const prixMoyenDefinitif = computed(() => {
+  const vol = volumeTotalFromFormules.value;
+  if (vol <= 0) return 0;
+  const total = rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
+  return total / vol;
+});
+
+const caDevisTotal = computed(() => rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0));
+const touchedCount = computed(() => rows.value.filter((r) => isRowTouched(r)).length);
+
+/* =========================
    Load / Sync
 ========================= */
 function loadPersistedAll() {
   draft.surcharges = {};
+  savedSurcharges.value = {};
+
   const v = variant.value;
   if (v?.devis?.surcharges) {
     try {
       const obj = typeof v.devis.surcharges === "object" ? v.devis.surcharges : JSON.parse(String(v.devis.surcharges));
       const map = (obj?.surcharges ?? obj) as any;
       if (map && typeof map === "object") {
-        for (const [k, val] of Object.entries(map)) draft.surcharges[String(k)] = n(val);
+        for (const [k, val] of Object.entries(map)) {
+          const nk = String(k);
+          const nv = n(val);
+          draft.surcharges[nk] = nv;
+          savedSurcharges.value[nk] = nv;
+        }
       }
     } catch {}
   }
@@ -488,6 +592,8 @@ function loadPersistedAll() {
   content.meta.date = String(persistedMeta?.date ?? todayISO());
   content.meta.client = String(persistedMeta?.client ?? pnl.value?.client ?? "");
   content.meta.titreProjet = String(persistedMeta?.titreProjet ?? pnlTitle);
+
+  content.extraArticles = normalizeExtraArticles(persistedMeta?.extraArticles, defaultExtraArticles());
 
   content.intro =
     typeof (vDevis as any)?.intro === "string" && String((vDevis as any).intro).trim().length
@@ -578,56 +684,6 @@ function syncDevisFromContract() {
 }
 
 /* =========================
-   BASE CALCS (/m3)
-========================= */
-function mpPrixUsed(mpId: string): number {
-  const mpItems = variant.value?.mp?.items ?? [];
-  const vmp = mpItems.find((x: any) => String(x.mpId) === String(mpId));
-  if (!vmp) return 0;
-  if (vmp?.prix != null) return n(vmp.prix);
-  return n(vmp?.mp?.prix);
-}
-
-function cmpFormuleBaseM3(formule: any): number {
-  const compo = formule?.items ?? [];
-  return (compo ?? []).reduce((s: number, it: any) => {
-    const mpId = String(it?.mpId ?? "");
-    const qtyKg = n(it?.qty);
-    const prixKg = pricePerKg(mpPrixUsed(mpId));
-    return s + qtyKg * prixKg;
-  }, 0);
-}
-
-const transportBaseM3 = computed(() => n(variant.value?.transport?.prixMoyen ?? 0));
-
-function pvBaseM3(r: any): number {
-  const cmp = cmpFormuleBaseM3(r?.formule);
-  const momd = n(r?.momd);
-  return cmp + transportBaseM3.value + momd;
-}
-
-/* =========================
-   PONDERE / DEFINITIF
-========================= */
-function pvPondereM3(r: any): number {
-  return roundTo5(pvBaseM3(r));
-}
-function pvDefinitifM3(r: any): number {
-  return pvPondereM3(r) + getSurcharge(r);
-}
-
-const prixMoyenDefinitif = computed(() => {
-  const vol = volumeTotalFromFormules.value;
-  if (vol <= 0) return 0;
-  const total = rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0);
-  return total / vol;
-});
-
-const caDevisTotal = computed(() => rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0));
-
-const touchedCount = computed(() => rows.value.filter((r) => isRowTouched(r)).length);
-
-/* =========================
    API
 ========================= */
 async function reload() {
@@ -672,7 +728,16 @@ async function saveDevis() {
     await (store as any).saveDevis(String(v.id), {
       surcharges: { ...draft.surcharges },
 
-      meta: { ...content.meta },
+      meta: {
+        ...content.meta,
+        /* compat: on continue à stocker unit="m3" pour les articles HF, mais UI n'en affiche pas */
+        extraArticles: (content.extraArticles ?? []).map((a) => ({
+          label: String(a?.label ?? "").trim(),
+          unit: "m3",
+          qty: a?.qty == null ? null : n(a.qty),
+          pu: n(a?.pu),
+        })),
+      },
       intro: String(content.intro ?? ""),
       rappel: { ...content.rappel },
       chargeFournisseur: content.chargeFournisseur ?? [],
@@ -681,7 +746,11 @@ async function saveDevis() {
       dureeQuantiteTexte: String(content.dureeQuantiteTexte ?? ""),
       validiteTexte: String(content.validiteTexte ?? ""),
       signature: { ...content.signature },
+      extraArticles: content.extraArticles ?? [],
+
     });
+
+    savedSurcharges.value = { ...draft.surcharges };
 
     await (store as any).loadPnls();
     lastSavedSnapshot.value = makeSnapshot();
@@ -726,7 +795,7 @@ function resetSurcharges() {
   nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
 }
 
-/* ✅ Anti-pollution header preview */
+/* Anti-pollution header preview */
 onBeforeUnmount(() => {
   try {
     (store as any).setHeaderDevisSurchargesPreview(null);
@@ -789,6 +858,21 @@ function addExtra() {
 }
 function removeExtra(idx: number) {
   content.prixComplementaires.splice(idx, 1);
+}
+
+function addExtraArticle() {
+  content.extraArticles.push({ label: "", qty: 0, pu: 0 });
+}
+function removeExtraArticle(idx: number) {
+  content.extraArticles.splice(idx, 1);
+}
+function setExtraQty(a: any, raw: any) {
+  const s = String(raw ?? "");
+  if (!s.trim()) {
+    a.qty = null;
+    return;
+  }
+  a.qty = n(s);
 }
 </script>
 
@@ -860,7 +944,7 @@ function removeExtra(idx: number) {
     <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <!-- Tabs (pro + simples) -->
+    <!-- Tabs -->
     <div class="tabs">
       <button class="tab" :class="{ active: activeTab === 'SURCHARGES' }" @click="activeTab = 'SURCHARGES'">
         Surcharges
@@ -871,32 +955,34 @@ function removeExtra(idx: number) {
       </button>
     </div>
 
-    <!-- =========================
-         TAB 1 : SURCHARGES
-         ✅ 0 scroll horizontal : tableau = 4 colonnes
-         (Métriques CMP/MOMD/PV pond en sous-ligne)
-    ========================= -->
+    <!-- TAB 1 : SURCHARGES -->
     <template v-if="activeTab === 'SURCHARGES'">
-<div class="card controls">
-  <div class="checks">
-    <label class="chk">
-      <input type="checkbox" v-model="withDevisSurcharge" />
-      <span>Dashboard : surcharge devis</span>
-    </label>
+      <div class="card controls">
+        <div class="checks">
+          <div class="miniStat infoOnly">
+            <div class="k">Information</div>
+            <div class="v">
+              Les <b>majorations</b> ne sont pas simulées dans le devis.
+              Pour qu’elles soient prises en compte, elles doivent être
+              <b>appliquées réellement dans la variante</b>.
+            </div>
+          </div>
 
-    <label class="chk">
-      <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
-      <span>Appliquer au dashboard lors du save</span>
-    </label>
-  </div>
+          <label class="chk">
+            <input type="checkbox" v-model="withDevisSurcharge" />
+            <span>Dashboard : surcharge devis</span>
+          </label>
 
-  <div class="rightInfo">
-    <button class="btn" @click="applyToDashboard" :disabled="busy.apply">
-      Appliquer au dashboard
-    </button>
-  </div>
-</div>
+          <label class="chk">
+            <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
+            <span>Appliquer au dashboard lors du save</span>
+          </label>
+        </div>
 
+        <div class="rightInfo">
+          <button class="btn" @click="applyToDashboard" :disabled="busy.apply">Appliquer au dashboard</button>
+        </div>
+      </div>
 
       <div class="card tableCard">
         <div class="tHead">
@@ -915,7 +1001,6 @@ function removeExtra(idx: number) {
               <div class="mainTop">
                 <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
 
-                <!-- tooltip -->
                 <span class="tipWrap">
                   <button class="tipBtn" type="button" aria-label="Détails">
                     <InformationCircleIcon class="tipIc" />
@@ -924,7 +1009,8 @@ function removeExtra(idx: number) {
                     CMP : <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b> DH/m³<br />
                     Transport (base) : <b class="mono">{{ money2(transportBaseM3) }}</b> DH/m³<br />
                     MOMD : <b class="mono">{{ money2(r?.momd) }}</b> DH/m³<br />
-                    PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
+                    PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />
+                    PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
                     <span class="mutedLine">Clé: {{ rowKey(r) }}</span>
                   </span>
                 </span>
@@ -939,7 +1025,7 @@ function removeExtra(idx: number) {
             </div>
 
             <!-- col 2 -->
-            <div class="cell r">
+            <div class="cell r" data-label="Surcharge">
               <input
                 class="input num"
                 type="number"
@@ -950,12 +1036,12 @@ function removeExtra(idx: number) {
             </div>
 
             <!-- col 3 -->
-            <div class="cell r">
+            <div class="cell r" data-label="PV déf.">
               <span class="pillFinal mono">{{ money2(pvDefinitifM3(r)) }}</span>
             </div>
 
             <!-- col 4 -->
-            <div class="cell r">
+            <div class="cell r" data-label="Total">
               <b class="mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b>
             </div>
           </div>
@@ -976,41 +1062,44 @@ function removeExtra(idx: number) {
               <div class="v mono">{{ money2(caDevisTotal) }} <span>DH</span></div>
             </div>
           </div>
+
+          <div class="muted noteLine">
+            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après
+            pondération.
+          </div>
         </div>
       </div>
     </template>
 
-    <!-- =========================
-         TAB 2 : CONTENU
-         ✅ 1 colonne, lisible
-         - sections compactes
-         - listes en bullets (locked) + textarea pour custom
-    ========================= -->
+    <!-- TAB 2 : CONTENU -->
     <template v-else>
+      <!-- ✅ En-tête (labels au-dessus + grid responsive sans débordement) -->
       <div class="card section">
         <div class="sectionHead">
           <div class="lbl">En-tête</div>
           <div class="muted">{{ content.meta.ville || (pnl?.city ?? "") }}, le <b>{{ todayFr() }}</b></div>
         </div>
 
-        <div class="grid3">
-          <div>
-            <div class="k">Ville</div>
+        <div class="formGrid">
+          <div class="field">
+            <div class="fieldLabel">Ville</div>
             <input class="input" v-model="content.meta.ville" placeholder="Ville" />
           </div>
-          <div>
-            <div class="k">Date</div>
+
+          <div class="field">
+            <div class="fieldLabel">Date</div>
             <input class="input" v-model="content.meta.date" type="date" />
           </div>
-          <div>
-            <div class="k">Client</div>
+
+          <div class="field">
+            <div class="fieldLabel">Client</div>
             <input class="input" v-model="content.meta.client" placeholder="Client" />
           </div>
-        </div>
 
-        <div style="margin-top:10px;">
-          <div class="k">Titre projet</div>
-          <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
+          <div class="field fieldWide">
+            <div class="fieldLabel">Titre projet</div>
+            <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
+          </div>
         </div>
       </div>
 
@@ -1080,20 +1169,77 @@ function removeExtra(idx: number) {
         <button class="btn miniAdd" type="button" @click="addLine('client')">+ Ajouter ligne</button>
       </div>
 
+      <!-- ✅ Prix complémentaires (grille propre + labels au-dessus + pas de débordement) -->
       <div class="card section">
-        <div class="lbl">Prix complémentaires</div>
+        <div class="sectionHead">
+          <div class="lbl">Prix complémentaires</div>
+          <div class="muted">Le prix est verrouillé. Modifiable : libellé / unité.</div>
+        </div>
 
-        <div class="extras">
-          <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="exRow">
-            <input class="input" v-model="x.label" placeholder="Libellé" />
-            <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
-            <input class="input exVal" type="number" step="1" :value="x.value" readonly />
-            <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
+        <div class="pcList">
+          <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="pcItem">
+            <div class="field pcLabel">
+              <div class="fieldLabel">Libellé</div>
+              <input class="input" v-model="x.label" placeholder="Libellé" />
+            </div>
+
+            <div class="field pcUnit">
+              <div class="fieldLabel">Unité</div>
+              <input class="input" v-model="x.unit" placeholder="Unité" />
+            </div>
+
+            <div class="field pcVal">
+              <div class="fieldLabel">Valeur</div>
+              <input class="input num" type="number" step="1" :value="x.value" readonly />
+            </div>
+
+            <div class="pcActions">
+              <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
+            </div>
           </div>
         </div>
 
         <button class="btn miniAdd" type="button" @click="addExtra">+ Ajouter prix complémentaire</button>
-        <div class="muted noteLine">(Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)</div>
+      </div>
+
+      <!-- ✅ Articles hors formules (sans unité) -->
+      <div class="card section">
+        <div class="sectionHead">
+          <div class="lbl">Articles hors formules</div>
+          <div class="muted">PU en <b>DH/m³</b>. Quantité vide ⇒ “-”.</div>
+        </div>
+
+        <div class="hfList">
+          <div v-for="(a, i) in content.extraArticles" :key="'hf' + i" class="hfItem">
+            <div class="field hfLabel">
+              <div class="fieldLabel">Désignation</div>
+              <input class="input" v-model="a.label" placeholder="Désignation" />
+            </div>
+
+            <div class="field hfQty">
+              <div class="fieldLabel">Quantité (m³)</div>
+              <input
+                class="input num"
+                type="number"
+                step="0.01"
+                :value="a.qty ?? ''"
+                placeholder="-"
+                @input="setExtraQty(a, ($event.target as HTMLInputElement).value)"
+              />
+            </div>
+
+            <div class="field hfPu">
+              <div class="fieldLabel">PU (DH/m³)</div>
+              <input class="input num" type="number" step="0.01" :value="a.pu" @input="a.pu = n(($event.target as HTMLInputElement).value)" />
+            </div>
+
+            <div class="hfActions">
+              <button class="mini" type="button" @click="removeExtraArticle(i)">Suppr</button>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn miniAdd" type="button" @click="addExtraArticle">+ Ajouter article</button>
       </div>
 
       <div class="card section">
@@ -1102,29 +1248,30 @@ function removeExtra(idx: number) {
         <div class="subLbl">Durée - Quantité</div>
         <textarea class="ta" v-model="content.dureeQuantiteTexte" rows="3"></textarea>
 
-        <div class="subLbl" style="margin-top:12px;">Validité de l’offre</div>
+        <div class="subLbl" style="margin-top: 12px">Validité de l’offre</div>
         <textarea class="ta" v-model="content.validiteTexte" rows="2"></textarea>
       </div>
 
+      <!-- ✅ Signature (grid propre + labels au-dessus + pas de débordement) -->
       <div class="card section">
-        <div class="lbl">Signature</div>
-        <div class="grid3">
-          <div>
-            <div class="k">Nom</div>
-            <input class="input" v-model="content.signature.nom" placeholder="Nom" />
-          </div>
-          <div>
-            <div class="k">Poste</div>
-            <input class="input" v-model="content.signature.poste" placeholder="Poste" />
-          </div>
-          <div>
-            <div class="k">Téléphone</div>
-            <input class="input" v-model="content.signature.telephone" placeholder="Téléphone" />
-          </div>
+        <div class="sectionHead">
+          <div class="lbl">Signature</div>
+          <div class="muted">En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b></div>
         </div>
 
-        <div class="muted noteLine">
-          En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b>
+        <div class="sigGrid">
+          <div class="field">
+            <div class="fieldLabel">Nom</div>
+            <input class="input" v-model="content.signature.nom" placeholder="Nom" />
+          </div>
+          <div class="field">
+            <div class="fieldLabel">Poste</div>
+            <input class="input" v-model="content.signature.poste" placeholder="Poste" />
+          </div>
+          <div class="field">
+            <div class="fieldLabel">Téléphone</div>
+            <input class="input" v-model="content.signature.telephone" placeholder="Téléphone" />
+          </div>
         </div>
       </div>
     </template>
@@ -1135,8 +1282,8 @@ function removeExtra(idx: number) {
         <div class="modalTitle">
           <ExclamationTriangleIcon class="warnIc2" />
           <div>
-            <div style="font-weight: 1000; color:#111827;">Exporter sans enregistrer ?</div>
-            <div class="muted" style="margin-top:2px;">
+            <div style="font-weight: 1000; color: #111827">Exporter sans enregistrer ?</div>
+            <div class="muted" style="margin-top: 2px">
               Le Word sera généré depuis <b>la dernière version enregistrée</b>. Tes changements en cours ne seront pas
               inclus.
             </div>
@@ -1161,16 +1308,22 @@ function removeExtra(idx: number) {
 
 <style scoped>
 /* Base */
+/* ✅ Anti overflow universel dans cette page */
+* { box-sizing: border-box; }
+
+.input, .ta {
+  max-width: 100%;
+  min-width: 0;
+}
+
 .page { padding: 12px; display:flex; flex-direction:column; gap:10px; }
-.card { background:#fff; border:1px solid rgba(16,24,40,.12); border-radius:16px; padding:10px 12px; }
+.card { background:#fff; border:1px solid rgba(16,24,40,.12); border-radius:16px; padding:10px 12px; overflow: hidden; }
 .muted { color:#6b7280; font-size:12px; }
 .mono { font-variant-numeric: tabular-nums; }
 .ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sep { color:#9ca3af; }
 
 .alert { border:1px solid #e5e7eb; border-radius:14px; padding:8px 10px; background:#fff; color:#111827; font-size:12px; }
-
-.alert.info { border-color:#bfdbfe; background:#eff6ff; color:#1e3a8a; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
 .btn{
@@ -1202,17 +1355,30 @@ function removeExtra(idx: number) {
 .iconBtn:hover{ background:#f9fafb; }
 .ic{ width:16px; height:16px; }
 
-.input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:12px; font-size:12.5px; background:#fff; }
+.input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:12px; font-size:12.5px; background:#fff; min-width: 0; }
 .ta{
   width:100%;
   border:1px solid #d1d5db;
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 6px 10px;
   font-size: 13px;
   background:#fff;
   resize: vertical;
+  min-width: 0;
 }
 .ta.small{ font-size: 12px; }
+
+.num{ text-align:right; }
+.input.num{ font-variant-numeric: tabular-nums; }
+
+/* ✅ Form fields: label au-dessus (strict) */
+.field{ display:flex; flex-direction:column; gap:6px; min-width: 0; }
+.fieldLabel{
+  font-size: 11px;
+  font-weight: 1000;
+  color: rgba(15,23,42,.72);
+  line-height: 1.1;
+}
 
 /* Header */
 .top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
@@ -1280,33 +1446,41 @@ function removeExtra(idx: number) {
   display:flex;
   align-items:flex-start;
   justify-content:space-between;
-  gap:12px;
+  gap:10px;
   flex-wrap:wrap;
+  padding: 8px 10px;
 }
-.checks{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.checks{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 .chk{ display:inline-flex; align-items:center; gap:8px; font-size:11.5px; font-weight:900; color:#111827; }
 .chk input{ width:15px; height:15px; border-radius:6px; }
 
 .rightInfo{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 .miniStat{
-  border:1px solid rgba(16,24,40,.10);
-  background: rgba(15,23,42,.02);
+  border:1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
   border-radius:14px;
-  padding:8px 10px;
+  padding:7px 10px;
 }
 .miniStat .k{
   font-size:10.5px; font-weight:1000; color: rgba(15,23,42,.55);
   text-transform: uppercase; letter-spacing:.02em;
 }
-.miniStat .v{ margin-top:3px; font-size:12.5px; font-weight:1000; color:#0f172a; }
+.miniStat .v{
+  margin-top:4px;
+  font-size:12px;
+  font-weight:900;
+  color:#0f172a;
+  line-height:1.25;
+}
+.miniStat.infoOnly{ max-width: 520px; }
 
 /* ✅ Table 4 cols (no horizontal scroll) */
 .tableCard{ padding:0; overflow:hidden; }
 .tHead{
   display:grid;
-  grid-template-columns: minmax(0, 1fr) 120px 130px 150px;
-  gap:12px;
-  padding:10px 12px;
+  grid-template-columns: minmax(0, 1fr) 110px 120px 140px;
+  gap:10px;
+  padding:8px 12px;
   background:#fafafa;
   border-bottom:1px solid rgba(16,24,40,.10);
   font-size:10.5px;
@@ -1316,9 +1490,9 @@ function removeExtra(idx: number) {
 .tBody{ padding:0; }
 .tRow{
   display:grid;
-  grid-template-columns: minmax(0, 1fr) 120px 130px 150px;
-  gap:12px;
-  padding:10px 12px;
+  grid-template-columns: minmax(0, 1fr) 110px 120px 140px;
+  gap:10px;
+  padding:6px 12px;
   border-bottom:1px solid rgba(16,24,40,.10);
   align-items:center;
 }
@@ -1334,55 +1508,58 @@ function removeExtra(idx: number) {
 /* main cell */
 .mainTop{ display:flex; align-items:center; gap:8px; }
 .sub{
-  margin-top:6px;
+  margin-top:4px;
   display:flex;
   flex-wrap:wrap;
-  gap:6px;
+  gap:5px;
 }
 .chip{
   border:1px solid rgba(16,24,40,.10);
   background: rgba(15,23,42,.02);
   border-radius:999px;
-  padding:3px 8px;
-  font-size:11px;
+  padding:2px 7px;
+  font-size:10.5px;
   font-weight:900;
   color:#0f172a;
   display:inline-flex; gap:6px; align-items:center;
   max-width:100%;
 }
-.num{ text-align:right; }
-.input.num{ font-variant-numeric: tabular-nums; }
+.input.num{
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 10px;
+}
 
 /* PV pill */
 .pillFinal{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  height: 26px;
-  padding: 0 10px;
+  height: 24px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid rgba(24,64,112,0.22);
   background: rgba(24,64,112,0.06);
   font-weight: 1000;
   color: rgba(24,64,112,1);
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 /* tooltip */
 .tipWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; flex: 0 0 auto; }
 .tipBtn{
-  width: 22px; height: 22px;
-  border-radius: 9px;
+  width: 20px; height: 20px;
+  border-radius: 8px;
   border: 1px solid rgba(16,24,40,0.12);
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
 }
-.tipIc{ width: 14px; height: 14px; color: rgba(15,23,42,0.55); }
+.tipIc{ width: 13px; height: 13px; color: rgba(15,23,42,0.55); }
 .tip{
   position:absolute;
-  left: 30px;
+  left: 28px;
   top: 50%;
   transform: translateY(-50%);
   min-width: 230px;
@@ -1405,7 +1582,7 @@ function removeExtra(idx: number) {
 
 /* Footer sums */
 .tFoot{
-  padding: 10px 12px;
+  padding: 6px 10px;
   background: rgba(15,23,42,0.02);
   border-top: 1px solid rgba(16,24,40,0.08);
 }
@@ -1418,7 +1595,7 @@ function removeExtra(idx: number) {
   border: 1px solid rgba(16,24,40,0.10);
   background: rgba(255,255,255,0.75);
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 6px 10px;
 }
 .sumBox .k{
   font-size: 10.5px;
@@ -1450,12 +1627,11 @@ function removeExtra(idx: number) {
   border:1px solid rgba(16,24,40,0.10);
   background: rgba(15,23,42,0.02);
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 6px 10px;
 }
 .k{ font-size: 11px; font-weight:1000; color:#6b7280; }
 .v{ margin-top: 4px; }
 
-.grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 .grid2kv{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 .sepLine{ height:1px; background: rgba(16,24,40,.10); margin: 8px 0; border-radius:999px; }
@@ -1465,10 +1641,14 @@ function removeExtra(idx: number) {
   border:1px solid rgba(16,24,40,.10);
   background: rgba(15,23,42,.02);
   border-radius:14px;
-  padding: 10px 12px;
+  padding: 6px 10px;
+
   display:flex;
   gap:10px;
   align-items:flex-start;
+
+  /* ✅ évite les débordements quand un enfant a width:100% */
+  min-width: 0;
 }
 .lock{
   flex:0 0 auto;
@@ -1483,8 +1663,28 @@ function removeExtra(idx: number) {
   display:inline-flex;
   align-items:center;
 }
-.txt{ flex:1; color:#0f172a; font-size:12.5px; line-height:1.25; white-space: pre-wrap; }
+.txt{
+  flex: 1 1 auto;
+  min-width: 0;
+  color:#0f172a;
+  font-size:12.5px;
+  line-height:1.25;
+  white-space: pre-wrap;
+}
 
+/* ✅ CRITIQUE: textarea dans un flex row doit être flex:1 (pas width:100%) */
+.bullet .ta.small{
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;          /* ✅ neutralise le 100% */
+  max-width: 100%;
+}
+/* bouton à droite sans overlap */
+.bullet .mini{
+  flex: 0 0 auto;
+  align-self: flex-start;
+  white-space: nowrap;
+}
 .mini{
   border:1px solid #e5e7eb;
   background:#fff;
@@ -1498,14 +1698,63 @@ function removeExtra(idx: number) {
 .mini:hover{ background:#f9fafb; }
 .miniAdd{ align-self:flex-start; }
 
-.extras{ display:flex; flex-direction:column; gap: 10px; }
-.exRow{
+/* ✅ En-tête grid (anti overflow) */
+.formGrid{
   display:grid;
-  grid-template-columns: 1.6fr .6fr .4fr auto;
-  gap: 8px;
-  align-items:center;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
-.exVal{ text-align:right; }
+.fieldWide{ grid-column: 1 / -1; }
+
+/* ✅ Prix complémentaires: layout stable */
+.pcList{ display:flex; flex-direction:column; gap: 10px; }
+.pcItem{
+  border:1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
+  border-radius:14px;
+  padding: 10px;
+
+  display:grid;
+
+  /* ✅ Libellé prend le reste, Unité + Valeur ont des tailles raisonnables */
+  grid-template-columns: minmax(0, 1fr) 220px 170px auto;
+
+  gap: 10px;
+  align-items:end;
+
+  min-width: 0;
+}
+.pcLabel, .pcUnit, .pcVal { min-width: 0; }
+.pcActions{ display:flex; justify-content:flex-end; align-items:end; }
+
+/* ✅ Articles HF: layout stable */
+.hfList{ display:flex; flex-direction:column; gap: 10px; }
+.hfItem{
+  border:1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
+  border-radius:14px;
+  padding: 10px;
+
+  display:grid;
+
+  /* ✅ Désignation flexible + Qty/PU compacts */
+  grid-template-columns: minmax(0, 1fr) 170px 190px auto;
+
+  gap: 10px;
+  align-items:end;
+
+  min-width: 0;
+}
+.hfLabel, .hfQty, .hfPu { min-width: 0; }
+
+.hfActions{ display:flex; justify-content:flex-end; align-items:end; }
+
+/* ✅ Signature grid */
+.sigGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
 
 /* Responsive */
 @media (max-width: 980px) {
@@ -1515,6 +1764,7 @@ function removeExtra(idx: number) {
     grid-template-columns: 1fr;
     gap: 10px;
     align-items:start;
+    padding: 10px 12px;
   }
 
   .cell.r{ text-align:left; display:flex; justify-content:space-between; align-items:center; gap:10px; }
@@ -1525,9 +1775,18 @@ function removeExtra(idx: number) {
   }
 
   .sumGrid{ grid-template-columns: 1fr; }
-  .grid3{ grid-template-columns: 1fr; }
   .grid2kv{ grid-template-columns: 1fr; }
-  .exRow{ grid-template-columns: 1fr; }
+
+  .formGrid{ grid-template-columns: 1fr; }
+  .fieldWide{ grid-column: auto; }
+
+  .pcItem{ grid-template-columns: 1fr; align-items:stretch; }
+  .pcActions{ justify-content:flex-start; }
+
+  .hfItem{ grid-template-columns: 1fr; align-items:stretch; }
+  .hfActions{ justify-content:flex-start; }
+
+  .sigGrid{ grid-template-columns: 1fr; }
 }
 
 /* Modal */

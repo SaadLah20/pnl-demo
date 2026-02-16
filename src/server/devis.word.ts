@@ -224,6 +224,41 @@ function normalizeLines(raw: any): string[] {
     .filter(Boolean);
 }
 
+/* =========================
+   ✅ EXTRA ARTICLES (hors formules) -> lignes du tableau
+========================= */
+type ExtraArticleNorm = { label: string; pu: number; qty: number }; // qty<=0 => afficher "-" et pas de total
+
+function normalizeExtraArticles(raw: any): ExtraArticleNorm[] {
+  const arr = safeJsonParse(raw, []);
+  if (!Array.isArray(arr)) return [];
+
+  const out: ExtraArticleNorm[] = [];
+  for (const it of arr) {
+    if (!it || typeof it !== "object") continue;
+
+    const label =
+      String(
+        (it as any).label ??
+          (it as any).libelle ??
+          (it as any).designation ??
+          (it as any).name ??
+          (it as any).titre ??
+          ""
+      ).trim();
+
+    if (!label) continue;
+
+    const pu = n((it as any).puM3 ?? (it as any).pu ?? (it as any).prix ?? (it as any).price ?? 0);
+    const qty = n((it as any).qtyM3 ?? (it as any).qty ?? (it as any).volume ?? (it as any).qte ?? 0);
+
+    // si pu=0 on garde quand même (tu peux vouloir une ligne visible), mais total sera "-"
+    out.push({ label, pu, qty });
+  }
+
+  return out;
+}
+
 function buildLogoHeader(): Header | null {
   try {
     const logoPath = path.resolve(process.cwd(), "src/assets/LHM_logo.jpg");
@@ -347,6 +382,9 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const sigPoste = String(sig?.poste ?? "Commercial P&L");
   const sigTel = String(sig?.telephone ?? "+212701888888");
 
+  // ✅ Extra articles: priorité à devis.extraArticles sinon fallback meta.extraArticles
+  const extraArticles = normalizeExtraArticles((v?.devis as any)?.extraArticles ?? devisMeta?.extraArticles ?? []);
+
   const hydroPu = n(devisMeta?.hydrofugePuM3 ?? 0);
   const hydroQty = n(devisMeta?.hydrofugeQtyM3 ?? 0);
 
@@ -360,7 +398,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     if (found?.prixOverride != null) return n(found.prixOverride);
     if (found?.prix != null) return n(found.prix);
     return n(found?.mp?.prix);
-  }
+    }
 
   function cmpFormuleM3(formule: any): number {
     const compo = formule?.items ?? [];
@@ -380,26 +418,51 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const transportBase = n(v?.transport?.prixMoyen ?? 0);
   const transportUsed = useMajorations ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj)) : transportBase;
 
-  const tableLines: Array<{ label: string; pu: number; vol: number; total: number }> = rows.map((r: any) => {
-    const label = String(r?.formule?.label ?? "—");
-    const vol = n(r?.volumeM3);
-    const momd = n(r?.momd ?? 0);
-    const cmp = cmpFormuleM3(r?.formule);
+  // ✅ qty===0 => afficher "-" sur volume/montant et ne pas compter dans totalHT
+  const tableLines: Array<{ label: string; pu: number; vol: number; total: number; isDash?: boolean }> = rows.map(
+    (r: any) => {
+      const label = String(r?.formule?.label ?? "—");
+      const vol = n(r?.volumeM3);
+      const momd = n(r?.momd ?? 0);
+      const cmp = cmpFormuleM3(r?.formule);
 
-    const pv = cmp + transportUsed + momd;
-    const pvArr = roundTo5(pv);
+      const pv = cmp + transportUsed + momd;
+      const pvArr = roundTo5(pv);
 
-    const surcharge = useDevisSurcharges ? getSurchargeM3(r, surMap) : 0;
-    const pu = pvArr + surcharge;
+      const surcharge = useDevisSurcharges ? getSurchargeM3(r, surMap) : 0;
+      const pu = pvArr + surcharge;
 
-    return { label, pu, vol, total: pu * vol };
-  });
+      return { label, pu, vol, total: pu * vol, isDash: false };
+    }
+  );
 
-  if (hydroPu > 0 && hydroQty > 0) {
-    tableLines.push({ label: "Plus value Hydrofuge", pu: hydroPu, vol: hydroQty, total: hydroPu * hydroQty });
+  // (Optionnel) ancienne hydrofuge via meta (si tu le gardes)
+  if (hydroPu > 0) {
+    // si hydroQty <= 0 => dash (comme ton exemple)
+    const isDash = !(hydroQty > 0);
+    tableLines.push({
+      label: "Plus value Hydrofuge",
+      pu: hydroPu,
+      vol: hydroQty > 0 ? hydroQty : 0,
+      total: hydroQty > 0 ? hydroPu * hydroQty : 0,
+      isDash,
+    });
   }
 
-  const totalHT = tableLines.reduce((s, x) => s + n(x.total), 0);
+  // ✅ injection extra articles (hors formules)
+  for (const x of extraArticles) {
+    const isDash = !(x.qty > 0);
+    tableLines.push({
+      label: x.label,
+      pu: x.pu,
+      vol: x.qty > 0 ? x.qty : 0,
+      total: x.qty > 0 ? x.pu * x.qty : 0,
+      isDash,
+    });
+  }
+
+  // ✅ totaux uniquement sur lignes "réelles" (vol>0)
+  const totalHT = tableLines.reduce((s, x) => s + (x.vol > 0 ? n(x.total) : 0), 0);
   const tva = totalHT * 0.2;
   const totalTTC = totalHT + tva;
 
@@ -416,18 +479,20 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     ],
   });
 
-  const bodyRows = tableLines.map(
-    (x) =>
-      new TableRow({
-        height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
-        children: [
-          cell([pTxtBody(x.label)]),
-          cell([pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })]),
-          cell([pTxtBody(fmtMoney2(x.vol), { align: AlignmentType.RIGHT })]),
-          cell([pTxtBody(fmtMoney2(x.total), { align: AlignmentType.RIGHT })]),
-        ],
-      })
-  );
+  const bodyRows = tableLines.map((x) => {
+    const volTxt = x.isDash ? "-" : fmtMoney2(x.vol);
+    const totTxt = x.isDash ? "-" : fmtMoney2(x.total);
+
+    return new TableRow({
+      height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
+      children: [
+        cell([pTxtBody(x.label)]),
+        cell([pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })]),
+        cell([pTxtBody(volTxt, { align: AlignmentType.RIGHT })]),
+        cell([pTxtBody(totTxt, { align: AlignmentType.RIGHT })]),
+      ],
+    });
+  });
 
   // ✅ Total : libellé gras / chiffres non gras
   const totalRow = new TableRow({
@@ -560,17 +625,16 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(1),
 
-sectionTitle("A la charge du client :"),
-...(chargeClient.length ? bulletsFromStrings(chargeClient) : bulletsFromStrings(["—"])),
+          sectionTitle("A la charge du client :"),
+          ...(chargeClient.length ? bulletsFromStrings(chargeClient) : bulletsFromStrings(["—"])),
 
-...blank(1),
+          ...blank(1),
 
-// ✅ Titre du tableau des prix
-sectionTitle("Prix :"),
-...blank(1),
+          // ✅ Titre du tableau des prix
+          sectionTitle("Prix :"),
+          ...blank(1),
 
-table,
-
+          table,
 
           ...blank(1),
 

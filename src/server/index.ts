@@ -713,6 +713,34 @@ async function sanitizeVariantByContract(
   }
 }
 
+function isCabFixeModel(model: any): boolean {
+  const m = String(model ?? "").toLowerCase();
+  return m.includes("cab fixe");
+}
+
+function defaultFixedContractData() {
+  return {
+    dureeMois: 12,
+    cab: "LHM",
+    installation: "LHM",
+    genieCivil: "LHM",
+    transport: "LHM",
+    terrain: "LHM",
+    matierePremiere: "LHM",
+    maintenance: "LHM",
+    chargeuse: "LHM",
+    branchementEau: "LHM",
+    consoEau: "LHM",
+    branchementElec: "LHM",
+    consoElec: "LHM",
+    postes: 1,
+    sundayPrice: 0,
+    delayPenalty: 0,
+    chillerRent: 0,
+  };
+}
+
+
 /* =========================================================
    INITIÉE → Calcul MOMD pour atteindre un EBIT cible (%)
 ========================================================= */
@@ -1535,28 +1563,34 @@ app.put("/variants/:id/mps/:variantMpId", async (req: Request, res: Response) =>
 // =========================================================
 // PNL CREATE
 // =========================================================
-app.post("/pnls", async (req: Request, res: Response) => {
+app.post("/pnls", async (req, res) => {
   try {
     const body = req.body ?? {};
+    const model = String(body.model ?? "CAB Mobile");
 
-    const created = await prisma.pnl.create({
-      data: {
-        title: String(body.title ?? "Nouveau P&L"),
-        client: body.client === undefined ? null : (body.client ?? null),
+    const created = await prisma.$transaction(async (tx) => {
+      const pnl = await tx.pnl.create({
+        data: {
+          title: String(body.title ?? "Nouveau P&L"),
+          model,
+          // ✅ CAB FIXE => pas de client
+          client: isCabFixeModel(model) ? null : (body.client === undefined ? null : (body.client ?? null)),
+          city: String(body.city ?? ""),
+          region: body?.region === undefined ? undefined : String(body.region ?? ""),
+          status: String(body.status ?? "ENCOURS"),
+          startDate:
+            body.startDate === undefined ? undefined : (body.startDate ? new Date(String(body.startDate)) : null),
+        } as any,
+      });
 
-        city: String(body.city ?? ""),
-        // ✅ region obligatoire => jamais null
-        region: req.body?.region === undefined ? undefined : String(req.body.region ?? ""),
+      // ✅ CAB FIXE => contrat système unique auto
+      if (isCabFixeModel(model)) {
+        await tx.contract.create({
+          data: { pnlId: pnl.id, ...defaultFixedContractData() } as any,
+        });
+      }
 
-        status: String(body.status ?? "ENCOURS"),
-        model: String(body.model ?? "MODEL"),
-        startDate:
-          body.startDate === undefined
-            ? undefined
-            : body.startDate
-            ? new Date(String(body.startDate))
-            : null,
-      } as any,
+      return pnl;
     });
 
     return res.json({ ok: true, pnl: created });
@@ -1565,6 +1599,7 @@ app.post("/pnls", async (req: Request, res: Response) => {
     return res.status(400).json({ error: e?.message ?? "Bad Request" });
   }
 });
+
 
 // =========================================================
 // PNL UPDATE (pour popup edit)
@@ -1647,6 +1682,20 @@ app.post("/contracts", async (req: Request, res: Response) => {
       } as any,
     });
 
+    const pnl = await prisma.pnl.findUnique({ where: { id: pnlId }, select: { id: true, model: true } });
+if (!pnl) return res.status(404).json({ error: "PNL not found" });
+
+if (isCabFixeModel(pnl.model)) {
+  const existing = await prisma.contract.count({ where: { pnlId } });
+  if (existing > 0) return res.status(400).json({ error: "CAB_FIXE_SINGLE_CONTRACT" });
+
+  const created = await prisma.contract.create({
+    data: { pnlId, ...defaultFixedContractData() } as any,
+  });
+  return res.json({ ok: true, contract: created });
+}
+
+
     return res.json({ ok: true, contract: created });
   } catch (e: any) {
     console.error(e);
@@ -1661,6 +1710,18 @@ app.post("/contracts", async (req: Request, res: Response) => {
 app.put("/contracts/:id", async (req: Request, res: Response) => {
   const id = String(req.params.id);
   const body = req.body ?? {};
+const current = await prisma.contract.findUnique({
+  where: { id },
+  select: { id: true, pnlId: true },
+});
+if (!current) return res.status(404).json({ error: "Contract not found" });
+
+const pnl = await prisma.pnl.findUnique({
+  where: { id: current.pnlId },
+  select: { model: true },
+});
+
+const isFixe = isCabFixeModel(pnl?.model);
 
   try {
     const allowed = [
@@ -1697,6 +1758,10 @@ app.put("/contracts/:id", async (req: Request, res: Response) => {
     delete data.status;
 
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (isFixe) {
+  Object.assign(data, defaultFixedContractData());
+}
+
       const updated = await tx.contract.update({ where: { id }, data });
 
       const variants = await tx.variant.findMany({
