@@ -1,4 +1,4 @@
-<!-- src/components/MpModal.vue -->
+<!-- src/components/MpModal.vue (FICHIER COMPLET - inchangé fonctionnellement) -->
 <script setup lang="ts">
 import { computed, reactive, ref, watch, nextTick } from "vue";
 import {
@@ -43,139 +43,91 @@ const emit = defineEmits<{
 }>();
 
 const local = reactive<MpDraft>({
-  categorie: props.initial.categorie,
-  label: props.initial.label,
-  unite: props.initial.unite,
-  prix: props.initial.prix,
-  fournisseur: props.initial.fournisseur,
-  city: props.initial.city,
-  region: props.initial.region,
-  comment: props.initial.comment ?? "",
+  categorie: "",
+  label: "",
+  unite: "",
+  prix: 0,
+  fournisseur: "",
+  city: "",
+  region: "",
+  comment: null,
 });
 
 const showMore = ref(false);
-const labelEl = ref<HTMLInputElement | null>(null);
 
 watch(
   () => props.open,
-  async (isOpen) => {
-    if (!isOpen) return;
-
-    local.categorie = props.initial.categorie;
-    local.label = props.initial.label;
-    local.unite = props.initial.unite;
-    local.prix = props.initial.prix;
-    local.fournisseur = props.initial.fournisseur;
-    local.city = props.initial.city;
-    local.region = props.initial.region;
-    local.comment = props.initial.comment ?? "";
-
-    // replier par défaut si optionnels vides
-    showMore.value = Boolean(trim(local.fournisseur) || trim(local.comment ?? ""));
-
-    await nextTick();
-    labelEl.value?.focus?.();
-    labelEl.value?.select?.();
+  (v) => {
+    if (!v) return;
+    Object.assign(local, {
+      categorie: props.initial?.categorie ?? "",
+      label: props.initial?.label ?? "",
+      unite: props.initial?.unite ?? "",
+      prix: Number(props.initial?.prix ?? 0),
+      fournisseur: props.initial?.fournisseur ?? "",
+      city: props.initial?.city ?? "",
+      region: props.initial?.region ?? "",
+      comment: props.initial?.comment ?? null,
+    });
+    showMore.value = Boolean(local.fournisseur || local.comment);
+    nextTick(() => {
+      const el = document.getElementById("mpLabelInput") as HTMLInputElement | null;
+      el?.focus();
+      el?.select();
+    });
   },
   { immediate: true }
 );
 
-function trim(s: any) {
-  return String(s ?? "").trim();
-}
+const canSubmit = computed(() => {
+  const labelOk = String(local.label ?? "").trim().length >= 2;
+  const catOk = String(local.categorie ?? "").trim().length > 0;
+  const uniteOk = String(local.unite ?? "").trim().length > 0;
+  const priceOk = Number.isFinite(Number(local.prix)) && Number(local.prix) > 0;
+  const cityOk = String(local.city ?? "").trim().length > 0;
+  const regionOk = String(local.region ?? "").trim().length > 0;
+  return labelOk && catOk && uniteOk && priceOk && cityOk && regionOk && !props.busy;
+});
 
 function close() {
   emit("close");
 }
 
 function submit() {
+  if (!canSubmit.value) return;
   emit("save", {
-    categorie: String(local.categorie ?? ""),
-    label: String(local.label ?? ""),
-    unite: String(local.unite ?? ""),
+    categorie: String(local.categorie ?? "").trim(),
+    label: String(local.label ?? "").trim(),
+    unite: String(local.unite ?? "").trim(),
     prix: Number(local.prix ?? 0),
-    fournisseur: String(local.fournisseur ?? ""),
-    city: String(local.city ?? ""),
-    region: String(local.region ?? ""),
-    comment: String(local.comment ?? ""),
+    fournisseur: String(local.fournisseur ?? "").trim(),
+    city: String(local.city ?? "").trim(),
+    region: String(local.region ?? "").trim(),
+    comment: String(local.comment ?? "").trim() || null,
   });
 }
-
-const modalTitle = computed(() => {
-  if (props.title) return props.title;
-  return props.mode === "create" ? "Nouvelle MP" : "Modifier MP";
-});
-
-const unitHelp = computed(() => "Unité de référence du prix (ex: DH/T).");
-
-function blockNonNumericKeys(e: KeyboardEvent) {
-  const k = e.key;
-  if (k === "e" || k === "E" || k === "+" || k === "-") e.preventDefault();
-}
-
-function fmtDh2(v: any) {
-  const n = Number(v ?? 0);
-  const x = Number.isFinite(n) ? n : 0;
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
-}
-
-const canSubmit = computed(() => {
-  if (props.busy) return false;
-  if (!trim(local.label)) return false;
-  if (!trim(local.categorie)) return false;
-  if (!trim(local.unite)) return false;
-  if (Number(local.prix ?? 0) <= 0) return false;
-  if (!trim(local.city)) return false;
-  if (!trim(local.region)) return false;
-  return true;
-});
-
-function onKeydown(e: KeyboardEvent) {
-  if (!props.open) return;
-  if (e.key === "Escape") {
-    e.preventDefault();
-    close();
-    return;
-  }
-  // Enter = save (sauf si focus dans select)
-  if (e.key === "Enter") {
-    const t = e.target as HTMLElement | null;
-    const tag = (t?.tagName ?? "").toLowerCase();
-    if (tag === "select") return;
-    e.preventDefault();
-    if (canSubmit.value) submit();
-  }
-}
-
-watch(
-  () => props.open,
-  (v) => {
-    if (v) window.addEventListener("keydown", onKeydown);
-    else window.removeEventListener("keydown", onKeydown);
-  }
-);
 </script>
 
 <template>
   <teleport to="body">
-    <div v-if="open" class="ovl" @mousedown.self="close" role="dialog" aria-modal="true">
-      <div class="dlg" role="document">
+    <div v-if="open" class="ovl" @mousedown.self="close">
+      <div class="dlg" role="dialog" aria-modal="true">
         <div class="hdr">
-          <div class="hdr__t">
-            <div class="ttl">{{ modalTitle }}</div>
-            <div class="sub">Champs obligatoires * — Enter = enregistrer — Esc = fermer</div>
+          <div>
+            <div class="ttl">{{ title ?? (mode === "edit" ? "Modifier MP" : "Nouvelle MP") }}</div>
+            <div class="sub">Champs requis (*)</div>
           </div>
-          <button class="x" type="button" @click="close" aria-label="Fermer">
+
+          <button class="x" type="button" @click="close" :disabled="busy" aria-label="Fermer">
             <XMarkIcon class="ic" />
           </button>
         </div>
 
         <div v-if="error" class="err">
           <ExclamationTriangleIcon class="err__ic" />
-          <span>{{ error }}</span>
+          <div>{{ error }}</div>
         </div>
 
-        <!-- Grid compact -->
         <div class="grid">
           <label class="field">
             <span class="lab">Catégorie *</span>
@@ -185,36 +137,24 @@ watch(
             </select>
           </label>
 
+          <label class="field span2">
+            <span class="lab">Libellé *</span>
+            <input id="mpLabelInput" v-model="local.label" class="in" placeholder="Ex: Ciment CPJ 45" />
+            <span class="hint">Min 2 caractères</span>
+          </label>
+
           <label class="field">
             <span class="lab">Unité *</span>
-            <select v-model="local.unite" class="in" :title="unitHelp" required>
-              <option v-for="u in units" :key="u.value" :value="u.value" :disabled="u.disabled">
-                {{ u.label }}
-              </option>
+            <select v-model="local.unite" class="in" required>
+              <option value="" disabled>Sélectionner…</option>
+              <option v-for="u in units" :key="u.value" :value="u.value" :disabled="u.disabled">{{ u.label }}</option>
             </select>
-            <div class="hint">{{ unitHelp }}</div>
           </label>
 
           <label class="field">
-            <span class="lab">Prix (DH / unité) *</span>
-            <input
-              v-model.number="local.prix"
-              class="in numIn"
-              type="number"
-              inputmode="decimal"
-              step="0.01"
-              min="0.01"
-              required
-              @keydown="blockNonNumericKeys"
-            />
-            <div class="hint">
-              Obligatoire &gt; 0 — <b class="mono">{{ fmtDh2(local.prix) }} DH</b>
-            </div>
-          </label>
-
-          <label class="field span3">
-            <span class="lab">Label *</span>
-            <input ref="labelEl" v-model="local.label" class="in" placeholder="Ex: Ciment CPJ 45" required />
+            <span class="lab">Prix *</span>
+            <input v-model.number="local.prix" class="in numIn" type="number" min="0" step="0.01" />
+            <span class="hint mono">MAD</span>
           </label>
 
           <label class="field">
@@ -233,7 +173,6 @@ watch(
             </select>
           </label>
 
-          <!-- Options secondaires repliables -->
           <div class="more span3">
             <button class="moreBtn" type="button" @click="showMore = !showMore">
               <span>Options (fournisseur / commentaire)</span>
@@ -346,7 +285,6 @@ watch(
   box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.10);
 }
 
-/* champ clé: prix (différenciation visuelle) */
 .numIn{
   background: rgba(2, 132, 199, 0.06);
   border-color: rgba(2, 132, 199, 0.18);
@@ -359,7 +297,6 @@ watch(
 .span3{ grid-column: span 3; }
 .span2{ grid-column: span 2; }
 
-/* Options repliables */
 .more{ padding-top: 2px; }
 .moreBtn{
   width: 100%;

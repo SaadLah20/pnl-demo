@@ -1459,13 +1459,15 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <!-- ✅ MODAL GENERALISATION -->
-        <SectionGeneralizeModal
-          v-model="genOpen"
-          section-label="Formules"
-          :source-variant-id="String(store.activeVariantId ?? '') || null"
-          @apply="onApplyGeneralize"
-          @close="() => {}"
-        />
+<SectionGeneralizeModal
+  v-model="genOpen"
+  section-label="Formules"
+  :source-variant-id="String(store.activeVariantId ?? '') || null"
+  @apply="onApplyGeneralize"
+/>
+
+
+
       </template>
     </template>
   </div>

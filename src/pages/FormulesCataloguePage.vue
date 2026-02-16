@@ -1,4 +1,9 @@
-<!-- ✅ src/pages/FormulesCataloguePage.vue (FICHIER COMPLET / pagination en bas uniquement, 10 par page) -->
+<!-- ✅ src/pages/FormulesCataloguePage.vue (FICHIER COMPLET)
+     - pagination en bas uniquement (10/page)
+     - ✅ Duplication (création + copie composition via modal)
+     - ✅ saveForm accepte items (FormuleSavePayload)
+     - ✅ fallback ID après create (resp.id / resp.formule.id / reload + match payload)
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -15,6 +20,7 @@ import {
   XMarkIcon,
   FunnelIcon,
   InformationCircleIcon,
+  Squares2X2Icon,
 } from "@heroicons/vue/24/outline";
 
 import FormuleModal from "@/components/FormuleModal.vue";
@@ -28,6 +34,7 @@ type FormuleDraft = {
 };
 
 type ItemDraft = { mpId: string; qty: number };
+type FormuleSavePayload = FormuleDraft & { items?: ItemDraft[] };
 
 const store = usePnlStore();
 
@@ -421,7 +428,7 @@ watch(totalPages, (tp) => {
 });
 
 /* =========================
-   CRUD MODAL (create/edit)
+   CRUD MODAL (create/edit/duplicate)
 ========================= */
 const showFormModal = ref(false);
 const mode = ref<"create" | "edit">("create");
@@ -430,10 +437,14 @@ const activeEditId = ref<string | null>(null);
 const modalError = ref<string | null>(null);
 const formDraft = ref<FormuleDraft>({ label: "", resistance: "", city: "", region: "", comment: "" });
 
+/** ✅ si non-null => on ouvre le modal en "duplication" (create + items) */
+const dupItems = ref<ItemDraft[] | null>(null);
+
 function openCreate() {
   mode.value = "create";
   activeEditId.value = null;
   modalError.value = null;
+  dupItems.value = null;
   formDraft.value = { label: "", resistance: "", city: "", region: "", comment: "" };
   showFormModal.value = true;
 }
@@ -441,6 +452,7 @@ function openEdit(row: any) {
   mode.value = "edit";
   activeEditId.value = String(row?.id ?? "");
   modalError.value = null;
+  dupItems.value = null;
   formDraft.value = {
     label: String(row?.label ?? ""),
     resistance: String(row?.resistance ?? ""),
@@ -450,8 +462,31 @@ function openEdit(row: any) {
   };
   showFormModal.value = true;
 }
+function openDuplicate(row: any) {
+  mode.value = "create";
+  activeEditId.value = null;
+  modalError.value = null;
+
+  const baseLabel = String(row?.label ?? "").trim() || "Formule";
+  formDraft.value = {
+    label: `${baseLabel} (copie)`,
+    resistance: String(row?.resistance ?? ""),
+    city: String(row?.city ?? ""),
+    region: String(row?.region ?? ""),
+    comment: row?.comment ?? "",
+  };
+
+  const raw = (row?.items ?? []) as Array<{ mpId: string; qty: number }>;
+  dupItems.value = normalizeItems(
+    raw.map((it) => ({ mpId: String(it?.mpId ?? ""), qty: Number(it?.qty ?? 0) }))
+  );
+
+  showFormModal.value = true;
+}
 function closeFormModal() {
   showFormModal.value = false;
+  // on garde dupItems? non, sinon le prochain create hérite par erreur
+  dupItems.value = null;
 }
 
 /* =========================
@@ -481,7 +516,6 @@ async function confirmDelete() {
     await store.deleteFormuleCatalogue(deleteId.value);
     await store.loadFormulesCatalogue();
     closeDeleteModal();
-    // ✅ pagination safety (in case current page becomes empty)
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -597,7 +631,6 @@ async function reload() {
       const id = String((f as any)?.id ?? "");
       if (draftsById[id]) loadDraftFromRow(f);
     }
-    // ✅ pagination safety after reload
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -607,9 +640,67 @@ async function reload() {
   }
 }
 
-async function saveForm(payload?: FormuleDraft) {
+/* =========================
+   Helpers (created id)
+========================= */
+function pickCreatedIdFromResp(resp: any): string | null {
+  if (!resp) return null;
+
+  const direct = String(resp?.id ?? "").trim();
+  if (direct) return direct;
+
+  const nested1 = String(resp?.formule?.id ?? "").trim();
+  if (nested1) return nested1;
+
+  const nested2 = String(resp?.created?.id ?? resp?.data?.id ?? resp?.result?.id ?? "").trim();
+  if (nested2) return nested2;
+
+  const nested3 = String(resp?.variant?.id ?? "").trim();
+  if (nested3) return nested3;
+
+  return null;
+}
+
+function findCreatedIdByPayload(d: FormuleSavePayload): string | null {
+  const label = String(d?.label ?? "").trim();
+  if (!label) return null;
+
+  const resistance = String(d?.resistance ?? "");
+  const city = String(d?.city ?? "");
+  const region = String(d?.region ?? "");
+  const comment = String(d?.comment ?? "");
+
+  const strict = (store.formulesCatalogue ?? []).find((f: any) => {
+    return (
+      String(f?.label ?? "").trim() === label &&
+      String(f?.resistance ?? "") === resistance &&
+      String(f?.city ?? "") === city &&
+      String(f?.region ?? "") === region &&
+      String(f?.comment ?? "") === comment
+    );
+  });
+  if (strict?.id) return String(strict.id);
+
+  const byLabel = (store.formulesCatalogue ?? []).find((f: any) => String(f?.label ?? "").trim() === label);
+  if (byLabel?.id) return String(byLabel.id);
+
+  return null;
+}
+
+/* =========================
+   ✅ Save Form (create/edit/duplicate)
+========================= */
+async function saveForm(payload?: FormuleSavePayload) {
   modalError.value = null;
-  const d = payload ?? formDraft.value;
+
+  // payload vient du modal (peut contenir items), sinon formDraft
+  const d = (payload ?? (formDraft.value as any)) as FormuleSavePayload;
+
+  // si le modal n’envoie pas items, on prend dupItems (si duplication)
+  const rawItems =
+    Array.isArray(d.items) ? d.items : Array.isArray(dupItems.value) ? dupItems.value : null;
+
+  const items = rawItems ? normalizeItems(rawItems) : null;
 
   if (!String(d.label ?? "").trim()) {
     modalError.value = "Label obligatoire";
@@ -619,21 +710,56 @@ async function saveForm(payload?: FormuleDraft) {
   try {
     if (mode.value === "create") {
       busy.create = true;
-      await store.createFormuleCatalogue({
+
+      const resp = await store.createFormuleCatalogue({
         label: String(d.label).trim(),
         resistance: d.resistance ?? "",
         city: d.city ?? "",
         region: d.region ?? "",
         comment: d.comment ?? "",
       });
+
       await store.loadFormulesCatalogue();
+
+      // ✅ si duplication: appliquer composition après création
+      if (items && items.length) {
+        let createdId = pickCreatedIdFromResp(resp);
+        if (!createdId) createdId = findCreatedIdByPayload(d);
+
+        if (!createdId) {
+          showToast("Créée ✅ mais ID introuvable pour copier la composition. Recharge la page.");
+        } else {
+          try {
+            await store.updateFormuleCatalogueItems(String(createdId), items);
+
+            draftsById[String(createdId)] = items.map((x) => ({
+              mpId: String(x.mpId),
+              qty: Number(x.qty ?? 0),
+            }));
+
+            showToast("Formule dupliquée ✅ (composition copiée)");
+          } catch (e: any) {
+            const msg = e?.message ?? String(e);
+            if (msg.includes("Cannot PUT") || msg.includes("/items")) {
+              showToast(
+                "Formule créée ✅ mais copie composition impossible (route /items non atteignable).\n" +
+                  "➡️ Vérifie baseURL/proxy + route backend PUT /formules-catalogue/:id/items."
+              );
+            } else {
+              showToast("Formule créée ✅ mais copie composition a échoué.");
+            }
+          }
+        }
+      }
+
       showFormModal.value = false;
-      // ✅ go to last page to see newly created item (optional but handy)
+      dupItems.value = null;
       currentPage.value = totalPages.value;
     } else {
       const id = activeEditId.value;
       if (!id) throw new Error("Aucune formule sélectionnée");
       busy.update = true;
+
       await store.updateFormuleCatalogue(id, {
         label: String(d.label).trim(),
         resistance: d.resistance ?? "",
@@ -641,6 +767,7 @@ async function saveForm(payload?: FormuleDraft) {
         region: d.region ?? "",
         comment: d.comment ?? "",
       });
+
       await store.loadFormulesCatalogue();
       showFormModal.value = false;
     }
@@ -864,6 +991,11 @@ onMounted(reload);
             </div>
 
             <div class="acts">
+              <!-- ✅ dupliquer -->
+              <button class="iBtn" title="Dupliquer" @click="openDuplicate(f)">
+                <Squares2X2Icon class="aic2" />
+              </button>
+
               <button class="iBtn" title="Modifier" @click="openEdit(f)">
                 <PencilSquareIcon class="aic2" />
               </button>
@@ -978,13 +1110,18 @@ onMounted(reload);
       </div>
     </div>
 
-    <!-- Create/Edit modal -->
+    <!-- Create/Edit/Duplicate modal -->
     <FormuleModal
       :open="showFormModal"
       :mode="mode"
       :initial="formDraft"
+        :cities="cityOptions"
+  :regions="regionOptions"
       :busy="busy.create || busy.update"
       :error="modalError"
+      :mpOptions="mpOptions"
+      :initialItems="dupItems ?? []"
+      :showItems="mode === 'create' && !!dupItems"
       @close="closeFormModal"
       @save="saveForm"
     />
@@ -1072,6 +1209,9 @@ onMounted(reload);
 </template>
 
 <style scoped>
+/* ⚠️ Styles identiques à ta version (je n’ai pas modifié la structure visuelle)
+   Ajout seulement: import + bouton dupliquer utilise iBtn existant.
+*/
 .page{ padding: 12px; display:flex; flex-direction:column; gap:10px; }
 
 /* sticky subheader under HeaderDashboard */
@@ -1387,11 +1527,11 @@ onMounted(reload);
   background: linear-gradient(180deg, rgba(239,246,255,0.55) 0%, rgba(255,255,255,0.92) 45%);
   padding: 8px;
 }
-.tableWrap{ overflow: hidden; } /* ✅ no horizontal scroll */
+.tableWrap{ overflow: hidden; }
 .table{
   width:100%;
   border-collapse: collapse;
-  table-layout: fixed; /* ✅ */
+  table-layout: fixed;
   font-size: 11.5px;
 }
 .table th, .table td{
@@ -1407,7 +1547,6 @@ onMounted(reload);
 }
 .r{ text-align:right; }
 
-/* col widths sum <= 100% */
 .cMp{ width: 70%; }
 .cQty{ width: 18%; }
 .cAct{ width: 6%; }
@@ -1431,7 +1570,7 @@ onMounted(reload);
   height: 28px;
   border-radius: 10px;
   border: 1px solid rgba(2,132,199,0.18);
-  background: rgba(2,132,199,0.06); /* important input */
+  background: rgba(2,132,199,0.06);
   padding: 0 8px;
   font-size: 11.5px;
   font-weight: 950;
@@ -1602,7 +1741,7 @@ onMounted(reload);
 @media (max-width: 980px){
   .filtersGrid{ grid-template-columns: 1fr; }
   .span3{ grid-column:auto; }
-  .kpis{ display:none; } /* compact mobile */
+  .kpis{ display:none; }
   .filtersPop{ right: 10px; left: 10px; width: auto; }
 }
 </style>
