@@ -8,8 +8,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
-import { computeHeaderKpis } from "@/services/kpis/headerkpis";
-
 import {
   InformationCircleIcon,
   ArrowPathIcon,
@@ -94,10 +92,6 @@ const quantiteProjetM3 = computed(() => {
 /* =========================
    TOGGLES (header)
 ========================= */
-const withMajorations = computed({
-  get: () => Boolean((store as any).headerUseMajorations),
-  set: (v: boolean) => (store as any).setHeaderUseMajorations(Boolean(v)),
-});
 
 const withDevisSurcharge = computed({
   get: () => Boolean((store as any).headerUseDevisSurcharge),
@@ -613,40 +607,10 @@ function pvBaseM3(r: any): number {
 }
 
 /* =========================
-   IMPACT MAJORATIONS (/m3) - header-based
-========================= */
-const impactMajorationM3 = computed(() => {
-  const v = variant.value;
-  const vol = volumeTotalFromFormules.value;
-  if (!v || vol <= 0) return 0;
-
-  const d = dureeMois.value;
-
-  const vBase = {
-    ...v,
-    autresCouts: {
-      ...(v.autresCouts ?? {}),
-      majorations: null,
-    },
-  };
-
-  const kBase = computeHeaderKpis(vBase, d, null, null, false);
-  const kMaj = computeHeaderKpis(v, d, null, null, false);
-
-  const deltaCA = n(kMaj?.caTotal) - n(kBase?.caTotal);
-  return deltaCA / vol;
-});
-
-function pvWithMajorationM3(r: any): number {
-  return pvBaseM3(r) + impactMajorationM3.value;
-}
-
-/* =========================
    PONDERE / DEFINITIF
 ========================= */
 function pvPondereM3(r: any): number {
-  const base = withMajorations.value ? pvWithMajorationM3(r) : pvBaseM3(r);
-  return roundTo5(base);
+  return roundTo5(pvBaseM3(r));
 }
 function pvDefinitifM3(r: any): number {
   return pvPondereM3(r) + getSurcharge(r);
@@ -913,33 +877,26 @@ function removeExtra(idx: number) {
          (Métriques CMP/MOMD/PV pond en sous-ligne)
     ========================= -->
     <template v-if="activeTab === 'SURCHARGES'">
-      <div class="card controls">
-        <div class="checks">
-          <label class="chk">
-            <input type="checkbox" v-model="withMajorations" />
-            <span>Appliquer majorations</span>
-          </label>
+<div class="card controls">
+  <div class="checks">
+    <label class="chk">
+      <input type="checkbox" v-model="withDevisSurcharge" />
+      <span>Dashboard : surcharge devis</span>
+    </label>
 
-          <label class="chk">
-            <input type="checkbox" v-model="withDevisSurcharge" />
-            <span>Dashboard : surcharge devis</span>
-          </label>
+    <label class="chk">
+      <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
+      <span>Appliquer au dashboard lors du save</span>
+    </label>
+  </div>
 
-          <label class="chk">
-            <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
-            <span>Appliquer au dashboard lors du save</span>
-          </label>
-        </div>
+  <div class="rightInfo">
+    <button class="btn" @click="applyToDashboard" :disabled="busy.apply">
+      Appliquer au dashboard
+    </button>
+  </div>
+</div>
 
-        <div class="rightInfo">
-          <div class="miniStat" v-if="withMajorations">
-            <div class="k">Impact majorations</div>
-            <div class="v mono">{{ money2(impactMajorationM3) }} <span class="muted">DH/m³</span></div>
-          </div>
-
-          <button class="btn" @click="applyToDashboard" :disabled="busy.apply">Appliquer au dashboard</button>
-        </div>
-      </div>
 
       <div class="card tableCard">
         <div class="tHead">
@@ -967,11 +924,7 @@ function removeExtra(idx: number) {
                     CMP : <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b> DH/m³<br />
                     Transport (base) : <b class="mono">{{ money2(transportBaseM3) }}</b> DH/m³<br />
                     MOMD : <b class="mono">{{ money2(r?.momd) }}</b> DH/m³<br />
-                    PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />
-                    <template v-if="withMajorations">
-                      PV Maj : <b class="mono">{{ money2(pvWithMajorationM3(r)) }}</b> DH/m³<br />
-                    </template>
-                    PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
+                    PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
                     <span class="mutedLine">Clé: {{ rowKey(r) }}</span>
                   </span>
                 </span>
@@ -1022,11 +975,6 @@ function removeExtra(idx: number) {
               <div class="k">CA devis</div>
               <div class="v mono">{{ money2(caDevisTotal) }} <span>DH</span></div>
             </div>
-          </div>
-
-          <div class="muted noteLine">
-            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après
-            pondération.
           </div>
         </div>
       </div>
@@ -1221,6 +1169,8 @@ function removeExtra(idx: number) {
 .sep { color:#9ca3af; }
 
 .alert { border:1px solid #e5e7eb; border-radius:14px; padding:8px 10px; background:#fff; color:#111827; font-size:12px; }
+
+.alert.info { border-color:#bfdbfe; background:#eff6ff; color:#1e3a8a; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
 .btn{

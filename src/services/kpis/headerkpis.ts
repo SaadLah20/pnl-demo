@@ -103,19 +103,91 @@ export function computeHeaderKpis(
   dureeMois: number,
   previewMajorations?: Record<string, number> | null,
   previewDevisSurcharges?: Record<string, number> | null,
-  useDevisSurcharge: boolean = false
+  useDevisSurcharge: boolean = false,
+  opts?: { disableMomdImputation?: boolean }
 ): HeaderKPIs {
+  // =========================
+  // MOMD IMPUTATION (Majorations -> MOMD)
+  // - Persisted & preview are stored inside the same majorations map
+  // - Goal: neutralize the EBITDA/EBIT loss caused by majorations by
+  //   increasing MOMD (=> CA) while accounting for "frais généraux" (% of CA).
+  //
+  // Keys used inside majorations map:
+  // - momdImputation.enabled : 0/1
+  // - momdImputation.pct     : 0..100 (percentage of the loss to compensate)
+  // =========================
+  const IMP_ENABLED_KEY = "momdImputation.enabled";
+  const IMP_PCT_KEY = "momdImputation.pct";
+
   const formulesItems = variant?.formules?.items ?? [];
   const mpItems = variant?.mp?.items ?? [];
 
   const persistedMajorations = readPersistedMajorations(variant);
   const persistedDevisSurcharges = readPersistedDevisSurcharges(variant);
 
+  const disableImp = Boolean(opts?.disableMomdImputation);
+  const impEnabled =
+    !disableImp &&
+    getMajorationPct(IMP_ENABLED_KEY, persistedMajorations, previewMajorations) >= 0.5;
+  const impPct =
+    impEnabled
+      ? Math.max(
+          0,
+          Math.min(100, getMajorationPct(IMP_PCT_KEY, persistedMajorations, previewMajorations))
+        )
+      : 0;
+
   const duree = n(dureeMois);
   const dureeJours = duree > 0 ? Math.round(duree * 30) : null;
 
   // 1) Volume total
   const volumeTotalM3 = sum(formulesItems, (f) => n(f?.volumeM3));
+
+  // ✅ pre-pass: compute MOMD add-on per m3 if imputation ON
+  // We compute:
+  //   lossEBITDA = EBITDA_base(no majorations) - EBITDA_majorations(no imputation)
+  //   addCA = lossEBITDA * (impPct/100) / (1 - fraisGenPct)
+  //   addMomdM3 = addCA / volumeTotalM3
+  // This ensures EBITDA (and thus EBIT) comes back to base when impPct=100.
+  let momdImputedAddM3 = 0;
+  if (impEnabled && volumeTotalM3 > 0) {
+    try {
+      // base: ignore majorations altogether
+      const baseVariant = {
+        ...variant,
+        autresCouts: {
+          ...(variant?.autresCouts ?? {}),
+          majorations: null,
+        },
+      };
+
+      const kBase = computeHeaderKpis(
+        baseVariant,
+        dureeMois,
+        null,
+        previewDevisSurcharges,
+        useDevisSurcharge,
+        { disableMomdImputation: true }
+      );
+
+      const kMajNoImp = computeHeaderKpis(
+        variant,
+        dureeMois,
+        previewMajorations,
+        previewDevisSurcharges,
+        useDevisSurcharge,
+        { disableMomdImputation: true }
+      );
+
+      const lossEbitda = Math.max(0, n(kBase?.ebitdaTotal) - n(kMajNoImp?.ebitdaTotal));
+      const fgPct = Math.max(0, Math.min(99.9, n(kBase?.fraisGenerauxPct))) / 100;
+
+      const addCaTotal = fgPct < 0.999 ? (lossEbitda * (impPct / 100)) / (1 - fgPct) : 0;
+      momdImputedAddM3 = addCaTotal / volumeTotalM3;
+    } catch {
+      momdImputedAddM3 = 0;
+    }
+  }
 
   // 2) Transport (majorable)
   const transportPct = getMajorationPct(
@@ -158,7 +230,7 @@ export function computeHeaderKpis(
       : 0;
 
     // ✅ surcharge appliquée sur MOMD (pas sur PV directement)
-    return baseMomd + surchargeM3;
+    return baseMomd + surchargeM3 + momdImputedAddM3;
   }
 
   // 4) Totaux pondérés
@@ -437,46 +509,45 @@ export function computeHeaderKpis(
     coutOccasionnelTotal +
     autresCoutsHorsPctTotal;
 
-    function clamp(x: any, min: number, max: number) {
-  const v = n(x);
-  return Math.max(min, Math.min(max, v));
-}
+  function clamp(x: any, min: number, max: number) {
+    const v = n(x);
+    return Math.max(min, Math.min(max, v));
+  }
 
-// 6) Pompage (conditionné par transport.includePompage)
-// ✅ Important : si includePompage est absent (ancien data), on l'infère depuis les valeurs
-const t = variant?.transport ?? {};
+  // 6) Pompage (conditionné par transport.includePompage)
+  // ✅ Important : si includePompage est absent (ancien data), on l'infère depuis les valeurs
+  const t = variant?.transport ?? {};
 
-const rawInclude = (t as any)?.includePompage;
+  const rawInclude = (t as any)?.includePompage;
 
-// valeurs (on ne les "zero" jamais ici — juste ignorées si includePompage=false)
-const rawVolumePompePct = n((t as any)?.volumePompePct);
-const rawPrixAchatPompe = n((t as any)?.prixAchatPompe);
-const rawPrixVentePompe = n((t as any)?.prixVentePompe);
+  // valeurs (on ne les "zero" jamais ici — juste ignorées si includePompage=false)
+  const rawVolumePompePct = n((t as any)?.volumePompePct);
+  const rawPrixAchatPompe = n((t as any)?.prixAchatPompe);
+  const rawPrixVentePompe = n((t as any)?.prixVentePompe);
 
-// ✅ si flag absent : on active si des valeurs existent (corrige le besoin d'aller "Enregistrer" après refresh)
-const inferredIncludePompage =
-  rawVolumePompePct > 0 || rawPrixAchatPompe > 0 || rawPrixVentePompe > 0;
+  // ✅ si flag absent : on active si des valeurs existent (corrige le besoin d'aller "Enregistrer" après refresh)
+  const inferredIncludePompage =
+    rawVolumePompePct > 0 || rawPrixAchatPompe > 0 || rawPrixVentePompe > 0;
 
-const includePompage =
-  typeof rawInclude === "boolean" ? rawInclude : inferredIncludePompage;
+  const includePompage = typeof rawInclude === "boolean" ? rawInclude : inferredIncludePompage;
 
-const volumePompePct = includePompage ? clamp(rawVolumePompePct, 0, 100) : 0;
-const prixAchatPompe = includePompage ? rawPrixAchatPompe : 0;
-const prixVentePompe = includePompage ? rawPrixVentePompe : 0;
+  const volumePompePct = includePompage ? clamp(rawVolumePompePct, 0, 100) : 0;
+  const prixAchatPompe = includePompage ? rawPrixAchatPompe : 0;
+  const prixVentePompe = includePompage ? rawPrixVentePompe : 0;
 
-const volumePompeM3 = (volumePompePct / 100) * volumeTotalM3;
+  const volumePompeM3 = (volumePompePct / 100) * volumeTotalM3;
 
-// Marge totale pompage = (PV - PA) * volume pompé
-const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
-
-
-
+  // Marge totale pompage = (PV - PA) * volume pompé
+  const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
 
   // 7) Frais généraux
   const fraisGenerauxTotal = (fraisGenPct / 100) * caTotal;
 
   // 8) EBITDA & EBIT
-  const amortissementMensuel = n(variant?.cab?.amortMois);
+   const amortissementMensuel = applyMajoration(
+  n(variant?.cab?.amortMois),
+  getMajorationPct("cab.amortMois", persistedMajorations, previewMajorations)
+   );
   const amortissementTotal = amortissementMensuel * duree;
 
   // ✅ EBITDA dépend de momdTotal → surcharge impacte EBITDA/EBIT naturellement

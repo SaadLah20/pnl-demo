@@ -450,6 +450,30 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // =========================================================
+// ✅ Appliquer réellement les majorations (persistées) sur la variante
+// - appelle le backend: POST /variants/:id/majorations/apply
+// - retourne la variante mise à jour (getFullVariant)
+// =========================================================
+async applyMajorationsReal(variantId?: string, addMomdM3?: number) {
+  const vid = String(variantId ?? this.activeVariant?.id ?? "").trim();
+  if (!vid) throw new Error("Aucune variante active (variantId manquant)");
+
+  const resp = await jsonFetch(`/variants/${vid}/majorations/apply`, {
+    method: "POST",
+    body: JSON.stringify({ addMomdM3: Number(addMomdM3 ?? 0) }),
+  });
+
+  const updated = (resp as any)?.variant ?? resp;
+  if (updated?.id) this.replaceActiveVariantInState(updated);
+
+  this.headerMajorationsPreview = null;
+  return updated;
+},
+
+
+
+
+    // =========================================================
     // Devis
     // =========================================================
     async saveDevis(variantId: string, devis: any) {

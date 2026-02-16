@@ -64,6 +64,239 @@ app.get("/variants/:id", async (req: Request, res: Response) => {
 });
 
 /* =========================================================
+   ✅ APPLY MAJORATIONS "REELLEMENT"
+   POST /variants/:id/majorations/apply
+   - Applique les % de majorations aux champs concernés (DB)
+   - Optionnel: addMomdM3 (DH/m3) envoyé par le client (imputation déjà calculée)
+   - Réinitialise le JSON majorations à {}
+========================================================= */
+app.post("/variants/:id/majorations/apply", async (req: Request, res: Response) => {
+  const variantId = String(req.params.id ?? "").trim();
+  if (!variantId) return res.status(400).json({ error: "variantId manquant" });
+
+  function readMajorationsMap(secAutres: any): Record<string, number> {
+    try {
+      const raw = secAutres?.majorations;
+      if (!raw) return {};
+      if (typeof raw === "object") return raw as any;
+      const parsed = JSON.parse(String(raw));
+      return parsed && typeof parsed === "object" ? (parsed as any) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function pctOf(map: Record<string, number>, key: string): number {
+    return map && key in map ? numOr0((map as any)[key]) : 0;
+  }
+
+  function mul(value: any, pct: number): number {
+    const v = numOr0(value);
+    if (!pct) return v;
+    return v * (1 + pct / 100);
+  }
+
+  function normLabel(s: any): string {
+    return String(s ?? "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
+  }
+
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const v = await getFullVariant(variantId);
+      if (!v) throw new Error("Variante introuvable");
+
+      const maj = readMajorationsMap(v.autresCouts);
+
+      // 1) Transport
+      if (v.transport) {
+        const pct = pctOf(maj, "transport.prixMoyen");
+        if (pct) {
+          await tx.sectionTransport.update({
+            where: { variantId },
+            data: { prixMoyen: mul(v.transport.prixMoyen, pct) },
+          });
+        }
+      }
+
+      // 1bis) CAB (amortissement mensuel)
+      if (v.cab) {
+        const pct = pctOf(maj, "cab.amortMois");
+        if (pct) {
+          await tx.sectionCab.update({
+            where: { variantId },
+            data: { amortMois: mul((v.cab as any).amortMois, pct) },
+          });
+        }
+      }
+
+      // 2) MP (prix en DH/tonne)
+      if ((v.mp as any)?.items?.length) {
+        for (const it of (v.mp as any).items as any[]) {
+          const mpId = String(it?.mpId ?? "").trim();
+          if (!mpId) continue;
+          const pct = pctOf(maj, `mp:${mpId}`);
+          if (!pct) continue;
+
+          const basePrix = it?.prix != null ? numOr0(it.prix) : numOr0(it?.mp?.prix);
+          await tx.variantMp.update({
+            where: { id: String(it.id) },
+            data: { prix: mul(basePrix, pct) },
+          });
+        }
+      }
+
+      // 3) Cout M3
+      if (v.coutM3) {
+        const data: any = {};
+        const pEau = pctOf(maj, "coutM3.eau");
+        const pQ = pctOf(maj, "coutM3.qualite");
+        const pD = pctOf(maj, "coutM3.dechets");
+        if (pEau) data.eau = mul((v.coutM3 as any).eau, pEau);
+        if (pQ) data.qualite = mul((v.coutM3 as any).qualite, pQ);
+        if (pD) data.dechets = mul((v.coutM3 as any).dechets, pD);
+        if (Object.keys(data).length) await tx.sectionCoutM3.update({ where: { variantId }, data });
+      }
+
+      // 4) Cout Mensuel
+      if (v.coutMensuel) {
+        const data: any = {};
+        const keys: Array<[string, string]> = [
+          ["electricite", "coutMensuel.electricite"],
+          ["gasoil", "coutMensuel.gasoil"],
+          ["location", "coutMensuel.location"],
+          ["securite", "coutMensuel.securite"],
+          ["hebergements", "coutMensuel.hebergements"],
+          ["locationTerrain", "coutMensuel.locationTerrain"],
+          ["telephone", "coutMensuel.telephone"],
+          ["troisG", "coutMensuel.troisG"],
+          ["taxeProfessionnelle", "coutMensuel.taxeProfessionnelle"],
+          ["locationVehicule", "coutMensuel.locationVehicule"],
+          ["locationAmbulance", "coutMensuel.locationAmbulance"],
+          ["locationBungalows", "coutMensuel.locationBungalows"],
+          ["epi", "coutMensuel.epi"],
+        ];
+        for (const [field, key] of keys) {
+          const pct = pctOf(maj, key);
+          if (pct) data[field] = mul((v.coutMensuel as any)[field], pct);
+        }
+        if (Object.keys(data).length) await tx.sectionCoutMensuel.update({ where: { variantId }, data });
+      }
+
+      // 5) Maintenance
+      if (v.maintenance) {
+        const data: any = {};
+        const keys: Array<[string, string]> = [
+          ["cab", "maintenance.cab"],
+          ["elec", "maintenance.elec"],
+          ["chargeur", "maintenance.chargeur"],
+          ["generale", "maintenance.generale"],
+          ["bassins", "maintenance.bassins"],
+          ["preventive", "maintenance.preventive"],
+        ];
+        for (const [field, key] of keys) {
+          const pct = pctOf(maj, key);
+          if (pct) data[field] = mul((v.maintenance as any)[field], pct);
+        }
+        if (Object.keys(data).length) await tx.sectionMaintenance.update({ where: { variantId }, data });
+      }
+
+      // 6) Employés (sur coûts unitaires)
+      if (v.employes) {
+        const data: any = {};
+        const keys: Array<[string, string]> = [
+          ["responsableCout", "employes.responsable"],
+          ["centralistesCout", "employes.centralistes"],
+          ["manoeuvreCout", "employes.manoeuvre"],
+          ["coordinateurExploitationCout", "employes.coordinateurExploitation"],
+          ["technicienLaboCout", "employes.technicienLabo"],
+          ["femmeMenageCout", "employes.femmeMenage"],
+          ["gardienCout", "employes.gardien"],
+          ["maintenancierCout", "employes.maintenancier"],
+          ["panierRepasCout", "employes.panierRepas"],
+        ];
+        for (const [field, key] of keys) {
+          const pct = pctOf(maj, key);
+          if (pct) data[field] = mul((v.employes as any)[field], pct);
+        }
+        if (Object.keys(data).length) await tx.sectionEmployes.update({ where: { variantId }, data });
+      }
+
+      // 7) Cout Occasionnel
+      if (v.coutOccasionnel) {
+        const data: any = {};
+        const keys: Array<[string, string]> = [
+          ["genieCivil", "coutOccasionnel.genieCivil"],
+          ["installation", "coutOccasionnel.installation"],
+          ["transport", "coutOccasionnel.transport"],
+          ["demontage", "coutOccasionnel.demontage"],
+          ["remisePointCentrale", "coutOccasionnel.remisePointCentrale"],
+          ["silots", "coutOccasionnel.silots"],
+          ["localAdjuvant", "coutOccasionnel.localAdjuvant"],
+          ["bungalows", "coutOccasionnel.bungalows"],
+        ];
+        for (const [field, key] of keys) {
+          const pct = pctOf(maj, key);
+          if (pct) data[field] = mul((v.coutOccasionnel as any)[field], pct);
+        }
+        if (Object.keys(data).length) await tx.sectionCoutOccasionnel.update({ where: { variantId }, data });
+      }
+
+      // 8) AutresCouts items (skip POURCENT)
+      if ((v.autresCouts as any)?.items?.length) {
+        for (const it of (v.autresCouts as any).items as any[]) {
+          const unite = String(it?.unite ?? "");
+          if (unite.includes("POURCENT")) continue;
+
+          const idKey = `autresCoutsItem:${String(it.id)}`;
+          const lblKey = `autresCoutsLabel:${normLabel(it.label)}`;
+          const pct = pctOf(maj, idKey) || pctOf(maj, lblKey);
+          if (!pct) continue;
+
+          await tx.autreCoutItem.update({
+            where: { id: String(it.id) },
+            data: { valeur: mul(it.valeur, pct) },
+          });
+        }
+      }
+
+      // ✅ MOMD (imputation) — écrire réellement le delta dans la base
+      const addMomdM3 = numOr0((req.body as any)?.addMomdM3);
+      void addMomdM3; // ✅ évite noUnusedLocals si tu n'as pas encore implémenté l'updateMany
+
+      if (addMomdM3 !== 0) {
+        await tx.variantFormule.updateMany({
+          where: { variantId },
+          data: { momd: { increment: addMomdM3 } as any },
+        });
+      }
+
+      // 10) Reset majorations
+      await tx.sectionAutresCouts.upsert({
+        where: { variantId },
+        create: {
+          variantId,
+          category: (v.autresCouts as any)?.category ?? "AUTRES_COUTS",
+          majorations: "{}",
+        },
+        update: { majorations: "{}" },
+      });
+
+      return getFullVariant(variantId);
+    });
+
+    return res.json({ variant: updated });
+  } catch (err: any) {
+    console.error(err);
+    return res.status(400).json({ error: err?.message ?? "Bad Request" });
+  }
+});
+
+/* =========================================================
    HELPERS
 ========================================================= */
 
@@ -234,7 +467,6 @@ async function ensureVariantSkeleton(tx: Prisma.TransactionClient, variantId: st
       prixAchatPompe: null,
       prixVentePompe: null,
       includePompage: false, // ✅ AJOUT
-
     },
     update: {},
   });
