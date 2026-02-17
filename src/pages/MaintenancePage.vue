@@ -1,4 +1,7 @@
-<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize + import + hide zeros) -->
+<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize + import + hide zeros)
+     ✅ Amélioration UI: cohérence avec autres pages
+     ✅ "Saisie Maintenance + description" déplacés en bas (footer card)
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -14,6 +17,7 @@ import {
   WrenchScrewdriverIcon,
   CalendarDaysIcon,
   ArrowDownTrayIcon,
+  InformationCircleIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -334,7 +338,6 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
     return;
   }
 
-  // NOTE: Maintenance n’utilise pas les presets => on ignore payload.copy (toujours FULL par défaut)
   impErr.value = null;
   impBusy.value = true;
   try {
@@ -432,13 +435,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             Reset
           </button>
 
-          <!-- ✅ NEW: Importer -->
           <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
           </button>
 
-          <!-- ✅ NEW: Masquer 0 -->
           <button class="btn" :disabled="!variant" @click="hideZeros = !hideZeros" :class="{ on: hideZeros }">
             <span class="dot" aria-hidden="true"></span>
             {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
@@ -516,17 +517,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <template v-else>
       <div class="card">
-        <div class="cardHdr">
-          <div class="cardTtl">
-            <WrenchScrewdriverIcon class="ic3" />
-            <div>
-              <div class="h">Saisie Maintenance</div>
-              <div class="p">Montants exprimés en DH/mois. Les métriques sont calculées sur durée, volume et CA.</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ✅ Table plus compacte -->
+        <!-- ✅ On enlève "Saisie Maintenance" du haut -->
         <div class="tableWrap">
           <table class="table">
             <colgroup>
@@ -581,7 +572,21 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </table>
         </div>
 
-        <div class="foot">Durée : <b>{{ dureeMois }}</b> mois • % calculé sur CA (CMP + Transport + MOMD).</div>
+        <!-- ✅ Indication déplacée en bas, look "hint" cohérent -->
+        <div class="hint">
+          <div class="hintRow">
+            <InformationCircleIcon class="hic" />
+            <div class="hintTxt">
+              <b>Saisie Maintenance</b>
+              <span class="sep2">•</span>
+              Montants en <b>DH/mois</b>. Les métriques sont calculées sur <b>durée</b>, <b>volume</b> et <b>CA</b>.
+            </div>
+          </div>
+
+          <div class="foot">
+            Durée : <b>{{ dureeMois }}</b> mois • % calculé sur CA (CMP + Transport + MOMD).
+          </div>
+        </div>
       </div>
     </template>
 
@@ -652,20 +657,20 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 16px;
-  padding: 8px 10px;
+  padding: 10px;
 }
 
 .row {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   min-width: 240px;
 }
 
@@ -676,9 +681,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   flex-wrap: wrap;
 }
 .ttl {
-  font-size: 15px;
+  font-size: 18px; /* ✅ cohérent avec CAB */
   font-weight: 950;
   color: #0f172a;
+  letter-spacing: -0.01em;
 }
 .badge {
   font-size: 10px;
@@ -691,9 +697,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 .meta {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .clip {
   display: inline-block;
@@ -703,7 +713,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   text-overflow: ellipsis;
 }
 .sep {
-  margin: 0 8px;
   color: rgba(15, 23, 42, 0.35);
 }
 
@@ -713,7 +722,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 8px;
   flex-wrap: wrap;
 }
-
 .btn {
   height: 32px;
   border-radius: 12px;
@@ -743,7 +751,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(2, 132, 199, 0.18);
 }
 
-/* ✅ Masquer 0 button state */
+/* masquer 0 state */
 .btn.on {
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.28);
@@ -768,11 +776,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   opacity: 0.85;
   margin-right: 6px;
 }
-.ic3 {
-  width: 18px;
-  height: 18px;
-  color: rgba(15, 23, 42, 0.75);
-}
 
 .mono {
   font-variant-numeric: tabular-nums;
@@ -781,14 +784,14 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 /* KPIs */
 .kpis {
-  margin-top: 8px;
+  margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 @media (max-width: 900px) {
   .kpis {
-    grid-template-columns: repeat(2, minmax(160px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .kpi {
@@ -798,7 +801,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+  min-width: 0;
 }
 .kpi.main {
   border-color: rgba(2, 132, 199, 0.28);
@@ -818,6 +822,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .unit {
   margin-left: 8px;
@@ -855,45 +861,26 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: #fff;
   overflow: hidden;
 }
-.cardHdr {
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-}
-.cardTtl {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.h {
-  font-weight: 950;
-  color: #0f172a;
-  font-size: 13px;
-}
-.p {
-  font-weight: 750;
-  color: rgba(15, 23, 42, 0.55);
-  font-size: 12px;
-}
 
 .tableWrap {
-  padding: 8px 10px 10px;
+  padding: 10px;
   overflow-x: auto;
 }
-
 .table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
   table-layout: fixed;
 }
+
 .colLabel {
-  width: 260px;
+  width: 280px;
 }
 .colMensuel {
-  width: 150px;
+  width: 160px;
 }
 .colTotal {
-  width: 170px;
+  width: 180px;
 }
 .colM3 {
   width: 120px;
@@ -901,20 +888,27 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .colPct {
   width: 90px;
 }
+
 .th,
 .table td {
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  padding: 8px 8px;
+  padding: 9px 8px;
   vertical-align: middle;
 }
 .th {
   background: rgba(15, 23, 42, 0.03);
   color: rgba(15, 23, 42, 0.55);
   font-size: 11px;
+  font-weight: 950;
   white-space: nowrap;
 }
 .r {
   text-align: right;
+}
+.labelCell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inCell {
@@ -925,12 +919,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   width: 100%;
 }
 .inputSm {
-  width: 110px;
-  height: 30px;
+  width: 120px;
+  height: 32px;
   border-radius: 12px;
   border: 1px solid rgba(2, 132, 199, 0.26);
   background: rgba(2, 132, 199, 0.06);
-  padding: 0 9px;
+  padding: 0 10px;
   font-weight: 950;
   color: #0f172a;
   outline: none;
@@ -939,6 +933,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .inputSm:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+  background: #fff;
 }
 .unitMonth {
   font-size: 10.5px;
@@ -952,8 +947,36 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-weight: 950;
 }
 
+/* ✅ hint bottom block */
+.hint {
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+  padding: 10px;
+  background: rgba(248, 250, 252, 0.6);
+}
+.hintRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.hic {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: rgba(2, 132, 199, 0.9);
+  flex: 0 0 auto;
+}
+.hintTxt {
+  font-size: 11.5px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.75);
+  line-height: 1.35;
+}
+.sep2 {
+  margin: 0 8px;
+  color: rgba(15, 23, 42, 0.35);
+}
 .foot {
-  padding: 0 10px 10px;
+  margin-top: 8px;
   font-size: 11.5px;
   font-weight: 800;
   color: rgba(15, 23, 42, 0.65);
@@ -974,7 +997,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 100100;
 }
 .dlg {
   width: min(520px, 100%);

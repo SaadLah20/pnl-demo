@@ -1,6 +1,7 @@
 <!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET)
      ✅ Contrat: CAB à charge client => amortMois forcé à 0 (UI + auto-fix backend),
      ✅ page reste active, seul champ amortissement verrouillé
+     ✅ UI: cohérente avec tes autres pages, titre + grand, meta retirée du header
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
@@ -225,8 +226,6 @@ function closeModal() {
 
 /* =========================
    ✅ AUTO-FIX BACKEND (important pour dashboard)
-   Si contrat => charge client, mais DB a encore amortMois != 0,
-   on force updateVariant(... amortMois:0) pour corriger DB + store + dashboard.
 ========================= */
 const fixBusy = ref(false);
 const fixErr = ref<string | null>(null);
@@ -244,9 +243,7 @@ async function ensureAmortZeroIfChargeClient() {
   fixErr.value = null;
   fixBusy.value = true;
   try {
-    // ✅ update minimal: backend forcera à 0 de toute façon
     await (store as any).updateVariant(vId, { cab: { amortMois: 0 } });
-    // ✅ resync draft
     draft.amortMois = 0;
     dirty.value = false;
     showToast("Amortissement forcé à 0 (contrat: charge client).", "info");
@@ -258,7 +255,6 @@ async function ensureAmortZeroIfChargeClient() {
   }
 }
 
-// déclenche sur (variant, contrat, cab)
 watch(
   () => [variant.value?.id, cabChargeClient.value, cab.value?.amortMois],
   () => {
@@ -280,7 +276,6 @@ function buildCabPayload() {
     etat: String(draft.etat ?? "NEUVE"),
     mode: String(draft.mode ?? "ACHAT"),
     capaciteM3: toNum(draft.capaciteM3),
-    // ✅ si charge client => 0
     amortMois: cabChargeClient.value ? 0 : toNum(draft.amortMois),
   };
 }
@@ -346,7 +341,6 @@ function applyCabFromVariant(srcVariant: any) {
   draft.mode = String(c?.mode ?? "ACHAT");
   draft.capaciteM3 = toNum(c?.capaciteM3);
 
-  // ✅ contrat actif de la variante cible: si charge client => 0
   draft.amortMois = cabChargeClient.value ? 0 : toNum(c?.amortMois);
 
   activeField.value = null;
@@ -380,7 +374,6 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
 
     applyCabFromVariant(src);
 
-    // ✅ si charge client => on force déjà l’amort à 0 et on sync backend pour KPI
     if (cabChargeClient.value) {
       await ensureAmortZeroIfChargeClient();
     }
@@ -445,8 +438,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
    INDICATEURS (side card)
 ========================= */
 const dureeMois = computed<number>(() => Math.max(1, toNum(contract.value?.dureeMois) || 1));
-
-// ✅ amortissement EFFECTIF (ce qui doit être pris en compte)
 const amortMoisEff = computed<number>(() => (cabChargeClient.value ? 0 : toNum(draft.amortMois)));
 const amortTotal = computed<number>(() => amortMoisEff.value * dureeMois.value);
 
@@ -491,12 +482,14 @@ const amortPctCa = computed<number>(() => {
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader -->
+    <!-- ✅ Sticky subheader (cohérent + plus grand + sans meta à côté du titre) -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
           <div class="ttlRow">
             <div class="ttl">CAB</div>
+
+            <!-- ✅ badges ok, mais pas de données "durée/variantLabel" à côté -->
             <span v-if="variant" class="badge">Variante active</span>
             <span v-if="variant && cabChargeClient" class="badge lock">
               <LockClosedIcon class="bic" />
@@ -504,15 +497,15 @@ const amortPctCa = computed<number>(() => {
             </span>
           </div>
 
+          <!-- ✅ meta déplacée sous le titre, plus discret -->
           <div class="meta" v-if="variant">
             <span class="clip"><b>{{ variantLabel }}</b></span>
-            <span class="sep" v-if="dureeMois">•</span>
-            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
+            <span class="sep">•</span>
+            <span>Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
           </div>
           <div class="meta" v-else>Aucune variante active.</div>
         </div>
 
-        <!-- ✅ actions restent actives -->
         <div class="actions" v-if="variant">
           <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
@@ -579,14 +572,14 @@ const amortPctCa = computed<number>(() => {
               <div>
                 <div class="h">Données CAB</div>
                 <div class="p">
-                  Clique sur une valeur pour modifier. <span class="muted">Amortissement est verrouillé si charge client.</span>
+                  Clique sur une valeur pour modifier.
+                  <span class="muted">Seul l’amortissement est verrouillé si charge client.</span>
                 </div>
               </div>
             </div>
           </div>
 
           <div class="rows">
-            <!-- Etat -->
             <div class="rrow">
               <div class="lab">État</div>
               <div class="val">
@@ -602,7 +595,6 @@ const amortPctCa = computed<number>(() => {
               </div>
             </div>
 
-            <!-- Mode -->
             <div class="rrow">
               <div class="lab">Mode</div>
               <div class="val">
@@ -619,7 +611,6 @@ const amortPctCa = computed<number>(() => {
               </div>
             </div>
 
-            <!-- Capacite -->
             <div class="rrow">
               <div class="lab">Capacité (m³)</div>
               <div class="val">
@@ -639,7 +630,6 @@ const amortPctCa = computed<number>(() => {
               </div>
             </div>
 
-            <!-- Amort -->
             <div class="rrow">
               <div class="lab">
                 Amortissement / mois
@@ -650,7 +640,6 @@ const amortPctCa = computed<number>(() => {
               </div>
 
               <div class="val">
-                <!-- ✅ si charge client => champ désactivé, valeur 0 -->
                 <template v-if="cabChargeClient">
                   <span class="click mono lockedVal" title="Verrouillé par contrat">
                     <b>{{ money(0, 2) }}</b>
@@ -679,11 +668,11 @@ const amortPctCa = computed<number>(() => {
           </div>
 
           <div class="note">
-            Amortissement total = amort./mois × durée. <b v-if="cabChargeClient">Contrat charge client ⇒ amortissement = 0.</b>
+            Amortissement total = amort./mois × durée.
+            <b v-if="cabChargeClient"> Contrat charge client ⇒ amortissement = 0.</b>
           </div>
         </div>
 
-        <!-- side card -->
         <div class="card side">
           <div class="sideTtl">Repères</div>
           <div class="sideLine">
@@ -738,12 +727,7 @@ const amortPctCa = computed<number>(() => {
 
           <div class="dlgFtr">
             <button class="btn2" type="button" @click="closeModal()">Fermer</button>
-            <button
-              v-if="modal.mode === 'confirm'"
-              class="btn2 pri"
-              type="button"
-              @click="modal.onConfirm && modal.onConfirm()"
-            >
+            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
               Confirmer
             </button>
           </div>
@@ -769,9 +753,12 @@ const amortPctCa = computed<number>(() => {
   flex-direction: column;
   gap: 8px;
 }
-
 .muted {
   color: rgba(15, 23, 42, 0.55);
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* sticky subheader */
@@ -783,20 +770,20 @@ const amortPctCa = computed<number>(() => {
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 16px;
-  padding: 8px 10px;
+  padding: 10px;
 }
 
 .row {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   min-width: 240px;
 }
 
@@ -807,10 +794,12 @@ const amortPctCa = computed<number>(() => {
   flex-wrap: wrap;
 }
 .ttl {
-  font-size: 15px;
+  font-size: 18px; /* ✅ plus grand */
   font-weight: 950;
   color: #0f172a;
+  letter-spacing: -0.01em;
 }
+
 .badge {
   font-size: 10px;
   font-weight: 950;
@@ -833,10 +822,15 @@ const amortPctCa = computed<number>(() => {
   height: 14px;
 }
 
+/* ✅ meta discret sous le titre */
 .meta {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .clip {
   display: inline-block;
@@ -846,7 +840,6 @@ const amortPctCa = computed<number>(() => {
   text-overflow: ellipsis;
 }
 .sep {
-  margin: 0 8px;
   color: rgba(15, 23, 42, 0.35);
 }
 
@@ -893,11 +886,6 @@ const amortPctCa = computed<number>(() => {
   width: 18px;
   height: 18px;
   color: rgba(15, 23, 42, 0.75);
-}
-
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* alerts */
@@ -950,7 +938,7 @@ const amortPctCa = computed<number>(() => {
 
 /* CAB card */
 .cardHdr {
-  padding: 8px 10px;
+  padding: 10px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
 }
 .cardTtl {

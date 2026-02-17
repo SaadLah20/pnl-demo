@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MajorationPage.vue (FICHIER COMPLET / tabs + champs non nuls + modal confirm + before/after + refresh active variant) -->
+<!-- ✅ src/pages/MajorationPage.vue (FICHIER COMPLET / UI-UX harmonisé charte app + lisibilité + responsive + sans dégrader la logique) -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -18,6 +18,9 @@ const error = ref<string | null>(null);
 
 const variant = computed<any | null>(() => (store as any).activeVariant ?? null);
 const activeContract = computed<any | null>(() => (store as any).activeContract ?? null);
+
+const variantTitle = computed(() => String(variant.value?.title ?? "—"));
+const variantId = computed(() => String(variant.value?.id ?? ""));
 
 /* =========================
    MOMD imputation keys stored in majorations map
@@ -62,13 +65,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       ? "Confirmer la généralisation des majorations sur TOUTES les variantes ?"
       : `Confirmer la généralisation des majorations sur ${ids.length} variante(s) ?`;
 
-  // modal système OK ici (pas critique)
   if (!window.confirm(msg)) return;
   await generalizeTo(ids);
 }
 
 /* =========================
-   ✅ IMPORTER (modal habituel)
+   ✅ IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -306,7 +308,6 @@ async function save() {
 ========================= */
 async function refreshActiveVariant(variantId: string) {
   try {
-    // 1) if store exposes a direct loader
     const s: any = store as any;
     if (typeof s.loadVariantById === "function") {
       const v = await s.loadVariantById(variantId);
@@ -316,7 +317,6 @@ async function refreshActiveVariant(variantId: string) {
   } catch {}
 
   try {
-    // 2) fallback: reload pnls then find variant and replace active
     await (store as any).loadPnls?.();
     const v = findVariantById(variantId);
     if (v?.id && typeof (store as any).replaceActiveVariantInState === "function") {
@@ -387,7 +387,18 @@ const impactSummary = computed(() => {
   const vol = n(b?.volumeTotalM3 ?? a?.volumeTotalM3 ?? i?.volumeTotalM3);
 
   if (!b || !a || !i || vol <= 0) {
-    return { vol, dpvNoImp: 0, dpvImp: 0, debitNoImp: 0, debitImp: 0, addMomdM3: 0, surcoutNoImp: 0, surcoutImp: 0, fgNoImp: 0, fgImp: 0 };
+    return {
+      vol,
+      dpvNoImp: 0,
+      dpvImp: 0,
+      debitNoImp: 0,
+      debitImp: 0,
+      addMomdM3: 0,
+      surcoutNoImp: 0,
+      surcoutImp: 0,
+      fgNoImp: 0,
+      fgImp: 0,
+    };
   }
 
   const dpvNoImp = n(a.prixMoyenM3) - n(b.prixMoyenM3);
@@ -427,16 +438,12 @@ async function confirmApplyRealNow() {
     const fn = (store as any).applyMajorationsReal;
     if (typeof fn !== "function") throw new Error("applyMajorationsReal non disponible dans le store.");
 
-    // ✅ send MOMD delta so DB momd is incremented
     await fn.call(store, variantId, addMomdM3);
 
     (store as any).clearHeaderMajorationsPreview?.();
     previewOn.value = false;
 
-    // ✅ refresh active variant immediately (real values)
     await refreshActiveVariant(variantId);
-
-    // rebuild from refreshed persisted
     rebuildDraft();
 
     confirmOpen.value = false;
@@ -451,12 +458,10 @@ async function confirmApplyRealNow() {
 }
 
 function applyReal() {
-  // compute delta MOMD/m³ to persist
   const a = kMajNoImp.value;
   const i = kMajWithImp.value;
   const rawDelta = impEnabled.value && a && i ? Number(i.momdMoyenM3) - Number(a.momdMoyenM3) : 0;
   const addMomdM3 = Number.isFinite(rawDelta) ? Math.max(0, rawDelta) : 0;
-
   openConfirmApplyReal(addMomdM3);
 }
 
@@ -467,7 +472,7 @@ function resetAll() {
 }
 
 /* =========================
-   ✅ BEFORE/AFTER per row (instant)
+   ✅ BEFORE/AFTER per row
 ========================= */
 function applyPct(val: number, pct: number) {
   const v = n(val);
@@ -475,15 +480,10 @@ function applyPct(val: number, pct: number) {
   return v * (1 + p / 100);
 }
 
-/**
- * Returns base numeric value of a majorable field (for display),
- * so we can show Base -> After (without reload)
- */
 function baseValueOfKey(key: string): number {
   const v = variant.value;
   if (!v) return 0;
 
-  // MP: show price DH/tonne (variant override if exists else catalogue)
   if (key.startsWith("mp:")) {
     const mpId = key.slice(3);
     const it = (v?.mp?.items ?? []).find((x: any) => String(x?.mpId) === String(mpId));
@@ -492,70 +492,59 @@ function baseValueOfKey(key: string): number {
     return n(it?.mp?.prix);
   }
 
-  // Transport
   if (key === "transport.prixMoyen") return n(v?.transport?.prixMoyen);
 
-// CAB / amortissment
   if (key.startsWith("cab.")) {
-  const f = key.split(".")[1];
-  if (!f) return 0;
-  return n((v?.cab as any)?.[f]);
-}
+    const f = key.split(".")[1];
+    if (!f) return 0;
+    return n((v?.cab as any)?.[f]);
+  }
 
- // coutM3.*
-if (key.startsWith("coutM3.")) {
-  const f = key.split(".")[1];
-  if (!f) return 0;
-  return n((v?.coutM3 as any)?.[f]);
-}
+  if (key.startsWith("coutM3.")) {
+    const f = key.split(".")[1];
+    if (!f) return 0;
+    return n((v?.coutM3 as any)?.[f]);
+  }
 
-// coutMensuel.*
-if (key.startsWith("coutMensuel.")) {
-  const f = key.split(".")[1];
-  if (!f) return 0;
-  return n((v?.coutMensuel as any)?.[f]);
-}
+  if (key.startsWith("coutMensuel.")) {
+    const f = key.split(".")[1];
+    if (!f) return 0;
+    return n((v?.coutMensuel as any)?.[f]);
+  }
 
-// maintenance.*
-if (key.startsWith("maintenance.")) {
-  const f = key.split(".")[1];
-  if (!f) return 0;
-  return n((v?.maintenance as any)?.[f]);
-}
+  if (key.startsWith("maintenance.")) {
+    const f = key.split(".")[1];
+    if (!f) return 0;
+    return n((v?.maintenance as any)?.[f]);
+  }
 
-// employes.*
-// On affiche le coût unitaire (…Cout) correspondant pour visualiser l'avant/après réel (car applyReal change le champ Cout)
-if (key.startsWith("employes.")) {
-  const k = key.split(".")[1];
-  if (!k) return 0;
+  if (key.startsWith("employes.")) {
+    const k = key.split(".")[1];
+    if (!k) return 0;
 
-  const map: Record<string, string> = {
-    responsable: "responsableCout",
-    centralistes: "centralistesCout",
-    manoeuvre: "manoeuvreCout",
-    coordinateurExploitation: "coordinateurExploitationCout",
-    technicienLabo: "technicienLaboCout",
-    femmeMenage: "femmeMenageCout",
-    gardien: "gardienCout",
-    maintenancier: "maintenancierCout",
-    panierRepas: "panierRepasCout",
-  };
+    const map: Record<string, string> = {
+      responsable: "responsableCout",
+      centralistes: "centralistesCout",
+      manoeuvre: "manoeuvreCout",
+      coordinateurExploitation: "coordinateurExploitationCout",
+      technicienLabo: "technicienLaboCout",
+      femmeMenage: "femmeMenageCout",
+      gardien: "gardienCout",
+      maintenancier: "maintenancierCout",
+      panierRepas: "panierRepasCout",
+    };
 
-  const f = map[k];
-  if (!f) return 0;
+    const f = map[k];
+    if (!f) return 0;
+    return n((v?.employes as any)?.[f]);
+  }
 
-  return n((v?.employes as any)?.[f]);
-}
+  if (key.startsWith("coutOccasionnel.")) {
+    const f = key.split(".")[1];
+    if (!f) return 0;
+    return n((v?.coutOccasionnel as any)?.[f]);
+  }
 
-// coutOccasionnel.*
-if (key.startsWith("coutOccasionnel.")) {
-  const f = key.split(".")[1];
-  if (!f) return 0;
-  return n((v?.coutOccasionnel as any)?.[f]);
-}
-
-
-  // autresCoutsLabel:* -> valeur item
   if (key.startsWith("autresCoutsLabel:")) {
     const nl = key.slice("autresCoutsLabel:".length);
     const it = (v?.autresCouts?.items ?? []).find((x: any) => normLabel(x?.label) === nl);
@@ -572,15 +561,13 @@ function afterValueOfKey(key: string): number {
 }
 
 function shouldShowRow(r: { key: string; label: string }): boolean {
-  // show only non-null fields (base != 0)
-  // but keep row visible if user entered a pct != 0
   const base = baseValueOfKey(r.key);
   const pct = pctOf(r.key);
   return n(base) !== 0 || n(pct) !== 0;
 }
 
 /* =========================
-   GROUPS (with full coutMensuel)
+   GROUPS
 ========================= */
 type Row = { key: string; label: string; hint?: string };
 type Group = { title: string; rows: Row[] };
@@ -604,10 +591,9 @@ const groupsAll = computed<Group[]>(() => {
   });
 
   res.push({
-  title: "CAB",
-  rows: [{ key: "cab.amortMois", label: "Amortissement mensuel (DH/mois)" }],
-});
-
+    title: "CAB",
+    rows: [{ key: "cab.amortMois", label: "Amortissement mensuel (DH/mois)" }],
+  });
 
   res.push({
     title: "Coûts par m³",
@@ -630,7 +616,6 @@ const groupsAll = computed<Group[]>(() => {
     ],
   });
 
-  // ✅ FIX: include all monthly fields (same as headerkpis.ts)
   res.push({
     title: "Coûts mensuels",
     rows: [
@@ -650,7 +635,6 @@ const groupsAll = computed<Group[]>(() => {
     ],
   });
 
-  // For employees, we show unit cost in before/after (real apply changes cout fields)
   res.push({
     title: "Employés (coût unitaire)",
     rows: [
@@ -692,7 +676,6 @@ const groupsAll = computed<Group[]>(() => {
 });
 
 const groups = computed<Group[]>(() => {
-  // ✅ only show non-null rows (or user-edited)
   return groupsAll.value
     .map((g) => ({ ...g, rows: g.rows.filter((r) => shouldShowRow(r)) }))
     .filter((g) => g.rows.length > 0);
@@ -749,14 +732,13 @@ function closeAll() {
 }
 
 /* =========================
-   TABS (space optimization)
+   TABS
 ========================= */
 type TabKey = "SAISIE" | "IMPACTS" | "PAR";
 const tab = ref<TabKey>("SAISIE");
 
 /* =========================
    Per-majoration impacts (only non-zero)
-   (kept from your version, but shown in its tab)
 ========================= */
 type ImpactRow = {
   key: string;
@@ -837,29 +819,59 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 </script>
 
 <template>
-  <div class="maj">
-    <!-- Title -->
-    <div class="head">
-      <div class="h1">Majorations</div>
-      <div class="sub">
-        Saisie (%) • <b>Appliquer</b> = preview KPIs (Header) • <b>Enregistrer</b> = définitif • <b>Appliquer réellement</b> = écrit dans la DB
+  <div class="page">
+    <!-- Header (compact, charte app) -->
+    <div class="card head">
+      <div class="hLeft">
+        <div class="titleLine">
+          <div class="title">Majorations</div>
+
+          <span v-if="previewOn" class="pill info">
+            <span class="dot" aria-hidden="true"></span>
+            Preview activé
+          </span>
+        </div>
+
+        <div class="subline">
+          <span class="muted">Variante</span>
+          <b class="ell">{{ variantTitle }}</b>
+          <span class="sep">•</span>
+          <span class="muted">ID</span>
+          <b class="mono">{{ variantId || "—" }}</b>
+        </div>
+
+        <div class="hintLine">
+          <span class="hintChip">Appliquer = preview KPIs (Header)</span>
+          <span class="hintChip">Enregistrer = persisté</span>
+          <span class="hintChip warn">Appliquer réellement = écrit DB + remet % à 0</span>
+        </div>
+      </div>
+
+      <div class="hRight">
+        <div class="tabs">
+          <button class="tab" :class="{ on: tab === 'SAISIE' }" type="button" @click="tab = 'SAISIE'">Saisie</button>
+          <button class="tab" :class="{ on: tab === 'IMPACTS' }" type="button" @click="tab = 'IMPACTS'">Impacts</button>
+          <button class="tab" :class="{ on: tab === 'PAR' }" type="button" @click="tab = 'PAR'">Par majoration</button>
+        </div>
       </div>
     </div>
 
-    <!-- ✅ Sticky actions only -->
-    <div class="bar">
+    <!-- Sticky actions -->
+    <div class="card bar">
       <div class="acts">
         <button class="btn ghost" type="button" @click="resetAll" :disabled="saving || loading || genBusy || impBusy">
           Réinit
         </button>
 
-        <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="impOpen = true">
+        <button class="btn" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="impOpen = true">
           {{ impBusy ? "..." : "Importer" }}
         </button>
 
-        <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="genOpen = true">
+        <button class="btn" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="genOpen = true">
           {{ genBusy ? "..." : "Généraliser" }}
         </button>
+
+        <div class="sepV"></div>
 
         <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="applyPreview">
           Appliquer
@@ -878,6 +890,11 @@ const impactsByRow = computed<ImpactRow[]>(() => {
         <button class="btn ok" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="save">
           {{ saving ? "..." : "Enregistrer" }}
         </button>
+
+        <div class="rightMeta">
+          <span class="miniChip">{{ visibleCount }}/{{ counts.all }}</span>
+          <span class="miniChip ok" v-if="counts.nonZero">{{ counts.nonZero }} non-zéro</span>
+        </div>
       </div>
     </div>
 
@@ -888,35 +905,28 @@ const impactsByRow = computed<ImpactRow[]>(() => {
     <div v-if="genErr" class="alert err">{{ genErr }}</div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <!-- Tabs -->
-    <div v-if="variant && !loading" class="tabs">
-      <button class="tab" :class="{ on: tab === 'SAISIE' }" type="button" @click="tab = 'SAISIE'">Saisie</button>
-      <button class="tab" :class="{ on: tab === 'IMPACTS' }" type="button" @click="tab = 'IMPACTS'">Impacts</button>
-      <button class="tab" :class="{ on: tab === 'PAR' }" type="button" @click="tab = 'PAR'">Par majoration</button>
-    </div>
-
     <!-- =========================
-         TAB: IMPACTS (compact)
+         TAB: IMPACTS
     ========================== -->
-    <div v-if="variant && !loading && tab === 'IMPACTS'" class="topCards">
+    <div v-if="variant && !loading && tab === 'IMPACTS'" class="grid2">
       <div class="card">
         <div class="cardT">Imputation sur MOMD</div>
-        <div class="cardSub">Compense la baisse EBIT via une hausse MOMD (impacte aussi frais généraux).</div>
+        <div class="cardSub">Compense la baisse EBIT via une hausse MOMD (impacte aussi les frais généraux).</div>
 
         <div class="row">
           <button class="toggle" type="button" :class="{ on: impEnabled }" @click="impEnabled = !impEnabled">
-            <span class="dot" /> Activée
+            <span class="dot2" /> Activée
           </button>
 
           <div class="slider">
             <input class="rng" type="range" min="0" max="100" step="1" v-model.number="impPct" :disabled="!impEnabled" />
-            <div class="rngVal">{{ impPct }}%</div>
+            <div class="rngVal mono">{{ impPct }}%</div>
           </div>
         </div>
 
         <div class="mini">
-          <div class="kv"><span class="k">MOMD ajoutée</span><span class="v">{{ impactSummary.addMomdM3.toFixed(2) }} DH/m³</span></div>
-          <div class="kv"><span class="k">Volume</span><span class="v">{{ impactSummary.vol.toFixed(2) }} m³</span></div>
+          <div class="kv"><span class="k">MOMD ajoutée</span><span class="v mono">{{ impactSummary.addMomdM3.toFixed(2) }} DH/m³</span></div>
+          <div class="kv"><span class="k">Volume</span><span class="v mono">{{ impactSummary.vol.toFixed(2) }} m³</span></div>
         </div>
       </div>
 
@@ -926,30 +936,30 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 
         <div class="miniGrid">
           <div class="pill">
-            <div class="pT">Δ PV/m³ (sans imputation)</div>
-            <div class="pV">{{ impactSummary.dpvNoImp.toFixed(2) }}</div>
+            <div class="pT">Δ PV/m³ (sans imp.)</div>
+            <div class="pV mono">{{ impactSummary.dpvNoImp.toFixed(2) }}</div>
           </div>
           <div class="pill">
-            <div class="pT">Δ PV/m³ (avec imputation)</div>
-            <div class="pV">{{ impactSummary.dpvImp.toFixed(2) }}</div>
+            <div class="pT">Δ PV/m³ (avec imp.)</div>
+            <div class="pV mono">{{ impactSummary.dpvImp.toFixed(2) }}</div>
           </div>
           <div class="pill bad">
-            <div class="pT">Δ EBIT/m³ (sans imputation)</div>
-            <div class="pV">{{ impactSummary.debitNoImp.toFixed(2) }}</div>
+            <div class="pT">Δ EBIT/m³ (sans imp.)</div>
+            <div class="pV mono">{{ impactSummary.debitNoImp.toFixed(2) }}</div>
           </div>
           <div class="pill" :class="impEnabled ? 'ok' : 'mut'">
-            <div class="pT">Δ EBIT/m³ (avec imputation)</div>
-            <div class="pV">{{ impactSummary.debitImp.toFixed(2) }}</div>
+            <div class="pT">Δ EBIT/m³ (avec imp.)</div>
+            <div class="pV mono">{{ impactSummary.debitImp.toFixed(2) }}</div>
           </div>
 
           <div class="pill">
             <div class="pT">Surcoût/m³ (sans imp.)</div>
-            <div class="pV">{{ impactSummary.surcoutNoImp.toFixed(2) }}</div>
+            <div class="pV mono">{{ impactSummary.surcoutNoImp.toFixed(2) }}</div>
             <div class="pS">dont FG: {{ impactSummary.fgNoImp.toFixed(2) }}</div>
           </div>
           <div class="pill" :class="impEnabled ? 'ok' : 'mut'">
             <div class="pT">Surcoût/m³ (avec imp.)</div>
-            <div class="pV">{{ impactSummary.surcoutImp.toFixed(2) }}</div>
+            <div class="pV mono">{{ impactSummary.surcoutImp.toFixed(2) }}</div>
             <div class="pS">dont FG: {{ impactSummary.fgImp.toFixed(2) }}</div>
           </div>
         </div>
@@ -957,16 +967,16 @@ const impactsByRow = computed<ImpactRow[]>(() => {
     </div>
 
     <!-- =========================
-         TAB: SAISIE (inputs + before/after + filters)
+         TAB: SAISIE
     ========================== -->
-    <div v-if="variant && !loading && tab === 'SAISIE'" class="filters">
+    <div v-if="variant && !loading && tab === 'SAISIE'" class="card filters">
       <div class="search">
-        <input v-model="q" class="searchIn" type="text" placeholder="Recherche (libellé)…" />
+        <input v-model="q" class="searchIn" type="text" placeholder="Recherche (libellé / clé)…" />
         <button v-if="q" class="x" type="button" @click="q = ''" title="Effacer">✕</button>
       </div>
 
-      <button class="toggle" type="button" :class="{ on: hideZero }" @click="hideZero = !hideZero">
-        <span class="dot" /> Masquer 0
+      <button class="toggle" type="button" :class="{ on: hideZero }" @click="hideZero = !hideZero" :disabled="counts.nonZero === 0">
+        <span class="dot2" /> Masquer 0
       </button>
 
       <div class="chips">
@@ -995,10 +1005,10 @@ const impactsByRow = computed<ImpactRow[]>(() => {
               <div class="lbl">
                 <div class="lblTop" :title="r.label">{{ r.label }}</div>
                 <div class="lblSub">
-                  <span class="b">Base:</span>
+                  <span class="b">Base</span>
                   <span class="v mono">{{ baseValueOfKey(r.key).toFixed(2) }}</span>
                   <span class="sep2">→</span>
-                  <span class="b">Après:</span>
+                  <span class="b">Après</span>
                   <span class="v mono">{{ afterValueOfKey(r.key).toFixed(2) }}</span>
                 </div>
               </div>
@@ -1034,10 +1044,17 @@ const impactsByRow = computed<ImpactRow[]>(() => {
     <!-- =========================
          TAB: PAR MAJORATION
     ========================== -->
-    <div v-if="variant && !loading && tab === 'PAR'" class="impactBox">
+    <div v-if="variant && !loading && tab === 'PAR'" class="card impactBox">
       <div class="impactHead">
-        <div class="impactT">Impact par majoration (Δ vs base)</div>
-        <div class="impactS">Top {{ Math.min(nonZeroRows.length, 120) }} lignes non-zéro • Δ PV/m³ • Surcoût/m³ • Δ EBIT/m³</div>
+        <div>
+          <div class="impactT">Impact par majoration (Δ vs base)</div>
+          <div class="impactS">Top {{ Math.min(nonZeroRows.length, 120) }} lignes non-zéro • Δ PV/m³ • Surcoût/m³ • Δ EBIT/m³</div>
+        </div>
+
+        <div class="miniHint">
+          <span class="miniChip">{{ nonZeroRows.length }} non-zéro</span>
+          <span class="miniChip" v-if="impEnabled">imputation: {{ impPct }}%</span>
+        </div>
       </div>
 
       <div v-if="!impactsByRow.length" class="empty">Aucune majoration non-zéro.</div>
@@ -1046,25 +1063,26 @@ const impactsByRow = computed<ImpactRow[]>(() => {
         <div v-for="r in impactsByRow" :key="r.key" class="impactRow">
           <div class="iLbl" :title="r.key">
             <div class="iName">{{ r.label }}</div>
-            <div class="iKey">{{ r.key }}</div>
+            <div class="iKey mono">{{ r.key }}</div>
           </div>
-          <div class="iPct">{{ r.pct.toFixed(1) }}%</div>
+
+          <div class="iPct mono">{{ r.pct.toFixed(1) }}%</div>
 
           <div class="iCell">
             <div class="iT">Δ PV/m³</div>
-            <div class="iV">{{ r.dpvNoImp.toFixed(2) }}</div>
+            <div class="iV mono">{{ r.dpvNoImp.toFixed(2) }}</div>
             <div class="iS" v-if="impEnabled">avec imp: {{ r.dpvImp.toFixed(2) }}</div>
           </div>
 
           <div class="iCell">
             <div class="iT">Surcoût/m³</div>
-            <div class="iV">{{ r.surcoutNoImp.toFixed(2) }}</div>
+            <div class="iV mono">{{ r.surcoutNoImp.toFixed(2) }}</div>
             <div class="iS" v-if="impEnabled">avec imp: {{ r.surcoutImp.toFixed(2) }}</div>
           </div>
 
           <div class="iCell bad">
             <div class="iT">Δ EBIT/m³</div>
-            <div class="iV">{{ r.debitNoImp.toFixed(2) }}</div>
+            <div class="iV mono">{{ r.debitNoImp.toFixed(2) }}</div>
             <div class="iS" v-if="impEnabled">avec imp: {{ r.debitImp.toFixed(2) }}</div>
           </div>
         </div>
@@ -1072,22 +1090,12 @@ const impactsByRow = computed<ImpactRow[]>(() => {
     </div>
 
     <!-- ✅ Import / Generaliser -->
-    <SectionImportModal
-      v-model="impOpen"
-      sectionLabel="Majorations"
-      :targetVariantId="variant?.id ?? null"
-      @apply="onApplyImport"
-    />
-    <SectionTargetsGeneralizeModal
-      v-model="genOpen"
-      sectionLabel="Majorations"
-      :sourceVariantId="variant?.id ?? null"
-      @apply="onApplyGeneralize"
-    />
+    <SectionImportModal v-model="impOpen" sectionLabel="Majorations" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
+    <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Majorations" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
     <!-- ✅ Confirm modal (apply real) -->
     <div v-if="confirmOpen" class="modalOverlay" @click.self="confirmOpen = false">
-      <div class="modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Appliquer réellement">
         <div class="mHead">
           <div class="mT">Appliquer réellement</div>
           <button class="mX" type="button" @click="confirmOpen = false">✕</button>
@@ -1102,7 +1110,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
             <div>Ensuite : majorations + imputation seront remises à 0.</div>
           </div>
 
-          <div v-if="confirmErr" class="alert err">{{ confirmErr }}</div>
+          <div v-if="confirmErr" class="alert err" style="margin-top: 10px">{{ confirmErr }}</div>
         </div>
 
         <div class="mFoot">
@@ -1117,66 +1125,193 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 </template>
 
 <style scoped>
-.maj {
+/* ✅ Charte proche de DevisPage */
+.page {
   --navy: #184070;
   --cyan: #20b8e8;
   --green: #90c028;
 
-  --panel: #f7f8fb;
-  --border: rgba(16, 24, 40, 0.1);
+  --border: rgba(16, 24, 40, 0.12);
   --text: #0f172a;
   --muted: rgba(15, 23, 42, 0.6);
 
-  padding: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-.head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px 12px;
 }
 
-/* ✅ sticky actions only */
+.muted {
+  color: #6b7280;
+  font-size: 12px;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+.ell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sep {
+  color: #9ca3af;
+}
+
+/* Header */
+.head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.hLeft {
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.title {
+  font-size: 15px;
+  font-weight: 1000;
+  color: #111827;
+}
+.subline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11.5px;
+}
+.hintLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hintChip {
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: rgba(15, 23, 42, 0.02);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.7);
+}
+.hintChip.warn {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-weight: 1000;
+  font-size: 11px;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  background: rgba(2, 132, 199, 0.08);
+  color: rgba(2, 132, 199, 1);
+}
+.pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(2, 132, 199, 1);
+  display: inline-block;
+}
+
+.hRight {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tab {
+  height: 34px;
+  border-radius: 999px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.02);
+  font-weight: 1000;
+  font-size: 12px;
+  cursor: pointer;
+  color: rgba(15, 23, 42, 0.75);
+}
+.tab:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+.tab.on {
+  background: rgba(24, 64, 112, 0.1);
+  border-color: rgba(24, 64, 112, 0.28);
+  color: rgba(24, 64, 112, 1);
+}
+
+/* Sticky bar */
 .bar {
   position: sticky;
   top: var(--hdrdash-h, -15px);
   z-index: 50;
   background: rgba(248, 250, 252, 0.92);
   backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 8px 10px;
 }
-
-.h1 {
-  font-weight: 950;
-  color: var(--navy);
-  font-size: 15px;
-  line-height: 1.05;
-}
-.sub {
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
-}
-
 .acts {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
 }
+.sepV {
+  width: 1px;
+  height: 22px;
+  background: rgba(16, 24, 40, 0.12);
+  border-radius: 999px;
+  margin: 0 2px;
+}
+.rightMeta {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .btn {
-  height: 32px;
+  height: 34px;
   border-radius: 12px;
   padding: 0 10px;
-  border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.03);
-  font-weight: 950;
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  background: #fff;
+  font-weight: 1000;
   cursor: pointer;
+}
+.btn:hover {
+  background: #f9fafb;
 }
 .btn:disabled {
   opacity: 0.6;
@@ -1201,14 +1336,14 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   color: #92400e;
 }
 
+/* Alerts */
 .alert {
   border-radius: 14px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.03);
-  font-weight: 850;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.02);
+  font-weight: 900;
   font-size: 12px;
-  margin-top: 8px;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
@@ -1220,52 +1355,26 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   border-color: rgba(2, 132, 199, 0.18);
 }
 
-/* Tabs */
-.tabs {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.tab {
-  height: 32px;
-  border-radius: 999px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  background: #fff;
-  font-weight: 950;
-  font-size: 12px;
-  color: rgba(15, 23, 42, 0.7);
-  cursor: pointer;
-}
-.tab.on {
-  border-color: rgba(32, 184, 232, 0.35);
-  background: rgba(32, 184, 232, 0.12);
-  color: rgba(15, 23, 42, 0.95);
-}
-
-/* Impact cards */
-.topCards {
-  margin-top: 10px;
+/* IMPACTS layout */
+.grid2 {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-.card {
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 16px;
-  padding: 10px;
+@media (max-width: 980px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
 }
 .cardT {
-  font-weight: 950;
+  font-weight: 1000;
   color: var(--navy);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .cardSub {
   margin-top: 3px;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 11.5px;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
 }
 .row {
@@ -1274,7 +1383,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 .slider {
   display: flex;
@@ -1287,13 +1396,46 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   width: 100%;
 }
 .rngVal {
-  min-width: 52px;
+  min-width: 56px;
   text-align: right;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.75);
 }
+
+.toggle {
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  background: rgba(15, 23, 42, 0.03);
+  padding: 0 10px;
+  font-weight: 1000;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.dot2 {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.35);
+}
+.toggle.on {
+  border-color: rgba(24, 64, 112, 0.28);
+  background: rgba(24, 64, 112, 0.1);
+}
+.toggle.on .dot2 {
+  border-color: rgba(24, 64, 112, 0.65);
+  background: rgba(24, 64, 112, 0.25);
+}
+
 .mini {
-  margin-top: 8px;
+  margin-top: 10px;
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;
@@ -1303,7 +1445,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   justify-content: space-between;
   gap: 10px;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 950;
 }
 .kv .k {
   color: rgba(15, 23, 42, 0.6);
@@ -1311,17 +1453,19 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 .kv .v {
   color: rgba(15, 23, 42, 0.9);
 }
+
 .miniGrid {
-  margin-top: 8px;
+  margin-top: 10px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
 }
+.pillBox,
 .pill {
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
   border-radius: 14px;
-  padding: 8px;
+  padding: 10px;
 }
 .pill.bad {
   border-color: rgba(239, 68, 68, 0.18);
@@ -1336,38 +1480,35 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 .pT {
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(15, 23, 42, 0.65);
 }
 .pV {
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 14px;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.95);
-  font-variant-numeric: tabular-nums;
 }
 .pS {
-  margin-top: 1px;
+  margin-top: 3px;
   font-size: 11px;
-  font-weight: 850;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
 }
 
 /* Filters */
 .filters {
-  margin-top: 10px;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
-
 .search {
-  height: 32px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.14);
   background: #fff;
   border-radius: 12px;
   padding: 0 10px;
@@ -1380,43 +1521,15 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   background: transparent;
   width: 100%;
   font-weight: 900;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text);
 }
 .x {
   border: 0;
   background: transparent;
   cursor: pointer;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.55);
-}
-
-.toggle {
-  height: 32px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.03);
-  padding: 0 10px;
-  font-weight: 950;
-  font-size: 12px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.toggle.on {
-  border-color: rgba(32, 184, 232, 0.35);
-  background: rgba(32, 184, 232, 0.12);
-}
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  border: 2px solid rgba(15, 23, 42, 0.35);
-}
-.toggle.on .dot {
-  border-color: rgba(32, 184, 232, 0.6);
-  background: rgba(32, 184, 232, 0.25);
 }
 
 .chips {
@@ -1425,15 +1538,17 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   gap: 8px;
   flex-wrap: wrap;
 }
-.chip {
+.chip,
+.miniChip {
   background: rgba(15, 23, 42, 0.04);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 999px;
   padding: 4px 8px;
   font-size: 11px;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.65);
 }
+.miniChip.ok,
 .chip.ok {
   background: rgba(144, 192, 40, 0.16);
   border-color: rgba(144, 192, 40, 0.22);
@@ -1447,7 +1562,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   background: transparent;
   cursor: pointer;
   color: var(--navy);
-  font-weight: 950;
+  font-weight: 1000;
   font-size: 12px;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -1455,23 +1570,21 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 
 /* Stack / Sections */
 .stack {
-  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-
 .sec {
   border-radius: 16px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   background: #fff;
   overflow: hidden;
 }
 .secHead {
   width: 100%;
   border: 0;
-  background: var(--panel);
-  padding: 10px;
+  background: rgba(15, 23, 42, 0.02);
+  padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1487,11 +1600,11 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  background: var(--cyan);
-  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.12);
+  background: rgba(24, 64, 112, 0.85);
+  box-shadow: 0 0 0 3px rgba(24, 64, 112, 0.12);
 }
 .secTitle {
-  font-weight: 950;
+  font-weight: 1000;
   font-size: 13px;
   color: #0f172a;
   white-space: nowrap;
@@ -1501,10 +1614,10 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 .count {
   font-size: 11px;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.55);
   background: rgba(15, 23, 42, 0.06);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -1517,13 +1630,14 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   transform: rotate(180deg);
 }
 .secBody {
-  padding: 10px;
+  padding: 10px 12px 12px 12px;
   border-top: 1px solid rgba(16, 24, 40, 0.08);
 }
+
 .grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 @media (max-width: 540px) {
   .grid {
@@ -1532,7 +1646,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 
 .field {
-  border: 1px solid rgba(16, 24, 40, 0.08);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
   border-radius: 14px;
   padding: 10px;
@@ -1546,11 +1660,11 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 .lblTop {
-  font-size: 12px;
-  font-weight: 950;
+  font-size: 12.5px;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.95);
   white-space: nowrap;
   overflow: hidden;
@@ -1558,7 +1672,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 .lblSub {
   font-size: 11px;
-  font-weight: 850;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
   display: flex;
   gap: 6px;
@@ -1567,7 +1681,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 .lblSub .b {
   color: rgba(15, 23, 42, 0.6);
-  font-weight: 900;
+  font-weight: 950;
 }
 .lblSub .v {
   color: rgba(15, 23, 42, 0.9);
@@ -1583,28 +1697,24 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   flex: 0 0 auto;
 }
 .in {
-  width: 86px;
-  height: 32px;
+  width: 92px;
+  height: 34px;
   border-radius: 12px;
-  border: 1px solid rgba(32, 184, 232, 0.45);
-  background: rgba(32, 184, 232, 0.12);
+  border: 1px solid rgba(24, 64, 112, 0.28);
+  background: rgba(24, 64, 112, 0.08);
   text-align: right;
-  font-weight: 950;
+  font-weight: 1000;
   outline: none;
   padding: 0 10px;
 }
 .in:focus {
-  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.18);
-  border-color: rgba(32, 184, 232, 0.65);
+  box-shadow: 0 0 0 4px rgba(24, 64, 112, 0.14);
+  border-color: rgba(24, 64, 112, 0.5);
 }
 .suf {
   font-size: 12px;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.55);
-}
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 .empty {
@@ -1612,30 +1722,27 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   background: rgba(15, 23, 42, 0.02);
   border-radius: 16px;
   padding: 14px 12px;
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-align: center;
 }
 .emptyHint {
   margin-top: 6px;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
 }
 .foot {
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 850;
   color: rgba(15, 23, 42, 0.55);
   text-align: center;
+  padding: 6px 0;
 }
 
-/* Par majoration tab */
+/* PAR tab */
 .impactBox {
-  margin-top: 10px;
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 16px;
-  padding: 10px;
+  padding: 10px 12px;
 }
 .impactHead {
   display: flex;
@@ -1643,17 +1750,22 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 .impactT {
-  font-weight: 950;
+  font-weight: 1000;
   color: var(--navy);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .impactS {
-  font-size: 11px;
-  font-weight: 850;
+  font-size: 11.5px;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
+}
+.miniHint {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .impactGrid {
   display: flex;
@@ -1661,16 +1773,16 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   gap: 8px;
 }
 .impactRow {
-  border: 1px solid rgba(16, 24, 40, 0.08);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.02);
   border-radius: 14px;
-  padding: 8px;
+  padding: 10px;
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   gap: 10px;
   align-items: center;
 }
-@media (max-width: 820px) {
+@media (max-width: 980px) {
   .impactRow {
     grid-template-columns: 1fr auto;
     grid-auto-rows: auto;
@@ -1680,8 +1792,8 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   min-width: 0;
 }
 .iName {
-  font-weight: 950;
-  font-size: 12px;
+  font-weight: 1000;
+  font-size: 12.5px;
   color: rgba(15, 23, 42, 0.95);
   white-space: nowrap;
   overflow: hidden;
@@ -1689,17 +1801,16 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 .iKey {
   font-size: 10.5px;
-  font-weight: 850;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .iPct {
-  font-weight: 950;
+  font-weight: 1000;
   font-size: 12px;
   color: rgba(15, 23, 42, 0.75);
-  font-variant-numeric: tabular-nums;
 }
 .iCell {
   border-left: 1px dashed rgba(16, 24, 40, 0.16);
@@ -1710,26 +1821,25 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 }
 .iT {
   font-size: 10.5px;
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(15, 23, 42, 0.55);
 }
 .iV {
   font-size: 12.5px;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.95);
-  font-variant-numeric: tabular-nums;
 }
 .iS {
   font-size: 10.5px;
-  font-weight: 850;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
 }
 
-/* Confirm modal */
+/* Modal */
 .modalOverlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 999999;
   background: rgba(2, 6, 23, 0.5);
   backdrop-filter: blur(4px);
   display: flex;
@@ -1738,11 +1848,11 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   padding: 12px;
 }
 .modal {
-  width: min(520px, 100%);
+  width: min(540px, 100%);
   background: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 18px;
-  box-shadow: 0 20px 50px rgba(2, 6, 23, 0.25);
+  box-shadow: 0 24px 70px rgba(2, 6, 23, 0.35);
   overflow: hidden;
 }
 .mHead {
@@ -1754,14 +1864,14 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   justify-content: space-between;
 }
 .mT {
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.92);
 }
 .mX {
   border: 0;
   background: transparent;
   cursor: pointer;
-  font-weight: 950;
+  font-weight: 1000;
   color: rgba(15, 23, 42, 0.55);
 }
 .mBody {
@@ -1771,7 +1881,7 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-weight: 850;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.75);
   font-size: 12px;
 }

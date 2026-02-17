@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / compact + sticky subheader + KPIs + toast + generalize + ✅ masquer 0 + ✅ importer + ✅ règles contrat (force 0 + lock)) -->
+<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / ✅ UI type Maintenance (1 ligne = 1 poste) + colonnes Total / m³ / % + ✅ Masquer 0 auto + ✅ z-index modals au-dessus HeaderDashboard) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -32,9 +32,7 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(
-    toNum(v)
-  );
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
 function money(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -49,7 +47,7 @@ function clamp(v: any, min = 0, max = 1e15) {
   return Math.max(min, Math.min(max, x));
 }
 function isZero(v: any) {
-  return clamp(v) === 0;
+  return Math.abs(toNum(v)) <= 0;
 }
 
 // same logic family as backend
@@ -70,7 +68,7 @@ function isChargeClient(v: any): boolean {
 ========================= */
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
-const dureeMois = computed(() => clamp(contract.value?.dureeMois));
+const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
 
 const variantLabel = computed(() => {
   const v = variant.value;
@@ -222,23 +220,8 @@ function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
   return { changed, notes };
 }
 
-function loadFromVariant() {
-  applyFromVariant(variant.value);
-  enforceContractLocksOnDraft();
-}
-
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
-watch(
-  () => [lockElecAndGroups.value, lockTerrain.value],
-  () => {
-    // si contrat change, on force immédiatement le draft à 0
-    enforceContractLocksOnDraft();
-  },
-  { immediate: true }
-);
-
 /* =========================
-   ✅ EFFECTIVE VALUES (for KPI + save)
+   ✅ EFFECTIVE VALUES (for KPI + save + rows)
 ========================= */
 const effective = computed(() => {
   return {
@@ -259,35 +242,141 @@ const effective = computed(() => {
   };
 });
 
+function anyEffectiveNonZero(): boolean {
+  const e: any = effective.value as any;
+  const keys = Object.keys(e);
+  for (const k of keys) if (!isZero(e[k])) return true;
+  return false;
+}
+
 /* =========================
-   KPI
+   ✅ MASQUER 0
+   - Auto ON à chaque accès si au moins 1 champ ≠ 0
+   - Auto OFF si tout = 0
+   - L'utilisateur peut forcer ON/OFF via bouton (prioritaire)
+========================= */
+const hideZeros = ref(false);
+const hideZerosUserToggled = ref(false);
+
+function syncHideZerosAuto() {
+  const anyNZ = anyEffectiveNonZero();
+
+  // ✅ si tout est à 0 => OFF obligatoire + reset "user toggled"
+  if (!anyNZ) {
+    hideZeros.value = false;
+    hideZerosUserToggled.value = false;
+    return;
+  }
+
+  // ✅ si au moins un ≠ 0 : ON par défaut à chaque accès (sauf si user a explicitement désactivé)
+  if (!hideZerosUserToggled.value) {
+    hideZeros.value = true;
+  }
+}
+function toggleHideZeros() {
+  hideZerosUserToggled.value = true;
+  hideZeros.value = !hideZeros.value;
+
+  // si l'user met OFF, ok. si l'user met ON, ok.
+  // si plus tard tout repasse à 0, syncHideZerosAuto() remettra OFF et reset.
+}
+
+/* =========================
+   LOAD & AUTO (page access)
+========================= */
+function loadFromVariant() {
+  applyFromVariant(variant.value);
+  enforceContractLocksOnDraft();
+
+  // ✅ "à chaque accès à la page"
+  hideZerosUserToggled.value = false;
+  syncHideZerosAuto();
+}
+
+watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
+
+watch(
+  () => [lockElecAndGroups.value, lockTerrain.value],
+  () => {
+    enforceContractLocksOnDraft();
+    syncHideZerosAuto();
+  },
+  { immediate: true }
+);
+
+// si user modifie des valeurs -> recalcul auto (mais n'écrase pas son choix)
+watch(
+  () => ({ ...effective.value }),
+  () => {
+    syncHideZerosAuto();
+  }
+);
+
+/* =========================
+   KPI (global)
 ========================= */
 const monthly = computed(() => {
-  const e = effective.value;
-  return (
-    e.electricite +
-    e.location +
-    e.gasoil +
-    e.hebergements +
-    e.locationTerrain +
-    e.telephone +
-    e.troisG +
-    e.taxeProfessionnelle +
-    e.securite +
-    e.locationVehicule +
-    e.locationAmbulance +
-    e.locationBungalows +
-    e.epi
-  );
+  const e: any = effective.value as any;
+  return Object.keys(e).reduce((s, k) => s + clamp(e[k]), 0);
 });
 const total = computed(() => monthly.value * clamp(dureeMois.value));
 const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
-   ✅ MASQUER 0 (UI uniquement)
+   LINES (1 poste par ligne, comme Maintenance)
 ========================= */
-const hideZeros = ref(false);
+type LineKey = keyof Draft; // inclut "location" legacy
+type Line = {
+  key: LineKey;
+  label: string;
+  locked: boolean;
+  mensuel: number;
+  total: number;
+  parM3: number;
+  pctCa: number;
+};
+
+function mensuelForKey(key: LineKey): number {
+  const e: any = effective.value as any;
+  if (key === "location") return clamp(e.location);
+  if (key === "electricite") return clamp(e.electricite);
+  if (key === "locationTerrain") return clamp(e.locationTerrain);
+  // others exist on effective
+  return clamp(e[key]);
+}
+
+const lines = computed<Line[]>(() => {
+  const mk = (key: LineKey, label: string, locked = false): Line => {
+    const mensuel = mensuelForKey(key);
+    const total = mensuel * clamp(dureeMois.value);
+    const parM3 = volumeTotal.value > 0 ? total / volumeTotal.value : 0;
+    const pctCa = caTotal.value > 0 ? (total / caTotal.value) * 100 : 0;
+    return { key, label, locked, mensuel, total, parM3, pctCa };
+  };
+
+  return [
+    mk("electricite", "Électricité", lockElecAndGroups.value),
+    mk("location", "Location groupes", lockElecAndGroups.value),
+    mk("gasoil", "Gasoil"),
+    mk("hebergements", "Hébergements"),
+    mk("locationTerrain", "Location terrain", lockTerrain.value),
+    mk("telephone", "Téléphone"),
+    mk("troisG", "3G"),
+    mk("taxeProfessionnelle", "Taxe professionnelle"),
+    mk("securite", "Sécurité"),
+    mk("locationVehicule", "Location véhicule"),
+    mk("locationAmbulance", "Location ambulance"),
+    mk("locationBungalows", "Location bungalows"),
+    mk("epi", "EPI"),
+  ];
+});
+
+const visibleLines = computed(() => {
+  const arr = lines.value ?? [];
+  if (!hideZeros.value) return arr;
+  return arr.filter((ln) => !isZero(ln.mensuel));
+});
 
 /* =========================
    ✅ IMPORTER (depuis autre variante / UI only)
@@ -325,20 +414,21 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   impErr.value = null;
   impBusy.value = true;
   try {
-    const src = findVariantById(sourceId);
+    let src = findVariantById(sourceId);
+    if (!src) await (store as any).loadPnls?.();
+    src = src ?? findVariantById(sourceId);
 
     if (!src) {
-      await (store as any).loadPnls?.();
-    }
-
-    const src2 = src ?? findVariantById(sourceId);
-    if (!src2) {
       showToast("Variante source introuvable (données non chargées).", "err");
       return;
     }
 
-    applyFromVariant(src2);
+    applyFromVariant(src);
     const { changed, notes } = enforceContractLocksOnDraft();
+
+    // ✅ on réactive auto Masquer 0 (sauf si user a déjà touché — ici c'est un import, donc on reset)
+    hideZerosUserToggled.value = false;
+    syncHideZerosAuto();
 
     if (changed) showToast(`Import OK. Ajustements contrat: ${notes.join(" ")}`, "ok");
     else showToast("Coûts mensuels importés. Pense à enregistrer.", "ok");
@@ -357,9 +447,9 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
-const toastKind = ref<"ok" | "err">("ok");
+const toastKind = ref<"ok" | "err" | "info">("ok");
 
-function showToast(msg: string, kind: "ok" | "err" = "ok") {
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
@@ -553,6 +643,20 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     if (!genErr.value) genOpen.value = false;
   });
 }
+
+/* =========================
+   INPUT HANDLERS
+========================= */
+function setDraft(key: LineKey, value: any) {
+  const v = clamp(value, 0, 1e15);
+
+  // respect locks
+  if (key === "electricite" && lockElecAndGroups.value) return;
+  if (key === "location" && lockElecAndGroups.value) return;
+  if (key === "locationTerrain" && lockTerrain.value) return;
+
+  (draft as any)[key] = v;
+}
 </script>
 
 <template>
@@ -575,8 +679,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <div class="actions">
-          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="hideZeros = !hideZeros">
-            {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZeros()" :class="{ on: hideZeros }">
+            <span class="dot" aria-hidden="true"></span>
+            {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
           </button>
 
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="askReset()">
@@ -630,12 +735,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <div class="kpi">
-          <div class="kLbl">Prix / m³</div>
+          <div class="kLbl">/ m³</div>
           <div class="kVal mono">{{ n(perM3, 2) }} <span class="unit">DH/m³</span></div>
         </div>
 
         <div class="kpi">
-          <div class="kLbl">%</div>
+          <div class="kLbl">% CA</div>
           <div class="kVal mono">{{ n(pct, 2) }}<span class="unit">%</span></div>
         </div>
       </div>
@@ -676,168 +781,83 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             <CalendarDaysIcon class="ic3" />
             <div>
               <div class="h">Saisie des coûts mensuels</div>
-              <div class="p">Montants exprimés en DH/mois.</div>
+              <div class="p">Montants en DH/mois. Colonnes calculées sur Durée, Volume total et CA estimé.</div>
             </div>
           </div>
         </div>
 
-        <div class="gridDense">
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.electricite)">
-            <div class="label">
-              Électricité
-              <span v-if="lockElecAndGroups" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
-            </div>
-            <div class="inCell">
-              <input
-                class="in mono"
-                type="number"
-                step="0.01"
-                min="0"
-                v-model.number="draft.electricite"
-                :disabled="lockElecAndGroups"
-              />
-              <span class="u">DH</span>
-            </div>
-          </div>
+        <!-- ✅ Table style Maintenance (1 ligne = 1 poste) -->
+        <div class="tableWrap">
+          <table class="table">
+            <colgroup>
+              <col class="colLabel" />
+              <col class="colMensuel" />
+              <col class="colTotal" />
+              <col class="colM3" />
+              <col class="colPct" />
+            </colgroup>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.location)">
-            <div class="label">
-              Location groupes
-              <span v-if="lockElecAndGroups" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
-            </div>
-            <div class="inCell">
-              <input
-                class="in mono"
-                type="number"
-                step="0.01"
-                min="0"
-                v-model.number="draft.location"
-                :disabled="lockElecAndGroups"
-              />
-              <span class="u">DH</span>
-            </div>
-          </div>
+            <thead>
+              <tr>
+                <th class="th">Poste</th>
+                <th class="th r">DH/mois</th>
+                <th class="th r">Total</th>
+                <th class="th r">DH/m³</th>
+                <th class="th r">% CA</th>
+              </tr>
+            </thead>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.gasoil)">
-            <div class="label">Gasoil</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.gasoil" />
-              <span class="u">DH</span>
-            </div>
-          </div>
+            <tbody>
+              <tr v-for="ln in visibleLines" :key="String(ln.key)">
+                <td class="labelCell">
+                  <div class="labelWrap">
+                    <b>{{ ln.label }}</b>
+                    <span v-if="ln.locked" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+                  </div>
+                </td>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.hebergements)">
-            <div class="label">Hébergements</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.hebergements" />
-              <span class="u">DH</span>
-            </div>
-          </div>
+                <td class="r">
+                  <div class="inCell">
+                    <input
+                      class="inputSm r mono"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :disabled="ln.locked"
+                      :value="(draft as any)[ln.key]"
+                      @input="setDraft(ln.key, ($event.target as HTMLInputElement).value)"
+                    />
+                    <span class="unit unitMonth">DH</span>
+                  </div>
+                </td>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationTerrain)">
-            <div class="label">
-              Location terrain
-              <span v-if="lockTerrain" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
-            </div>
-            <div class="inCell">
-              <input
-                class="in mono"
-                type="number"
-                step="0.01"
-                min="0"
-                v-model.number="draft.locationTerrain"
-                :disabled="lockTerrain"
-              />
-              <span class="u">DH</span>
-            </div>
-          </div>
+                <td class="r mono"><b>{{ money(ln.total, 2) }}</b></td>
+                <td class="r mono">{{ n(ln.parM3, 2) }}</td>
+                <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
+              </tr>
 
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.telephone)">
-            <div class="label">Téléphone</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.telephone" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.troisG)">
-            <div class="label">3G</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.troisG" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.taxeProfessionnelle)">
-            <div class="label">Taxe prof.</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.taxeProfessionnelle" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.securite)">
-            <div class="label">Sécurité</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.securite" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationVehicule)">
-            <div class="label">Loc. véhicule</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationVehicule" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationAmbulance)">
-            <div class="label">Loc. ambulance</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationAmbulance" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.locationBungalows)">
-            <div class="label">Loc. bungalows</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.locationBungalows" />
-              <span class="u">DH</span>
-            </div>
-          </div>
-
-          <div class="fieldRow" v-if="!hideZeros || !isZero(effective.epi)">
-            <div class="label">EPI</div>
-            <div class="inCell">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.epi" />
-              <span class="u">DH</span>
-            </div>
-          </div>
+              <tr class="sumRow">
+                <td><b>Total</b></td>
+                <td class="r"><b>{{ n(monthly, 2) }}</b> <span class="unit">DH</span></td>
+                <td class="r"><b>{{ money(total, 2) }}</b></td>
+                <td class="r"><b>{{ n(perM3, 2) }}</b></td>
+                <td class="r"><b>{{ n(pct, 2) }}%</b></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        <div class="note">
-          Total = (Somme mensuelle) × Durée • Prix/m³ = Total ÷ Volume total • % = Total ÷ CA estimé.
+        <div class="foot">
+          Durée : <b>{{ n(dureeMois, 0) }}</b> mois • Volume total : <b>{{ n(volumeTotal, 2) }}</b> m³ • CA estimé : <b>{{ money(caTotal, 2) }}</b>
         </div>
       </div>
     </template>
 
     <!-- ✅ IMPORT -->
-    <SectionImportModal
-      v-model="impOpen"
-      sectionLabel="Coûts mensuels"
-      :targetVariantId="variant?.id ?? null"
-      @apply="onApplyImport"
-    />
+    <SectionImportModal v-model="impOpen" sectionLabel="Coûts mensuels" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
     <!-- ✅ Generalize Modal -->
-    <SectionTargetsGeneralizeModal
-      v-model="genOpen"
-      sectionLabel="Coûts mensuels"
-      :sourceVariantId="variant?.id ?? null"
-      @apply="onApplyGeneralize"
-    />
+    <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Coûts mensuels" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
     <!-- ✅ Modal confirm/info -->
     <teleport to="body">
@@ -864,7 +884,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <!-- ✅ Toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -980,6 +1000,22 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .btn.pri:hover {
   background: rgba(2, 132, 199, 0.18);
 }
+
+/* ✅ Masquer 0 button state */
+.btn.on {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.35);
+}
+.btn.on .dot {
+  background: rgba(2, 132, 199, 0.9);
+}
+
 .ic {
   width: 18px;
   height: 18px;
@@ -1121,29 +1157,51 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 12px;
 }
 
-/* grid */
-.gridDense {
-  padding: 10px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 8px;
+.tableWrap {
+  padding: 8px 10px 10px;
+  overflow-x: auto;
 }
-.fieldRow {
-  display: grid;
-  grid-template-columns: 1fr 170px;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.08);
-  background: rgba(15, 23, 42, 0.012);
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
 }
-.fieldRow .label {
+.colLabel {
+  width: 280px;
+}
+.colMensuel {
+  width: 150px;
+}
+.colTotal {
+  width: 170px;
+}
+.colM3 {
+  width: 120px;
+}
+.colPct {
+  width: 90px;
+}
+
+.th,
+.table td {
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  padding: 8px 8px;
+  vertical-align: middle;
+}
+.th {
+  background: rgba(15, 23, 42, 0.03);
+  color: rgba(15, 23, 42, 0.55);
   font-size: 11px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.68);
-  line-height: 1.1;
-  display: flex;
+  white-space: nowrap;
+}
+.r {
+  text-align: right;
+}
+
+.labelWrap {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
@@ -1166,14 +1224,15 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 .inCell {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-}
-.in {
   width: 100%;
-  height: 28px;
+}
+.inputSm {
+  width: 110px;
+  height: 30px;
   border-radius: 12px;
   border: 1px solid rgba(2, 132, 199, 0.26);
   background: rgba(2, 132, 199, 0.06);
@@ -1183,40 +1242,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   outline: none;
   text-align: right;
 }
-.in:focus {
+.inputSm:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
-.in:disabled {
+.inputSm:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(16, 24, 40, 0.1);
 }
 
-.u {
+.unitMonth {
   font-size: 10.5px;
   font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
 }
 
-@media (max-width: 520px) {
-  .fieldRow {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  .inCell {
-    justify-content: flex-start;
-  }
-  .in {
-    max-width: 240px;
-  }
+.sumRow td {
+  background: rgba(15, 23, 42, 0.02);
+  font-weight: 950;
 }
 
-.note {
-  padding: 8px 10px;
-  border-top: 1px dashed rgba(16, 24, 40, 0.14);
+.foot {
+  padding: 0 10px 10px;
   font-size: 11.5px;
   font-weight: 800;
   color: rgba(15, 23, 42, 0.65);
@@ -1228,7 +1278,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* modal */
+/* ✅ modal (au-dessus du HeaderDashboard) */
 .ovl {
   position: fixed;
   inset: 0;
@@ -1237,7 +1287,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 99999;
 }
 .dlg {
   width: min(520px, 100%);
@@ -1245,6 +1295,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-radius: 16px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   overflow: hidden;
+  z-index: 100000;
 }
 .dlgHdr {
   padding: 10px;
@@ -1299,7 +1350,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 90;
+  z-index: 100000;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1313,6 +1364,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .toast.err {
   border-color: rgba(239, 68, 68, 0.22);
 }
+.toast.info {
+  border-color: rgba(59, 130, 246, 0.22);
+}
 .tic {
   width: 18px;
   height: 18px;
@@ -1320,5 +1374,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .tmsg {
   font-weight: 900;
   color: rgba(15, 23, 42, 0.85);
+}
+
+/* safe overlays from child modals */
+:deep(.modalOverlay) {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100000 !important;
+}
+:deep(.modalDialog),
+:deep(.modalCard),
+:deep(.modalPanel) {
+  z-index: 100001 !important;
 }
 </style>

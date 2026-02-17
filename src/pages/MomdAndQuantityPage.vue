@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / UI épurée + lisibilité chiffres + sans scroll horizontal + CA sans débord + MAD toujours visible) -->
+<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / header désign restauré + CA non tronqué + no scroll horizontal) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -33,7 +33,7 @@ function clamp(x: any, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
-/** ✅ CA: séparer nombre & devise pour éviter la troncature de "MAD" */
+/** ✅ CA: séparer nombre & devise (évite MAD tronqué) */
 function moneyNum(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: digits,
@@ -196,10 +196,7 @@ const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTota
 const q = ref("");
 const rowsUi = computed(() => {
   const query = String(q.value ?? "").trim().toLowerCase();
-  return rows.value.filter((r) => {
-    const okQuery = !query || String(r.designation ?? "").toLowerCase().includes(query);
-    return okQuery;
-  });
+  return rows.value.filter((r) => !query || String(r.designation ?? "").toLowerCase().includes(query));
 });
 
 /* =========================
@@ -269,9 +266,7 @@ async function save() {
 
     await (store as any).updateVariant(variant.value.id, { formules: { items } });
 
-    // ✅ tri auto après save
     applySortNow();
-
     showToast("Quantités & MOMD enregistrées.", "ok");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
@@ -415,7 +410,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <!-- ✅ Header: titre + actions -->
+    <!-- ✅ Header: titre + actions + KPIs + erreurs (restauré) -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
@@ -490,7 +485,6 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- ✅ Table desktop (sans scroll horizontal) -->
         <div class="tableWrap">
           <table class="table">
             <colgroup>
@@ -521,7 +515,6 @@ onMounted(async () => {
 
                 <td class="mono r val" :data-label="'CMP'">{{ n(r.cmp, 2) }}</td>
 
-                <!-- ✅ Qté (sans fond bleu derrière la colonne) -->
                 <td class="cellInput" :data-label="'Qté'">
                   <div class="inCell">
                     <input
@@ -536,7 +529,6 @@ onMounted(async () => {
                   </div>
                 </td>
 
-                <!-- ✅ MOMD (sans fond bleu derrière la colonne) -->
                 <td class="cellInput" :data-label="'MOMD'">
                   <div class="inCell">
                     <input
@@ -555,7 +547,6 @@ onMounted(async () => {
                   <span class="pvPill mono val">{{ n(r.pv, 2) }}</span>
                 </td>
 
-                <!-- ✅ CA: anti-débord + MAD toujours visible -->
                 <td class="tdCa" :data-label="'CA'">
                   <b class="mono val caWrap">
                     <span class="caNum">{{ moneyNum(r.ca, 2) }}</span>
@@ -797,7 +788,7 @@ onMounted(async () => {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* toolbar (search only) */
+/* toolbar */
 .toolbar {
   display: flex;
   gap: 8px;
@@ -846,9 +837,9 @@ onMounted(async () => {
   table-layout: fixed;
 }
 
-/* ✅ largeur totale = 100% (important sinon overflow) */
+/* ✅ Largeurs: designation ↓, CA ↑ (évite troncature) */
 .colDesignation {
-  width: 34%;
+  width: 28%;
 }
 .colNum {
   width: 11%;
@@ -857,7 +848,7 @@ onMounted(async () => {
   width: 16%;
 }
 .colNumCa {
-  width: 12%;
+  width: 18%;
 }
 
 .th,
@@ -866,7 +857,7 @@ onMounted(async () => {
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
   padding: 10px 10px;
   vertical-align: middle;
-  overflow: hidden; /* ✅ anti-débord */
+  overflow: hidden;
 }
 .th {
   background: #fafafa;
@@ -883,10 +874,6 @@ onMounted(async () => {
 }
 .thEdit {
   color: rgba(2, 132, 199, 0.95);
-}
-
-.tr:hover td {
-  background: rgba(15, 23, 42, 0.02);
 }
 
 .r {
@@ -922,7 +909,7 @@ onMounted(async () => {
   width: 100%;
 }
 
-/* ✅ Inputs lisibles (mais pas de fond bleu derrière la colonne) */
+/* Inputs */
 .inputLg {
   border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 12px;
@@ -930,7 +917,7 @@ onMounted(async () => {
   padding: 8px 10px;
   width: 100%;
   max-width: 140px;
-  background: rgba(2, 132, 199, 0.08); /* uniquement l’input, pas la cellule */
+  background: rgba(2, 132, 199, 0.08);
   font-weight: 950;
   outline: none;
   color: #0f172a;
@@ -951,6 +938,7 @@ onMounted(async () => {
   color: rgba(2, 132, 199, 0.95);
 }
 
+/* PV */
 .cellPv {
   background: transparent !important;
 }
@@ -965,23 +953,24 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
-/* ✅ CA: jamais de débord + devise toujours visible */
+/* ✅ CA: jamais tronqué */
 .tdCa {
   text-align: right;
-  padding-right: 14px; /* marge de sécurité */
+  padding-right: 14px;
 }
 .caWrap {
   display: inline-flex;
   align-items: baseline;
+  justify-content: flex-end;
   gap: 8px;
-  min-width: 0;
   max-width: 100%;
+  white-space: nowrap;
 }
 .caNum {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .caCur {
   flex: 0 0 auto;
@@ -1002,7 +991,7 @@ onMounted(async () => {
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
-/* ✅ Mobile: table -> cards (no scroll) */
+/* Mobile: cards */
 @media (max-width: 920px) {
   .table {
     table-layout: auto;
@@ -1046,8 +1035,8 @@ onMounted(async () => {
     max-width: 100%;
   }
   .tdCa {
-    padding-right: 0;
     text-align: left;
+    padding-right: 0;
   }
 }
 

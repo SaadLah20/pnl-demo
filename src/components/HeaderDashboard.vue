@@ -88,32 +88,6 @@ const editContractTooltip = computed(() =>
 
 const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
 
-// ✅ Devis non dispo pour CAB fixe (si tu veux l’inverse, dis-moi, je te le bascule)
-const devisAllowed = computed(() => hasActiveVariant.value && !isCabFixe.value);
-const cabSectionAllowed = computed(() => hasActiveVariant.value && !isCabFixeExist.value);
-const coutsOccAllowed = computed(() => hasActiveVariant.value && !isCabFixeExist.value);
-
-// ✅ guard runtime: si on change P&L via selectors et route devient interdite => redirect
-watch(
-  [activePnlModel, () => (store as any)?.activePnl?.id, () => (store as any)?.activeVariantId, () => route.name],
-  () => {
-    const rn = String(route.name ?? "");
-
-    if ((rn === "Devis" || rn === "Majorations") && !devisAllowed.value) {
-      router.replace({ name: "Details" });
-      return;
-    }
-    if (rn === "CAB" && !cabSectionAllowed.value) {
-      router.replace({ name: "Details" });
-      return;
-    }
-    if (rn === "CoutsOccasionnels" && !coutsOccAllowed.value) {
-      router.replace({ name: "Details" });
-      return;
-    }
-  },
-  { immediate: true }
-);
 
 /* =========================
    ✅ TOGGLES

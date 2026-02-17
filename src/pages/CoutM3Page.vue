@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutM3Page.vue (FICHIER COMPLET / look harmonisé + sticky subheader + KPIs + toast + generalize + ✅ importer) -->
+<!-- ✅ src/pages/CoutM3Page.vue (FICHIER COMPLET / ✅ UI type Maintenance + ✅ Masquer 0 auto + ✅ modals au-dessus headerdashboard) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -31,10 +31,9 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(
+    toNum(v)
+  );
 }
 function money(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -48,12 +47,22 @@ function clamp(x: any, min = 0, max = 1e15) {
   const v = toNum(x);
   return Math.max(min, Math.min(max, v));
 }
+function isZero(v: any) {
+  return Math.abs(toNum(v)) <= 0;
+}
 
 /* =========================
    ACTIVE
 ========================= */
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
+const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
+
+const variantLabel = computed(() => {
+  const v = variant.value;
+  if (!v) return "—";
+  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
+});
 
 /* =========================
    DRAFT (coutM3)
@@ -61,17 +70,64 @@ const contract = computed<any>(() => (store as any).activeContract);
 type Draft = { eau: number; qualite: number; dechets: number };
 const draft = reactive<Draft>({ eau: 0, qualite: 0, dechets: 0 });
 
+/* =========================
+   ✅ MASQUER 0 (FIX ORDER)
+   - Auto ON à chaque accès si au moins 1 champ ≠ 0
+   - Auto OFF si tout = 0
+   - L'utilisateur peut forcer ON/OFF via bouton (prioritaire)
+========================= */
+const hideZeros = ref(false);
+const hideZerosUserToggled = ref(false);
+
+function anyNonZero(): boolean {
+  return !isZero(draft.eau) || !isZero(draft.qualite) || !isZero(draft.dechets);
+}
+
+function syncHideZerosAuto() {
+  const anyNZ = anyNonZero();
+
+  // si tout est à 0 => toujours OFF et on reset le "manual"
+  if (!anyNZ) {
+    hideZeros.value = false;
+    hideZerosUserToggled.value = false;
+    return;
+  }
+
+  // si l'user n'a pas touché => auto ON
+  if (!hideZerosUserToggled.value) {
+    hideZeros.value = true;
+  }
+}
+
+function toggleHideZeros() {
+  hideZerosUserToggled.value = true;
+  hideZeros.value = !hideZeros.value;
+}
+
+/* =========================
+   LOAD (now safe)
+========================= */
 function loadDraftFromVariant() {
   const v: any = variant.value ?? {};
-  draft.eau = clamp(v?.coutM3?.eau, 0, 1e12);
-  draft.qualite = clamp(v?.coutM3?.qualite, 0, 1e12);
-  draft.dechets = clamp(v?.coutM3?.dechets, 0, 1e12);
+  const c: any = v?.coutM3 ?? {};
+  draft.eau = clamp(c?.eau, 0, 1e12);
+  draft.qualite = clamp(c?.qualite, 0, 1e12);
+  draft.dechets = clamp(c?.dechets, 0, 1e12);
+
+  // ✅ "à chaque accès" : on repart en auto (sauf tout=0)
+  hideZerosUserToggled.value = false;
+  syncHideZerosAuto();
 }
 
 watch(
   () => variant.value?.id,
   () => loadDraftFromVariant(),
   { immediate: true }
+);
+
+watch(
+  () => ({ eau: draft.eau, qualite: draft.qualite, dechets: draft.dechets }),
+  () => syncHideZerosAuto()
 );
 
 /* =========================
@@ -116,18 +172,50 @@ const caTotal = computed(() => {
 });
 
 /* =========================
-   KPIs (COUT AU M³)
+   KPIs
 ========================= */
 const coutM3ParM3 = computed(() => toNum(draft.eau) + toNum(draft.qualite) + toNum(draft.dechets));
 const coutM3Total = computed(() => coutM3ParM3.value * volumeTotal.value);
-
-const dureeMois = computed(() => toNum(contract.value?.dureeMois));
 const coutM3ParMois = computed(() => (dureeMois.value > 0 ? coutM3Total.value / dureeMois.value : 0));
-
 const coutM3Pct = computed(() => (caTotal.value > 0 ? (coutM3Total.value / caTotal.value) * 100 : 0));
 
 /* =========================
-   TOAST (non bloquant)
+   LINES (Maintenance-like)
+========================= */
+type LineKey = keyof Draft;
+type Line = {
+  key: LineKey;
+  label: string;
+  unit: string;
+  value: number; // DH/m³
+  total: number; // DH
+  perMonth: number; // DH/mois
+  pctCa: number; // %
+};
+
+const lines = computed<Line[]>(() => {
+  const mk = (key: LineKey, label: string): Line => {
+    const value = clamp((draft as any)[key], 0, 1e12);
+    const total = value * volumeTotal.value;
+    const perMonth = dureeMois.value > 0 ? total / dureeMois.value : 0;
+    const pctCa = caTotal.value > 0 ? (total / caTotal.value) * 100 : 0;
+    return { key, label, unit: "DH/m³", value, total, perMonth, pctCa };
+  };
+  return [mk("eau", "Eau"), mk("qualite", "Qualité"), mk("dechets", "Déchets")];
+});
+
+const visibleLines = computed(() => {
+  const arr = lines.value ?? [];
+  if (!hideZeros.value) return arr;
+  return arr.filter((ln) => !isZero(ln.value));
+});
+
+function setDraft(key: LineKey, value: any) {
+  (draft as any)[key] = clamp(value, 0, 1e12);
+}
+
+/* =========================
+   TOAST
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
@@ -150,20 +238,12 @@ const modal = reactive({
   mode: "confirm" as "confirm" | "info",
   onConfirm: null as null | (() => void | Promise<void>),
 });
-
 function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
   modal.open = true;
   modal.title = title;
   modal.message = message;
   modal.mode = "confirm";
   modal.onConfirm = onConfirm;
-}
-function openInfo(title: string, message: string) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "info";
-  modal.onConfirm = null;
 }
 function closeModal() {
   modal.open = false;
@@ -190,7 +270,6 @@ function buildPayload() {
 
 async function save() {
   if (!variant.value) return;
-
   err.value = null;
   saving.value = true;
   try {
@@ -203,7 +282,6 @@ async function save() {
     saving.value = false;
   }
 }
-
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement du coût au m³ ?", async () => {
     closeModal();
@@ -219,7 +297,7 @@ function askReset() {
 }
 
 /* =========================
-   ✅ IMPORTER (depuis autre variante / save séparé)
+   IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -244,6 +322,9 @@ function applyCoutM3FromVariant(srcVariant: any) {
   draft.eau = clamp(c?.eau, 0, 1e12);
   draft.qualite = clamp(c?.qualite, 0, 1e12);
   draft.dechets = clamp(c?.dechets, 0, 1e12);
+
+  hideZerosUserToggled.value = false;
+  syncHideZerosAuto();
 }
 
 async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
@@ -258,7 +339,6 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
     return;
   }
 
-  // NOTE: CoutM3 n'utilise pas les presets => on ignore payload.copy (FULL par défaut)
   impErr.value = null;
   impBusy.value = true;
   try {
@@ -272,7 +352,7 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
     }
 
     applyCoutM3FromVariant(src);
-    showToast("Coût au m³ importé dans la variante active. Pense à enregistrer.", "ok");
+    showToast("Coût au m³ importé. Pense à enregistrer.", "ok");
     impOpen.value = false;
   } catch (e: any) {
     impErr.value = e?.message ?? String(e);
@@ -301,7 +381,6 @@ async function generalizeTo(variantIds: string[]) {
     for (const targetIdRaw of variantIds ?? []) {
       const targetId = String(targetIdRaw ?? "").trim();
       if (!targetId || targetId === sourceId) continue;
-
       await (store as any).updateVariant(targetId, { coutM3: payload });
     }
     showToast("Section Coût au m³ généralisée.", "ok");
@@ -328,20 +407,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     if (!genErr.value) genOpen.value = false;
   });
 }
-
-/* =========================
-   UI labels
-========================= */
-const variantLabel = computed(() => {
-  const v = variant.value;
-  if (!v) return "—";
-  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
-});
 </script>
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader under HeaderDashboard -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
@@ -359,12 +428,16 @@ const variantLabel = computed(() => {
         </div>
 
         <div class="actions">
+          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="toggleHideZeros()" :class="{ on: hideZeros }">
+            <span class="dot" aria-hidden="true"></span>
+            {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
+          </button>
+
           <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <!-- ✅ NEW: Importer -->
           <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
@@ -382,10 +455,9 @@ const variantLabel = computed(() => {
         </div>
       </div>
 
-      <!-- ✅ KPIs -->
       <div class="kpis" v-if="variant">
         <div class="kpi main">
-          <div class="kLbl">Prix / m³</div>
+          <div class="kLbl">DH / m³</div>
           <div class="kVal mono">
             {{ n(coutM3ParM3, 2) }}
             <span class="unit">DH/m³</span>
@@ -403,7 +475,7 @@ const variantLabel = computed(() => {
         </div>
 
         <div class="kpi">
-          <div class="kLbl">%</div>
+          <div class="kLbl">% CA</div>
           <div class="kVal mono">{{ n(coutM3Pct, 2) }}<span class="unit">%</span></div>
         </div>
       </div>
@@ -443,46 +515,75 @@ const variantLabel = computed(() => {
           <div class="cardTtl">
             <CurrencyDollarIcon class="ic3" />
             <div>
-              <div class="h">Saisie des coûts unitaires</div>
-              <div class="p">Ces valeurs sont exprimées en DH/m³.</div>
+              <div class="h">Saisie + impacts</div>
+              <div class="p">Saisie en <b>DH/m³</b> + impact <b>Total</b>, <b>/mois</b> et <b>% CA</b>.</div>
             </div>
           </div>
         </div>
 
-        <div class="formGrid">
-          <div class="field">
-            <div class="label">Eau</div>
-            <div class="inputLine">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.eau" />
-              <span class="u">DH/m³</span>
-            </div>
-          </div>
+        <div class="tableWrap">
+          <table class="table">
+            <colgroup>
+              <col class="colLabel" />
+              <col class="colInput" />
+              <col class="colTotal" />
+              <col class="colMois" />
+              <col class="colPct" />
+            </colgroup>
 
-          <div class="field">
-            <div class="label">Qualité</div>
-            <div class="inputLine">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.qualite" />
-              <span class="u">DH/m³</span>
-            </div>
-          </div>
+            <thead>
+              <tr>
+                <th class="th">Poste</th>
+                <th class="th r">DH/m³</th>
+                <th class="th r">Total</th>
+                <th class="th r">/ mois</th>
+                <th class="th r">% CA</th>
+              </tr>
+            </thead>
 
-          <div class="field">
-            <div class="label">Déchets</div>
-            <div class="inputLine">
-              <input class="in mono" type="number" step="0.01" min="0" v-model.number="draft.dechets" />
-              <span class="u">DH/m³</span>
-            </div>
-          </div>
+            <tbody>
+              <tr v-for="ln in visibleLines" :key="String(ln.key)">
+                <td class="labelCell"><b>{{ ln.label }}</b></td>
+
+                <td class="r">
+                  <div class="inCell">
+                    <input
+                      class="inputSm r mono"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :value="ln.value"
+                      @input="setDraft(ln.key, ($event.target as HTMLInputElement).value)"
+                    />
+                    <span class="unitMini">DH/m³</span>
+                  </div>
+                </td>
+
+                <td class="r mono"><b>{{ money(ln.total, 2) }}</b></td>
+                <td class="r mono">{{ money(ln.perMonth, 2) }}</td>
+                <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
+              </tr>
+
+              <tr class="sumRow">
+                <td><b>Total</b></td>
+                <td class="r"><b>{{ n(coutM3ParM3, 2) }}</b> <span class="unitMini">DH/m³</span></td>
+                <td class="r"><b>{{ money(coutM3Total, 2) }}</b></td>
+                <td class="r"><b>{{ money(coutM3ParMois, 2) }}</b></td>
+                <td class="r"><b>{{ n(coutM3Pct, 2) }}%</b></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        <div class="note">Prix/m³ = Eau + Qualité + Déchets • Total = Prix/m³ × Volume total (formules).</div>
+        <div class="foot">
+          Volume total : <b>{{ n(volumeTotal, 2) }}</b> m³ • Durée : <b>{{ n(dureeMois, 0) }}</b> mois • CA estimé :
+          <b>{{ money(caTotal, 2) }}</b>
+        </div>
       </div>
     </template>
 
-    <!-- ✅ MODAL IMPORT -->
     <SectionImportModal v-model="impOpen" sectionLabel="Coût au m³" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       sectionLabel="Coût au m³"
@@ -490,7 +591,6 @@ const variantLabel = computed(() => {
       @apply="onApplyGeneralize"
     />
 
-    <!-- ✅ Modal confirm/info -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -500,7 +600,7 @@ const variantLabel = computed(() => {
           </div>
 
           <div class="dlgBody">
-            <div class="dlgMsg">{{ modal.message }}</div>
+            <div class="dlgMsg" style="white-space: pre-line">{{ modal.message }}</div>
           </div>
 
           <div class="dlgFtr">
@@ -513,7 +613,6 @@ const variantLabel = computed(() => {
       </div>
     </teleport>
 
-    <!-- ✅ Toast -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -526,13 +625,13 @@ const variantLabel = computed(() => {
 
 <style scoped>
 .page {
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
-/* sticky subheader under HeaderDashboard */
+/* sticky subheader */
 .subhdr {
   position: sticky;
   top: var(--hdrdash-h, -15px);
@@ -541,21 +640,21 @@ const variantLabel = computed(() => {
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 16px;
-  padding: 10px;
+  padding: 8px 10px;
 }
 
 .row {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 260px;
+  gap: 2px;
+  min-width: 240px;
 }
 
 .ttlRow {
@@ -565,7 +664,7 @@ const variantLabel = computed(() => {
   flex-wrap: wrap;
 }
 .ttl {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 950;
   color: #0f172a;
 }
@@ -580,7 +679,7 @@ const variantLabel = computed(() => {
 }
 
 .meta {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
 }
@@ -604,9 +703,9 @@ const variantLabel = computed(() => {
 }
 
 .btn {
-  height: 34px;
+  height: 32px;
   border-radius: 12px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a;
@@ -631,6 +730,20 @@ const variantLabel = computed(() => {
 .btn.pri:hover {
   background: rgba(2, 132, 199, 0.18);
 }
+.btn.on {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.35);
+}
+.btn.on .dot {
+  background: rgba(2, 132, 199, 0.9);
+}
+
 .ic {
   width: 18px;
   height: 18px;
@@ -648,7 +761,7 @@ const variantLabel = computed(() => {
 
 /* KPIs */
 .kpis {
-  margin-top: 10px;
+  margin-top: 8px;
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr));
   gap: 8px;
@@ -658,21 +771,19 @@ const variantLabel = computed(() => {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
 }
-
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 14px;
-  padding: 10px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .kpi.main {
   border-color: rgba(2, 132, 199, 0.28);
   background: rgba(2, 132, 199, 0.06);
 }
-
 .kLbl {
   font-size: 10px;
   font-weight: 950;
@@ -681,7 +792,7 @@ const variantLabel = computed(() => {
   letter-spacing: 0.03em;
 }
 .kVal {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
@@ -695,9 +806,9 @@ const variantLabel = computed(() => {
 
 /* alerts */
 .alert {
-  margin-top: 10px;
+  margin-top: 8px;
   border-radius: 14px;
-  padding: 10px;
+  padding: 9px 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   display: flex;
@@ -715,7 +826,7 @@ const variantLabel = computed(() => {
   margin-top: 1px;
 }
 
-/* main card */
+/* card */
 .card {
   border-radius: 16px;
   border: 1px solid rgba(16, 24, 40, 0.1);
@@ -723,7 +834,7 @@ const variantLabel = computed(() => {
   overflow: hidden;
 }
 .cardHdr {
-  padding: 10px;
+  padding: 8px 10px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
 }
 .cardTtl {
@@ -742,165 +853,232 @@ const variantLabel = computed(() => {
   font-size: 12px;
 }
 
-/* form */
-.formGrid {
-  padding: 12px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
-  gap: 10px;
+.tableWrap {
+  padding: 8px 10px 10px;
+  overflow-x: auto;
 }
-@media (max-width: 980px) {
-  .formGrid {
-    grid-template-columns: 1fr;
-  }
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.label {
+.table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 12px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.65);
+  table-layout: fixed;
 }
-.inputLine {
-  display: flex;
+.colLabel {
+  width: 260px;
+}
+.colInput {
+  width: 170px;
+}
+.colTotal {
+  width: 180px;
+}
+.colMois {
+  width: 170px;
+}
+.colPct {
+  width: 90px;
+}
+.th,
+.table td {
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  padding: 8px 8px;
+  vertical-align: middle;
+}
+.th {
+  background: rgba(15, 23, 42, 0.03);
+  color: rgba(15, 23, 42, 0.55);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.r {
+  text-align: right;
+}
+.inCell {
+  display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  width: 100%;
 }
-.in {
-  width: 140px;
-  height: 34px;
+.inputSm {
+  width: 110px;
+  height: 30px;
   border-radius: 12px;
-  border: 1px solid rgba(2, 132, 199, 0.28);
+  border: 1px solid rgba(2, 132, 199, 0.26);
   background: rgba(2, 132, 199, 0.06);
-  padding: 0 10px;
+  padding: 0 9px;
   font-weight: 950;
   color: #0f172a;
   outline: none;
   text-align: right;
 }
-.in:focus {
+.inputSm:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
-.u {
-  font-size: 11px;
+.unitMini {
+  font-size: 10.5px;
   font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
 }
-
-.note {
-  padding: 10px 12px;
-  border-top: 1px dashed rgba(16, 24, 40, 0.14);
-  font-size: 12px;
+.sumRow td {
+  background: rgba(15, 23, 42, 0.02);
+  font-weight: 950;
+}
+.foot {
+  padding: 0 10px 10px;
+  font-size: 11.5px;
   font-weight: 800;
   color: rgba(15, 23, 42, 0.65);
 }
-
 .empty {
-  padding: 14px;
+  padding: 12px;
   font-weight: 850;
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* modal */
 .ovl {
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.4);
+  background: rgba(2, 6, 23, 0.22);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: 14px;
   z-index: 100000;
+  backdrop-filter: none;
 }
+
+
 .dlg {
   width: min(520px, 100%);
   background: #fff;
   border-radius: 16px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
+  border: 1px solid rgba(16, 24, 40, 0.14);
   overflow: hidden;
+  box-shadow: 0 24px 70px rgba(2, 6, 23, 0.35);
+  transform: translateY(0);
 }
+
+/* Header */
 .dlgHdr {
-  padding: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(15, 23, 42, 0.02);
 }
+
 .dlgTtl {
+  font-size: 13px;
   font-weight: 950;
   color: #0f172a;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
 }
+
 .x {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
-  cursor: pointer;
-}
-.dlgBody {
-  padding: 12px;
-}
-.dlgMsg {
-  font-weight: 800;
   color: rgba(15, 23, 42, 0.8);
-  line-height: 1.45;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 950;
+  line-height: 1;
 }
+.x:hover {
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.22);
+}
+.x:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.16);
+}
+
+/* Body */
+.dlgBody {
+  padding: 12px 12px 10px;
+}
+
+.dlgMsg {
+  font-size: 12.5px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.78);
+  line-height: 1.5;
+}
+
+/* Footer */
 .dlgFtr {
-  padding: 10px;
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  padding: 10px 12px 12px;
   border-top: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(15, 23, 42, 0.015);
 }
+
+/* Buttons */
 .btn2 {
   height: 34px;
   border-radius: 12px;
   padding: 0 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
+  color: #0f172a;
   font-weight: 950;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
 }
+.btn2:hover {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
+}
+.btn2:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.14);
+}
+.btn2:active {
+  transform: translateY(1px);
+}
+
 .btn2.pri {
   background: rgba(2, 132, 199, 0.12);
-  border-color: rgba(2, 132, 199, 0.28);
+  border-color: rgba(2, 132, 199, 0.30);
+}
+.btn2.pri:hover {
+  background: rgba(2, 132, 199, 0.18);
+}
+.btn2.pri:focus {
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.18);
 }
 
-/* toast */
-.toast {
-  position: fixed;
-  right: 12px;
-  bottom: 12px;
-  z-index: 100000; /* ✅ au-dessus du HeaderDashboard + modals */
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
+/* Responsive: boutons en colonne si écran étroit */
+@media (max-width: 420px) {
+  .dlgFtr {
+    flex-direction: column;
+  }
+  .btn2 {
+    width: 100%;
+  }
 }
 
-.toast.err {
-  border-color: rgba(239, 68, 68, 0.22);
-}
-.toast.info {
-  border-color: rgba(59, 130, 246, 0.22);
-}
-.tic {
-  width: 18px;
-  height: 18px;
-}
-.tmsg {
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.85);
+/* Motion safety */
+@media (prefers-reduced-motion: reduce) {
+  .btn2:active {
+    transform: none;
+  }
 }
 </style>

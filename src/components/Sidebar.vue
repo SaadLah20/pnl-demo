@@ -1,4 +1,4 @@
-<!-- Sidebar.vue (FICHIER COMPLET / ✅ verrouillages CAB Fixe + auto-redirect) -->
+<!-- Sidebar.vue (FICHIER COMPLET / ✅ verrouillage Devis & MultiDevis CAB Fixe + auto-redirect — design inchangé) -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -36,22 +36,13 @@ const route = useRoute();
 const store = usePnlStore();
 
 /* =====================
-   CAB Fixe vs Mobile helpers
+   CAB Fixe helper (minimal)
 ===================== */
 function norm(s: any) {
   return String(s ?? "").trim().toLowerCase();
 }
 function isCabFixePnl(p: any) {
   return norm(p?.model).includes("cab fixe");
-}
-function isCabMobilePnl(p: any) {
-  return norm(p?.model).includes("cab mobile");
-}
-function isCabFixeExistantePnl(p: any) {
-  return norm(p?.model).includes("cab fixe") && norm(p?.model).includes("existante");
-}
-function isCabFixeNouvellePnl(p: any) {
-  return norm(p?.model).includes("cab fixe") && norm(p?.model).includes("nouvelle");
 }
 
 /* =====================
@@ -142,6 +133,7 @@ const routeByItem: Record<string, string> = {
 
 /* =====================
    MODE / RULES (based on active P&L)
+   ✅ uniquement ce qui sert au verrouillage Devis/MultiDevis
 ===================== */
 const activePnl = computed<any | null>(() => (store as any)?.activePnl ?? null);
 const activePnlModel = computed(() => String(activePnl.value?.model ?? "").trim());
@@ -149,20 +141,12 @@ const activePnlModel = computed(() => String(activePnl.value?.model ?? "").trim(
 // ✅ variante active ?
 const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
 
-// ✅ models
-const isCabMobile = computed(() => isCabMobilePnl({ model: activePnlModel.value }));
+// ✅ model
 const isCabFixe = computed(() => isCabFixePnl({ model: activePnlModel.value }));
-const isCabFixeExistante = computed(() => isCabFixeExistantePnl({ model: activePnlModel.value }));
-const isCabFixeNouvelle = computed(() => isCabFixeNouvellePnl({ model: activePnlModel.value }));
 
-// ✅ verrouillages demandés
-// - Devis & multi devis: interdits pour TOUS les CAB FIXE
+// ✅ verrouillages demandés (copiés du nouveau fichier)
 const devisAllowed = computed(() => hasActiveVariant.value && !isCabFixe.value);
 const multiDevisAllowed = computed(() => !isCabFixe.value);
-
-// - CAB & Couts occasionnels: verrouillés uniquement pour CAB fixe - existante
-const cabSectionAllowed = computed(() => hasActiveVariant.value && !isCabFixeExistante.value);
-const coutsOccasionnelsAllowed = computed(() => hasActiveVariant.value && !isCabFixeExistante.value);
 
 const devisDisabledReason = computed(() => {
   if (!hasActiveVariant.value) return "Sélectionne une variante pour accéder aux sections.";
@@ -173,25 +157,11 @@ const multiDevisDisabledReason = computed(() => {
   if (isCabFixe.value) return "Devis multi-variantes non disponible pour les P&L CAB FIXE.";
   return "";
 });
-const cabDisabledReason = computed(() => {
-  if (!hasActiveVariant.value) return "Sélectionne une variante pour accéder aux sections.";
-  if (isCabFixeExistante.value) return "Section CAB verrouillée pour “CAB fixe - existante”.";
-  return "";
-});
-const coutsOccDisabledReason = computed(() => {
-  if (!hasActiveVariant.value) return "Sélectionne une variante pour accéder aux sections.";
-  if (isCabFixeExistante.value) return "Section Couts occasionnels verrouillée pour “CAB fixe - existante”.";
-  return "";
-});
 
 function goToPage(item: string) {
-  // ✅ hard stop si item non autorisé (anti-faille par click)
+  // ✅ hard stop (anti-faille par click) — uniquement Devis & MultiDevis
   if (item === "Devis" && !devisAllowed.value) return;
-  if (item === "Majorations" && !devisAllowed.value) return;
   if (item === "Générer devis multi-variantes" && !multiDevisAllowed.value) return;
-
-  if (item === "CAB" && !cabSectionAllowed.value) return;
-  if (item === "Couts occasionnels" && !coutsOccasionnelsAllowed.value) return;
 
   activeItem.value = item;
 
@@ -229,31 +199,22 @@ function goToPage(item: string) {
 function redirectToSafe() {
   const rn = String(route.name ?? "");
 
-  const isDevisRoute =
-    rn === "Devis" || rn === "Majorations" || rn === "MultiVarianteDevis" ||
-    (rn === "PageView" && typeof route.params?.name === "string" && route.params.name.includes("/Devis/"));
+  const isDevisPage =
+    rn === "Devis" ||
+    (rn === "PageView" &&
+      typeof route.params?.name === "string" &&
+      route.params.name.includes("/Devis/Devis"));
 
-  const isCabRoute =
-    rn === "CAB" ||
-    (rn === "PageView" && typeof route.params?.name === "string" && route.params.name.includes("/Couts/CAB"));
+  const isMultiDevisPage = rn === "MultiVarianteDevis";
 
-  const isCoutsOccRoute =
-    rn === "CoutsOccasionnels" ||
-    (rn === "PageView" && typeof route.params?.name === "string" && route.params.name.includes("/Couts/Couts occasionnels"));
-
-  // Devis interdit => renvoyer vers Détails (si variante active) sinon MesPnls
-  if (isDevisRoute && (isCabFixe.value || (rn !== "MultiVarianteDevis" && !hasActiveVariant.value))) {
-    if (hasActiveVariant.value) router.replace({ name: "Details" });
-    else router.replace({ name: "MesPnls" });
-    return;
-  }
-  // CAB verrouillé (cab fixe existante) => redirect Details
-  if (isCabRoute && !cabSectionAllowed.value) {
+  // ✅ Devis interdit pour CAB FIXE + nécessite une variante active
+  if (isDevisPage && (isCabFixe.value || !hasActiveVariant.value)) {
     router.replace({ name: hasActiveVariant.value ? "Details" : "MesPnls" });
     return;
   }
-  // Couts occasionnels verrouillé => redirect Details
-  if (isCoutsOccRoute && !coutsOccasionnelsAllowed.value) {
+
+  // ✅ Multi-devis interdit pour CAB FIXE
+  if (isMultiDevisPage && isCabFixe.value) {
     router.replace({ name: hasActiveVariant.value ? "Details" : "MesPnls" });
     return;
   }
@@ -568,8 +529,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'CAB' }"
-                  :disabled="!cabSectionAllowed"
-                  :title="!cabSectionAllowed ? cabDisabledReason : ''"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('CAB')"
                 >
                   <component :is="icons['CAB']" class="sb__icon" />
@@ -624,8 +584,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Couts occasionnels' }"
-                  :disabled="!coutsOccasionnelsAllowed"
-                  :title="!coutsOccasionnelsAllowed ? coutsOccDisabledReason : ''"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Couts occasionnels')"
                 >
                   <component :is="icons['Couts occasionnels']" class="sb__icon" />
@@ -648,8 +607,8 @@ function setAllVariantSections(expand: boolean) {
               <button
                 type="button"
                 class="sb__parent sb__parent--lvl2"
-                :disabled="!hasActiveVariant || isCabFixe"
-                :title="isCabFixe ? 'Devis indisponible pour CAB FIXE.' : (!hasActiveVariant ? 'Sélectionne une variante.' : '')"
+                :disabled="!hasActiveVariant"
+                :title="!hasActiveVariant ? 'Sélectionne une variante.' : ''"
                 @click="toggle('devis')"
               >
                 <component :is="open.devis ? ChevronDownIcon : ChevronRightIcon" class="sb__chevIcon" />
@@ -661,8 +620,7 @@ function setAllVariantSections(expand: boolean) {
                   type="button"
                   class="sb__leaf sb__leaf--small"
                   :class="{ 'is-active': activeItem === 'Majorations' }"
-                  :disabled="!devisAllowed"
-                  :title="!devisAllowed ? devisDisabledReason : ''"
+                  :disabled="!hasActiveVariant"
                   @click="goToPage('Majorations')"
                 >
                   <component :is="icons['Majorations']" class="sb__icon" />

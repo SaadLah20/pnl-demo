@@ -1,4 +1,14 @@
-<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / pompage deletable + transport fields OK) -->
+<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte + pas de dégradation logique)
+     Demandes prises en compte :
+     ✅ Supprime navigation horizontale en haut (tabs bar)
+     ✅ Onglet actif (Surcharges/Contenu) intégré dans la ligne header à droite (compact)
+     ✅ Supprime les gros blocs KPIs du header (CA devis / surcharges actives)
+     ✅ Indication majorations + options dashboard compactes (une seule ligne + tooltip)
+     ✅ Tableau Surcharges inspiré du style FormulesPage (list/card items)
+     ✅ Contenu : labels parfaitement alignés + plus de débordement / superposition
+     ✅ Navigation rapide VERTICALE conservée mais largeur réduite (≈ moitié)
+     ✅ Navigation rapide BAS conservée
+-->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -141,6 +151,7 @@ const content = reactive({
     client: "",
     titreProjet: "",
     includePompage: true as boolean,
+    extraPompageAuto: true as boolean,
   },
   intro: "",
   rappel: {
@@ -287,7 +298,6 @@ function getCabCapacityText(): string {
     String((contract.value as any)?.cabCapacite ?? (contract.value as any)?.cabCapacity ?? "").trim();
 
   if (!cap) return "2m3";
-  // On laisse l’utilisateur stocker "2m3" ou "2 m3" etc
   return cap.replace(/\s+/g, "");
 }
 
@@ -568,57 +578,67 @@ const touchedCount = computed(() => rows.value.filter((r) => isRowTouched(r)).le
 /* =========================
    Extra articles (hors formules)
 ========================= */
-const EXTRA_POMPAGE_LABEL = "Pompage";
+const EXTRA_POMPAGE_LABEL = "Prestation de pompage";
+const EXTRA_HYDROFUGE_LABEL = "Hydrofuge";
 
 function isPompageArticle(a: any): boolean {
   const lbl = String(a?.label ?? "").toLowerCase().trim();
   return lbl === "pompage" || lbl === "prestation de pompage" || lbl.includes("pompage");
 }
-
-function defaultExtraArticles(): ExtraArticle[] {
-  return [];
+function isHydrofugeArticle(a: any): boolean {
+  const lbl = String(a?.label ?? "").toLowerCase().trim();
+  return lbl === "hydrofuge" || lbl.includes("hydrofuge");
 }
 
-function syncPompageFromTransport(list: ExtraArticle[], include: boolean) {
-  // ✅ Si l'utilisateur a supprimé le pompage dans le devis, on ne le réinjecte plus.
-  if (!include) {
-    const kept = (list ?? []).filter((x) => !isPompageArticle(x));
-    list.splice(0, list.length, ...kept);
-    return;
-  }
+function baseVolumeForExtras(): number {
+  return quantiteProjetM3.value > 0 ? quantiteProjetM3.value : volumeTotalFromFormules.value;
+}
 
+function computePompageFromTransport(): { qty: number; pu: number } {
   const t: any = variant.value?.transport ?? {};
-
-  // ✅ TransportPage stocke: includePompage (bool), volumePompePct (%), prixVentePompe (DH/m³)
   const pct = n(t?.volumePompePct ?? 0);
   const pu = n(t?.prixVentePompe ?? 0);
 
-  // Base volume = quantité projet (contrat) si dispo, sinon somme formules
-  const baseVol = quantiteProjetM3.value > 0 ? quantiteProjetM3.value : volumeTotalFromFormules.value;
+  const baseVol = baseVolumeForExtras();
   const qty = pct > 0 ? (baseVol * pct) / 100 : 0;
 
-  // Si Transport n'a rien, on retire la ligne (pas de ligne vide)
-  if (qty <= 0 || pu <= 0) {
-    const kept = (list ?? []).filter((x) => !isPompageArticle(x));
-    list.splice(0, list.length, ...kept);
-    return;
-  }
+  return { qty, pu };
+}
 
-  const payload: ExtraArticle = {
-    label: "Pompage",
-    qty,
-    pu,
-  };
+function defaultExtraArticles(): ExtraArticle[] {
+  const p = computePompageFromTransport();
+  return [
+    { label: EXTRA_HYDROFUGE_LABEL, qty: 0, pu: 50 },
+    { label: EXTRA_POMPAGE_LABEL, qty: n(p.qty), pu: n(p.pu) },
+  ];
+}
+
+/** ✅ Si extraPompageAuto=true, on met à jour les valeurs du pompage depuis Transport
+    - IMPORTANT: on n'insère JAMAIS la ligne si elle a été supprimée (pas de réinjection) */
+function syncPompageValuesIfAuto(list: ExtraArticle[]) {
+  if (!Boolean(content.meta.extraPompageAuto)) return;
 
   const idx = (list ?? []).findIndex((x) => isPompageArticle(x));
-  if (idx >= 0) list[idx] = payload;
-  else list.unshift(payload);
+  if (idx < 0) return; // supprimé => ne revient pas
+
+  const p = computePompageFromTransport();
+
+  if (n(p.qty) > 0) (list[idx] as any).qty = n(p.qty);
+  if (n(p.pu) > 0) (list[idx] as any).pu = n(p.pu);
+
+  if (!String((list[idx] as any)?.label ?? "").trim()) (list[idx] as any).label = EXTRA_POMPAGE_LABEL;
+}
+
+/** ✅ Dès qu'un utilisateur modifie le pompage, on "décroche" du Transport */
+function onExtraEdited(a: any) {
+  if (!a) return;
+  if (isPompageArticle(a)) content.meta.extraPompageAuto = false;
 }
 
 function canonicalExtraArticlesForSave(list: ExtraArticle[]): ExtraArticle[] {
   return (list ?? [])
     .map((x) => ({ label: String(x?.label ?? "").trim(), qty: n(x?.qty), pu: n(x?.pu) }))
-    .filter((x) => x.label && x.qty > 0 && x.pu > 0);
+    .filter((x) => x.label.length > 0);
 }
 
 /* =========================
@@ -700,22 +720,17 @@ function loadPersistedAll() {
   });
   content.prixComplementaires = [...templateExtras, ...keepCustomExtras];
 
-  // ✅ Pompage (ligne suppressible côté Devis via meta.includePompage=false)
-  // Par défaut: on suit Transport (includePompage + volumePompePct + prixVentePompe).
-  const t: any = variant.value?.transport ?? {};
-  const transportInc = parseBoolLike(t?.includePompage); // true/false/null
-  const transportHasData = n(t?.volumePompePct ?? 0) > 0 && n(t?.prixVentePompe ?? 0) > 0;
+  const metaHasExtraArticles = persistedMeta && Object.prototype.hasOwnProperty.call(persistedMeta, "extraArticles");
+  const persistedExtraRaw = metaHasExtraArticles ? (persistedMeta as any).extraArticles : null;
 
-  let includePompage = persistedMeta?.includePompage === false ? false : true;
-  if (transportInc === false) includePompage = false;
-  else if (transportInc === true) includePompage = true;
-  else if (!transportHasData) includePompage = false;
+  content.meta.includePompage = persistedMeta?.includePompage === false ? false : true;
 
-  content.meta.includePompage = includePompage;
+  const hasAutoFlag = persistedMeta && Object.prototype.hasOwnProperty.call(persistedMeta, "extraPompageAuto");
+  content.meta.extraPompageAuto = metaHasExtraArticles ? Boolean((persistedMeta as any)?.extraPompageAuto) : true;
+  if (metaHasExtraArticles && !hasAutoFlag) content.meta.extraPompageAuto = false;
 
-  content.extraArticles = normalizeExtraArticles(persistedMeta?.extraArticles, defaultExtraArticles());
-  // ✅ Pompage: alimenté depuis Transport (non modifiable) sauf si supprimé
-  syncPompageFromTransport(content.extraArticles, Boolean(content.meta.includePompage));
+  content.extraArticles = normalizeExtraArticles(persistedExtraRaw, defaultExtraArticles());
+  syncPompageValuesIfAuto(content.extraArticles);
 
   const q = content.rappel.quantiteM3;
   const d = content.rappel.dureeMois;
@@ -762,8 +777,7 @@ function syncDevisFromContract() {
   content.rappel.quantiteM3 = quantiteProjetM3.value;
   content.rappel.dureeMois = dureeMois.value;
 
-  // ✅ Pompage (synchronisé Transport) sauf si supprimé
-  syncPompageFromTransport(content.extraArticles, Boolean(content.meta.includePompage));
+  syncPompageValuesIfAuto(content.extraArticles);
 }
 
 /* =========================
@@ -825,7 +839,6 @@ async function saveDevis() {
       signature: { ...content.signature },
     });
 
-    // ✅ Après Save : tri devient basé sur la nouvelle version enregistrée
     savedSurcharges.value = { ...draft.surcharges };
 
     await (store as any).loadPnls();
@@ -919,8 +932,7 @@ watch(
 watch(
   () => JSON.stringify(variant.value?.transport ?? {}),
   () => {
-    // ✅ Pompage suit transport tant qu'il n'a pas été explicitement supprimé côté devis
-    syncPompageFromTransport(content.extraArticles, Boolean(content.meta.includePompage));
+    syncPompageValuesIfAuto(content.extraArticles);
   }
 );
 
@@ -954,8 +966,7 @@ function removeExtraArticle(idx: number) {
 
   content.extraArticles.splice(idx, 1);
 
-  // ✅ Si on supprime le pompage, on persiste l'intention (pour ne pas le réinjecter)
-  if (isPompe) content.meta.includePompage = false;
+  if (isPompe) content.meta.extraPompageAuto = false;
 }
 
 function extraArticleTotal(a: ExtraArticle): number {
@@ -964,10 +975,61 @@ function extraArticleTotal(a: ExtraArticle): number {
 function extraArticlesTotalHT(): number {
   return (content.extraArticles ?? []).reduce((s, a) => s + extraArticleTotal(a), 0);
 }
+
+/* =========================
+   NAV RAPIDE (CONTENU)
+========================= */
+const CONTENT_SECTIONS = [
+  { id: "c-head", label: "En-tête" },
+  { id: "c-intro", label: "Introduction" },
+  { id: "c-rappel", label: "Rappel" },
+  { id: "c-charges", label: "Charges" },
+  { id: "c-prix", label: "Prix compl." },
+  { id: "c-articles", label: "Articles" },
+  { id: "c-textes", label: "Textes" },
+  { id: "c-sign", label: "Signature" },
+] as const;
+
+const activeSectionId = ref<string>("c-head");
+
+function scrollToId(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  activeSectionId.value = id;
+}
+
+function onContentScrollSpy() {
+  const tops: { id: string; top: number }[] = [];
+
+  for (const s of CONTENT_SECTIONS) {
+    const el = document.getElementById(s.id);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    tops.push({ id: s.id, top: r.top });
+  }
+
+  if (tops.length === 0) return;
+
+  let best: { id: string; top: number } | null = null;
+  for (const t of tops) {
+    if (!best) {
+      best = t;
+      continue;
+    }
+    if (Math.abs(t.top - 92) < Math.abs(best.top - 92)) {
+      best = t;
+    }
+  }
+
+  if (!best) return;
+  activeSectionId.value = best.id;
+}
+
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" @scroll.passive="activeTab === 'CONTENU' ? onContentScrollSpy() : null">
     <!-- HEADER -->
     <div class="top card">
       <div class="tleft">
@@ -983,15 +1045,47 @@ function extraArticlesTotalHT(): number {
           <span class="muted">Variante</span>
           <b class="ell">{{ variant?.title ?? "—" }}</b>
           <span class="sep">•</span>
-          <span class="muted">Volume</span>
+          <span class="muted">Vol</span>
           <b class="mono">{{ int(volumeTotalFromFormules) }}</b><span class="muted">m³</span>
           <span class="sep">•</span>
-          <span class="muted">Prix moyen</span>
+          <span class="muted">PMV</span>
           <b class="mono">{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
         </div>
       </div>
 
       <div class="tright">
+        <!-- ✅ Toggle onglet compact (remplace la barre tabs horizontale) -->
+        <div class="seg" role="tablist" aria-label="Onglets devis">
+          <button
+            class="segBtn"
+            :class="{ active: activeTab === 'SURCHARGES' }"
+            @click="activeTab = 'SURCHARGES'"
+            role="tab"
+            :aria-selected="activeTab === 'SURCHARGES'"
+          >
+            Surcharges
+            <span class="segBadge">{{ touchedCount }}</span>
+          </button>
+          <button
+            class="segBtn"
+            :class="{ active: activeTab === 'CONTENU' }"
+            @click="activeTab = 'CONTENU'"
+            role="tab"
+            :aria-selected="activeTab === 'CONTENU'"
+          >
+            Contenu
+          </button>
+        </div>
+
+        <!-- ✅ Infos compactes au même niveau (plus de gros blocs) -->
+        <div class="miniKpis">
+          <span class="miniK">
+            CA
+            <b class="mono">{{ money2(caDevisTotal) }}</b>
+            <span class="muted">DH</span>
+          </span>
+        </div>
+
         <button class="iconBtn" @click="reload" :disabled="busy.reload || loading" title="Recharger">
           <ArrowPathIcon class="ic" />
         </button>
@@ -1021,7 +1115,7 @@ function extraArticlesTotalHT(): number {
       <ExclamationTriangleIcon class="warnIc" />
       <div class="dirtyTxt">
         <b>Changements non enregistrés.</b>
-        <span class="muted">Si tu exportes maintenant, le Word utilisera la dernière version enregistrée.</span>
+        <span class="muted">Exporter = dernière version enregistrée.</span>
       </div>
       <div class="dirtyActions">
         <button class="btn mini" @click="saveDevis" :disabled="busy.save || !variant?.id">Enregistrer</button>
@@ -1034,30 +1128,28 @@ function extraArticlesTotalHT(): number {
     <div v-if="error" class="alert error"><b>Erreur :</b> {{ error }}</div>
     <div v-if="loading" class="alert">Chargement…</div>
 
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab" :class="{ active: activeTab === 'SURCHARGES' }" @click="activeTab = 'SURCHARGES'">
-        Surcharges
-        <span class="badge">{{ touchedCount }}</span>
-      </button>
-      <button class="tab" :class="{ active: activeTab === 'CONTENU' }" @click="activeTab = 'CONTENU'">
-        Contenu
-      </button>
-    </div>
-
     <!-- TAB 1 : SURCHARGES -->
     <template v-if="activeTab === 'SURCHARGES'">
+      <!-- ✅ Controls compact (remplace le bloc “Information …” énorme) -->
       <div class="card controls">
-        <div class="checks">
-          <div class="miniStat infoOnly">
-            <div class="k">Information</div>
-            <div class="v">
-              Les <b>majorations</b> ne sont pas simulées dans le devis.
-              Pour qu’elles soient prises en compte, elles doivent être
-              <b>appliquées réellement dans la variante</b>.
-            </div>
-          </div>
+        <div class="controlsLeft">
+          <span class="hintLine">
+            <span class="hintDot">•</span>
+            <span>Les <b>majorations</b> ne sont pas simulées ici (elles doivent être appliquées dans la variante).</span>
 
+            <span class="tipWrap">
+              <button class="tipBtn" type="button" aria-label="Détails majorations">
+                <InformationCircleIcon class="tipIc" />
+              </button>
+              <span class="tip" role="tooltip">
+                Les majorations ne changent pas le devis automatiquement.<br />
+                Si tu veux qu’elles impactent les prix, applique-les au niveau de la <b>variante</b>.
+              </span>
+            </span>
+          </span>
+        </div>
+
+        <div class="controlsRight">
           <label class="chk">
             <input type="checkbox" v-model="withDevisSurcharge" />
             <span>Dashboard : surcharge devis</span>
@@ -1065,34 +1157,36 @@ function extraArticlesTotalHT(): number {
 
           <label class="chk">
             <input type="checkbox" v-model="draft.applyToDashboardOnSave" />
-            <span>Appliquer au dashboard lors du save</span>
+            <span>Appliquer au save</span>
           </label>
-        </div>
 
-        <div class="rightInfo">
-          <button class="btn" @click="applyToDashboard" :disabled="busy.apply">Appliquer au dashboard</button>
+          <button class="btn" @click="applyToDashboard" :disabled="busy.apply">Appliquer</button>
         </div>
       </div>
 
-      <div class="card tableCard">
-        <div class="tHead">
-          <div>Désignation</div>
-          <div class="r">Surcharge</div>
-          <div class="r">PV déf.</div>
-          <div class="r">Total</div>
+      <!-- ✅ List style inspiré FormulesPage -->
+      <div class="card listCard">
+        <div class="listHead">
+          <div class="lh">Formules</div>
+          <div class="rh">
+            <span class="muted">Surcharge</span>
+            <span class="muted">PV déf.</span>
+            <span class="muted">Total</span>
+          </div>
         </div>
 
-        <div class="tBody">
-          <div v-if="rows.length === 0" class="emptyRow">Aucune formule dans cette variante.</div>
+        <div class="list">
+          <div v-if="rows.length === 0" class="empty">
+            Aucune formule dans cette variante.
+          </div>
 
-          <div v-for="r in rows" :key="rowKey(r)" class="tRow" :class="{ touched: isRowTouched(r) }">
-            <!-- col 1 -->
-            <div class="cell main">
-              <div class="mainTop">
-                <b class="ell">{{ r?.formule?.label ?? "—" }}</b>
+          <div v-for="r in rows" :key="rowKey(r)" class="item" :class="{ touched: isRowTouched(r) }">
+            <div class="ileft">
+              <div class="ititle">
+                <b class="iname ell">{{ r?.formule?.label ?? "—" }}</b>
 
                 <span class="tipWrap">
-                  <button class="tipBtn" type="button" aria-label="Détails">
+                  <button class="tipBtn" type="button" aria-label="Détails formule">
                     <InformationCircleIcon class="tipIc" />
                   </button>
                   <span class="tip" role="tooltip">
@@ -1106,7 +1200,7 @@ function extraArticlesTotalHT(): number {
                 </span>
               </div>
 
-              <div class="sub">
+              <div class="chips">
                 <span class="chip"><span class="muted">Vol</span> <b class="mono">{{ int(r?.volumeM3) }}</b> <span class="muted">m³</span></span>
                 <span class="chip"><span class="muted">CMP</span> <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b></span>
                 <span class="chip"><span class="muted">MOMD</span> <b class="mono">{{ money2(r?.momd) }}</b></span>
@@ -1114,30 +1208,29 @@ function extraArticlesTotalHT(): number {
               </div>
             </div>
 
-            <!-- col 2 -->
-            <div class="cell r" data-label="Surcharge">
-              <input
-                class="input num"
-                type="number"
-                step="1"
-                :value="getSurcharge(r)"
-                @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
-              />
-            </div>
+            <div class="iright">
+              <div class="cellMini" data-label="Surcharge">
+                <input
+                  class="input num compact"
+                  type="number"
+                  step="1"
+                  :value="getSurcharge(r)"
+                  @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
 
-            <!-- col 3 -->
-            <div class="cell r" data-label="PV déf.">
-              <span class="pillFinal mono">{{ money2(pvDefinitifM3(r)) }}</span>
-            </div>
+              <div class="cellMini" data-label="PV déf.">
+                <span class="pillFinal mono">{{ money2(pvDefinitifM3(r)) }}</span>
+              </div>
 
-            <!-- col 4 -->
-            <div class="cell r" data-label="Total">
-              <b class="mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b>
+              <div class="cellMini" data-label="Total">
+                <b class="mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="tFoot">
+        <div class="listFoot">
           <div class="sumGrid">
             <div class="sumBox">
               <div class="k">Prix moyen</div>
@@ -1154,8 +1247,7 @@ function extraArticlesTotalHT(): number {
           </div>
 
           <div class="muted noteLine">
-            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après
-            pondération.
+            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après pondération.
           </div>
         </div>
       </div>
@@ -1163,172 +1255,218 @@ function extraArticlesTotalHT(): number {
 
     <!-- TAB 2 : CONTENU -->
     <template v-else>
-      <div class="card section">
-        <div class="sectionHead">
-          <div class="lbl">En-tête</div>
-          <div class="muted">{{ content.meta.ville || (pnl?.city ?? "") }}, le <b>{{ todayFr() }}</b></div>
-        </div>
+      <div class="contentLayout">
+        <!-- ✅ Nav verticale (plus étroite = ~ moitié) -->
+        <aside class="sideNav">
+          <div class="sideTitle">Navigation</div>
+          <button
+            v-for="s in CONTENT_SECTIONS"
+            :key="s.id"
+            class="sideBtn"
+            :class="{ active: activeSectionId === s.id }"
+            type="button"
+            @click="scrollToId(s.id)"
+          >
+            {{ s.label }}
+          </button>
 
-        <div class="grid3">
-          <div>
-            <div class="k">Ville</div>
-            <input class="input" v-model="content.meta.ville" placeholder="Ville" />
+          <div class="sideHint muted">
+            Astuce : la navigation rapide en bas reste disponible.
           </div>
-          <div>
-            <div class="k">Date</div>
-            <input class="input" v-model="content.meta.date" type="date" />
+        </aside>
+
+        <main class="contentMain" @scroll.passive="onContentScrollSpy">
+          <div class="card section" id="c-head">
+            <div class="sectionHead">
+              <div class="lbl">En-tête</div>
+              <div class="muted">{{ content.meta.ville || (pnl?.city ?? "") }}, le <b>{{ todayFr() }}</b></div>
+            </div>
+
+            <div class="grid3">
+              <div class="field">
+                <div class="k">Ville</div>
+                <input class="input" v-model="content.meta.ville" placeholder="Ville" />
+              </div>
+              <div class="field">
+                <div class="k">Date</div>
+                <input class="input" v-model="content.meta.date" type="date" />
+              </div>
+              <div class="field">
+                <div class="k">Client</div>
+                <input class="input" v-model="content.meta.client" placeholder="Client" />
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="k">Titre projet</div>
+              <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
+            </div>
           </div>
-          <div>
-            <div class="k">Client</div>
-            <input class="input" v-model="content.meta.client" placeholder="Client" />
+
+          <div class="card section" id="c-intro">
+            <div class="lbl">Introduction</div>
+            <textarea class="ta" v-model="content.intro" rows="3"></textarea>
           </div>
-        </div>
 
-        <div style="margin-top: 10px">
-          <div class="k">Titre projet</div>
-          <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
-        </div>
-      </div>
+          <div class="card section" id="c-rappel">
+            <div class="lbl">Rappel des données du projet</div>
 
-      <div class="card section">
-        <div class="lbl">Introduction</div>
-        <textarea class="ta" v-model="content.intro" rows="3"></textarea>
-      </div>
+            <div class="grid2kv">
+              <div class="kv">
+                <div class="k">Quantité</div>
+                <div class="v"><b>{{ int(quantiteProjetM3) }}</b> <span class="muted">m³</span></div>
+              </div>
+              <div class="kv">
+                <div class="k">Délai</div>
+                <div class="v"><b>{{ int(dureeMois) }}</b> <span class="muted">mois</span></div>
+              </div>
+              <div class="kv">
+                <div class="k">Démarrage</div>
+                <div class="v"><b>{{ formatDateFr(pnl?.startDate) || "—" }}</b></div>
+              </div>
+              <div class="kv">
+                <div class="k">Lieu</div>
+                <div class="v"><b>{{ pnl?.city ?? "—" }}</b></div>
+              </div>
+            </div>
 
-      <div class="card section">
-        <div class="lbl">Rappel des données du projet</div>
-
-        <div class="grid2kv">
-          <div class="kv">
-            <div class="k">Quantité</div>
-            <div class="v"><b>{{ int(quantiteProjetM3) }}</b> <span class="muted">m³</span></div>
+            <div class="muted noteLine">(Ces valeurs proviennent du PnL/contrat et ne sont pas modifiables ici.)</div>
           </div>
-          <div class="kv">
-            <div class="k">Délai</div>
-            <div class="v"><b>{{ int(dureeMois) }}</b> <span class="muted">mois</span></div>
+
+          <div class="card section" id="c-charges">
+            <div class="lbl">Charges & responsabilités</div>
+
+            <div class="subLbl">À la charge de LafargeHolcim Maroc</div>
+            <ul class="bullets">
+              <li v-for="(it, i) in content.chargeFournisseur" :key="'lhm' + i" class="bullet">
+                <template v-if="it.locked">
+                  <span class="lock">Contrat</span>
+                  <span class="txt">{{ it.label }}</span>
+                </template>
+                <template v-else>
+                  <textarea class="ta small" v-model="it.label" rows="2"></textarea>
+                  <button class="mini" type="button" @click="removeLine('lhm', i)">Suppr</button>
+                </template>
+              </li>
+            </ul>
+            <button class="btn miniAdd" type="button" @click="addLine('lhm')">+ Ajouter ligne</button>
+
+            <div class="sepLine"></div>
+
+            <div class="subLbl">À la charge du client</div>
+            <ul class="bullets">
+              <li v-for="(it, i) in content.chargeClient" :key="'cl' + i" class="bullet">
+                <template v-if="it.locked">
+                  <span class="lock">Contrat</span>
+                  <span class="txt">{{ it.label }}</span>
+                </template>
+                <template v-else>
+                  <textarea class="ta small" v-model="it.label" rows="2"></textarea>
+                  <button class="mini" type="button" @click="removeLine('client', i)">Suppr</button>
+                </template>
+              </li>
+            </ul>
+            <button class="btn miniAdd" type="button" @click="addLine('client')">+ Ajouter ligne</button>
           </div>
-          <div class="kv">
-            <div class="k">Démarrage</div>
-            <div class="v"><b>{{ formatDateFr(pnl?.startDate) || "—" }}</b></div>
+
+          <div class="card section" id="c-prix">
+            <div class="lbl">Prix complémentaires</div>
+
+            <div class="extras">
+              <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="exRow">
+                <input class="input" v-model="x.label" placeholder="Libellé" />
+                <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
+                <input class="input exVal" type="number" step="1" :value="x.value" readonly />
+                <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
+              </div>
+            </div>
+
+            <button class="btn miniAdd" type="button" @click="addExtra">+ Ajouter prix complémentaire</button>
+            <div class="muted noteLine">(Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)</div>
           </div>
-          <div class="kv">
-            <div class="k">Lieu</div>
-            <div class="v"><b>{{ pnl?.city ?? "—" }}</b></div>
+
+          <div class="card section" id="c-articles">
+            <div class="lbl">Articles hors formules</div>
+
+            <div class="extras">
+              <div v-for="(a, i) in content.extraArticles" :key="'ea' + i" class="exRow">
+                <input class="input" v-model="a.label" placeholder="Libellé" @input="onExtraEdited(a)" />
+
+                <input
+                  class="input exUnit"
+                  type="number"
+                  step="0.01"
+                  :placeholder="isHydrofugeArticle(a) ? '-' : ''"
+                  :value="isHydrofugeArticle(a) && n(a.qty) === 0 ? '' : a.qty"
+                  @input="
+                    (e) => {
+                      const raw = (e.target as HTMLInputElement).value;
+                      a.qty = raw === '' ? 0 : n(raw);
+                      onExtraEdited(a);
+                    }
+                  "
+                />
+
+                <input class="input exVal" type="number" step="0.01" v-model.number="a.pu" @input="onExtraEdited(a)" />
+                <button class="mini" type="button" @click="removeExtraArticle(i)">Suppr</button>
+              </div>
+            </div>
+
+            <button class="btn miniAdd" type="button" @click="addExtraArticle">+ Ajouter article</button>
+            <div class="muted noteLine">
+              (Le prix est en m³. Le pompage est initialisé depuis Transport, puis devient 100% éditable après modification/enregistrement.)
+            </div>
+
+            <div class="sepLine"></div>
+
+            <div class="grid2kv">
+              <div class="kv">
+                <div class="k">Total HT (articles)</div>
+                <div class="v"><b class="mono">{{ money2(extraArticlesTotalHT()) }}</b> <span class="muted">DH</span></div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="muted noteLine">(Ces valeurs proviennent du PnL/contrat et ne sont pas modifiables ici.)</div>
-      </div>
+          <div class="card section" id="c-textes">
+            <div class="lbl">Textes</div>
 
-      <div class="card section">
-        <div class="lbl">Charges & responsabilités</div>
+            <div class="subLbl">Durée - Quantité</div>
+            <textarea class="ta" v-model="content.dureeQuantiteTexte" rows="3"></textarea>
 
-        <div class="subLbl">À la charge de LafargeHolcim Maroc</div>
-        <ul class="bullets">
-          <li v-for="(it, i) in content.chargeFournisseur" :key="'lhm' + i" class="bullet">
-            <template v-if="it.locked">
-              <span class="lock">Contrat</span>
-              <span class="txt">{{ it.label }}</span>
-            </template>
-            <template v-else>
-              <textarea class="ta small" v-model="it.label" rows="2"></textarea>
-              <button class="mini" type="button" @click="removeLine('lhm', i)">Suppr</button>
-            </template>
-          </li>
-        </ul>
-        <button class="btn miniAdd" type="button" @click="addLine('lhm')">+ Ajouter ligne</button>
-
-        <div class="sepLine"></div>
-
-        <div class="subLbl">À la charge du client</div>
-        <ul class="bullets">
-          <li v-for="(it, i) in content.chargeClient" :key="'cl' + i" class="bullet">
-            <template v-if="it.locked">
-              <span class="lock">Contrat</span>
-              <span class="txt">{{ it.label }}</span>
-            </template>
-            <template v-else>
-              <textarea class="ta small" v-model="it.label" rows="2"></textarea>
-              <button class="mini" type="button" @click="removeLine('client', i)">Suppr</button>
-            </template>
-          </li>
-        </ul>
-        <button class="btn miniAdd" type="button" @click="addLine('client')">+ Ajouter ligne</button>
-      </div>
-
-      <div class="card section">
-        <div class="lbl">Prix complémentaires</div>
-
-        <div class="extras">
-          <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="exRow">
-            <input class="input" v-model="x.label" placeholder="Libellé" />
-            <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
-            <input class="input exVal" type="number" step="1" :value="x.value" readonly />
-            <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
+            <div class="subLbl" style="margin-top: 12px">Validité de l’offre</div>
+            <textarea class="ta" v-model="content.validiteTexte" rows="2"></textarea>
           </div>
-        </div>
 
-        <button class="btn miniAdd" type="button" @click="addExtra">+ Ajouter prix complémentaire</button>
-        <div class="muted noteLine">(Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)</div>
-      </div>
+          <div class="card section" id="c-sign">
+            <div class="lbl">Signature</div>
+            <div class="grid3">
+              <div class="field">
+                <div class="k">Nom</div>
+                <input class="input" v-model="content.signature.nom" placeholder="Nom" />
+              </div>
+              <div class="field">
+                <div class="k">Poste</div>
+                <input class="input" v-model="content.signature.poste" placeholder="Poste" />
+              </div>
+              <div class="field">
+                <div class="k">Téléphone</div>
+                <input class="input" v-model="content.signature.telephone" placeholder="Téléphone" />
+              </div>
+            </div>
 
-      <div class="card section">
-        <div class="lbl">Articles hors formules</div>
-
-        <div class="extras">
-          <div v-for="(a, i) in content.extraArticles" :key="'ea' + i" class="exRow">
-            <input class="input" v-model="a.label" placeholder="Libellé" :readonly="isPompageArticle(a)" />
-            <input class="input exUnit" type="number" step="0.01" :value="a.qty" readonly />
-            <input class="input exVal" type="number" step="0.01" :value="a.pu" readonly />
-            <button class="mini" type="button" @click="removeExtraArticle(i)">Suppr</button>
+            <div class="muted noteLine">
+              En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b>
+            </div>
           </div>
-        </div>
 
-        <button class="btn miniAdd" type="button" @click="addExtraArticle">+ Ajouter article</button>
-        <div class="muted noteLine">
-          (Le prix est toujours en m³. Le pompage est alimenté depuis Transport et n'est pas modifiable — mais il est supprimable.)
-        </div>
-
-        <div class="sepLine"></div>
-
-        <div class="grid2kv">
-          <div class="kv">
-            <div class="k">Total HT (articles)</div>
-            <div class="v"><b class="mono">{{ money2(extraArticlesTotalHT()) }}</b> <span class="muted">DH</span></div>
+          <!-- ✅ Navigation rapide BAS (conservée) -->
+          <div class="bottomNav">
+            <button class="bnavBtn" type="button" @click="scrollToId('c-head')">Haut</button>
+            <button class="bnavBtn" type="button" @click="scrollToId('c-charges')">Charges</button>
+            <button class="bnavBtn" type="button" @click="scrollToId('c-articles')">Articles</button>
+            <button class="bnavBtn" type="button" @click="scrollToId('c-sign')">Signature</button>
           </div>
-        </div>
-      </div>
-
-      <div class="card section">
-        <div class="lbl">Textes</div>
-
-        <div class="subLbl">Durée - Quantité</div>
-        <textarea class="ta" v-model="content.dureeQuantiteTexte" rows="3"></textarea>
-
-        <div class="subLbl" style="margin-top: 12px">Validité de l’offre</div>
-        <textarea class="ta" v-model="content.validiteTexte" rows="2"></textarea>
-      </div>
-
-      <div class="card section">
-        <div class="lbl">Signature</div>
-        <div class="grid3">
-          <div>
-            <div class="k">Nom</div>
-            <input class="input" v-model="content.signature.nom" placeholder="Nom" />
-          </div>
-          <div>
-            <div class="k">Poste</div>
-            <input class="input" v-model="content.signature.poste" placeholder="Poste" />
-          </div>
-          <div>
-            <div class="k">Téléphone</div>
-            <input class="input" v-model="content.signature.telephone" placeholder="Téléphone" />
-          </div>
-        </div>
-
-        <div class="muted noteLine">
-          En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b>
-        </div>
+        </main>
       </div>
     </template>
 
@@ -1340,8 +1478,7 @@ function extraArticlesTotalHT(): number {
           <div>
             <div style="font-weight: 1000; color: #111827">Exporter sans enregistrer ?</div>
             <div class="muted" style="margin-top: 2px">
-              Le Word sera généré depuis <b>la dernière version enregistrée</b>. Tes changements en cours ne seront pas
-              inclus.
+              Le Word sera généré depuis <b>la dernière version enregistrée</b>. Tes changements en cours ne seront pas inclus.
             </div>
           </div>
         </div>
@@ -1363,68 +1500,88 @@ function extraArticlesTotalHT(): number {
 </template>
 
 <style scoped>
-/* ✅ FIX overflow/superposition + labels toujours au-dessus des champs (sans toucher au reste)
-   - box-sizing global pour éviter que width:100% + padding déborde
-   - min-width:0 sur containers/grid items pour autoriser l'ellipsis/les champs à se contraindre
-   - champs/textarea en block + alignement vertical stable
-*/
-*, *::before, *::after { box-sizing: border-box; }
-.grid3 > div, .grid2kv > div { min-width: 0; }
-.grid3 > div { display:flex; flex-direction:column; gap:6px; }
-.exRow { min-width: 0; }
-.exRow > * { min-width: 0; }
-.k { display:block; }
-
 /* Base */
-.page { padding: 12px; display:flex; flex-direction:column; gap:10px; }
-.card { background:#fff; border:1px solid rgba(16,24,40,.12); border-radius:16px; padding:10px 12px; }
-.muted { color:#6b7280; font-size:12px; }
+.page{
+  --text:#0f172a;
+  --muted: rgba(15,23,42,0.62);
+  --b: rgba(16,24,40,0.12);
+  --soft: rgba(15,23,42,0.04);
+
+  padding: 12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.page, .page *{ box-sizing: border-box; }
+
+.card { background:#fff; border:1px solid var(--b); border-radius:16px; padding:10px 12px; }
+.muted { color: var(--muted); font-size:12px; }
 .mono { font-variant-numeric: tabular-nums; }
-.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .sep { color:#9ca3af; }
 
 .alert { border:1px solid #e5e7eb; border-radius:14px; padding:8px 10px; background:#fff; color:#111827; font-size:12px; }
 .alert.error { border-color:#ef4444; background:#fff5f5; }
 
+/* Buttons */
 .btn{
-  border:1px solid rgba(16,24,40,.14);
+  border:1px solid var(--b);
   background:#fff;
   border-radius:12px;
   padding:7px 10px;
   font-size:11.5px;
-  font-weight:1000;
+  font-weight:900;
   cursor:pointer;
   display:inline-flex;
   align-items:center;
   gap:8px;
+  color: var(--text);
 }
-.btn:hover{ background:#f9fafb; }
-.btn.primary{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; }
-.btn.primary:hover{ background: rgba(24,64,112,1); }
+.btn:hover{ background: rgba(15,23,42,0.03); }
+.btn.primary{ background: rgba(15,23,42,0.92); border-color: rgba(15,23,42,0.65); color:#fff; }
+.btn.primary:hover{ filter: brightness(1.05); }
 .btn.warnBtn{ border-color: rgba(245,158,11,0.55); }
 .btn.mini{ padding:6px 9px; font-size:11px; }
 
 .iconBtn{
   width:36px; height:36px;
   border-radius:12px;
-  border:1px solid rgba(16,24,40,.14);
+  border:1px solid var(--b);
   background:#fff;
   cursor:pointer;
   display:inline-flex; align-items:center; justify-content:center;
 }
-.iconBtn:hover{ background:#f9fafb; }
+.iconBtn:hover{ background: rgba(15,23,42,0.03); }
 .ic{ width:16px; height:16px; }
 
-.input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:12px; font-size:12.5px; background:#fff; display:block; }
+.input {
+  width:100%;
+  padding:8px 10px;
+  border:1px solid rgba(226,232,240,0.95);
+  border-radius:12px;
+  font-size:12.5px;
+  background:#fff;
+  outline:none;
+  line-height: 1.2;
+}
+.input:focus{
+  border-color: rgba(15,23,42,0.55);
+  box-shadow: 0 0 0 3px rgba(15,23,42,.10);
+}
 .ta{
   width:100%;
-  border:1px solid #d1d5db;
+  border:1px solid rgba(226,232,240,0.95);
   border-radius: 14px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   font-size: 13px;
   background:#fff;
   resize: vertical;
-  display:block;
+  outline:none;
+  line-height:1.25;
+}
+.ta:focus{
+  border-color: rgba(15,23,42,0.55);
+  box-shadow: 0 0 0 3px rgba(15,23,42,.10);
 }
 .ta.small{ font-size: 12px; }
 
@@ -1432,19 +1589,73 @@ function extraArticlesTotalHT(): number {
 .top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
 .tleft{ min-width:260px; display:flex; flex-direction:column; gap:4px; }
 .titleLine{ display:flex; align-items:center; gap:10px; }
-.title{ font-size:15px; font-weight:1000; color:#111827; }
+.title{ font-size:15px; font-weight:950; color: var(--text); }
 .pill{
   display:inline-flex; align-items:center; gap:8px;
   border:1px solid rgba(245,158,11,0.45);
   background: rgba(245,158,11,0.08);
   border-radius:999px;
   padding:4px 10px;
-  font-weight:1000;
+  font-weight:900;
   font-size:11px;
 }
 .dot{ width:7px; height:7px; border-radius:999px; background: rgba(245,158,11,1); display:inline-block; }
 .subline{ display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:11.5px; }
 .tright{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+
+/* ✅ Segmented tabs in header */
+.seg{
+  display:inline-flex;
+  border: 1px solid var(--b);
+  background: rgba(15,23,42,0.02);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 3px;
+}
+.segBtn{
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  cursor: pointer;
+  color: rgba(15,23,42,.75);
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.segBtn:hover{ background: rgba(15,23,42,0.03); }
+.segBtn.active{
+  background: rgba(15,23,42,0.92);
+  color: #fff;
+}
+.segBadge{
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.18);
+  font-size: 11px;
+  font-weight: 950;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+
+/* mini kpi inline */
+.miniKpis{ display:flex; align-items:center; gap:10px; }
+.miniK{
+  display:inline-flex;
+  align-items:baseline;
+  gap:6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--b);
+  background: rgba(15,23,42,0.02);
+  font-size: 11.5px;
+  font-weight: 900;
+  color: rgba(15,23,42,.80);
+}
+.miniK b{ color: var(--text); font-weight: 950; }
 
 /* Dirty bar */
 .dirtyBar{
@@ -1455,153 +1666,39 @@ function extraArticlesTotalHT(): number {
   padding:8px 10px;
 }
 .warnIc{ width:18px; height:18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
-.dirtyTxt{ display:flex; flex-direction:column; gap:2px; min-width:240px; flex:1; }
+.dirtyTxt{ display:flex; flex-direction:column; gap:2px; min-width:220px; flex:1; }
 .dirtyActions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 
-/* Tabs */
-.tabs{ display:flex; gap:8px; flex-wrap:wrap; }
-.tab{
-  border:1px solid rgba(16,24,40,.12);
-  background: rgba(15,23,42,.02);
-  border-radius:999px;
-  padding:8px 12px;
-  font-size:12px;
-  font-weight:1000;
-  cursor:pointer;
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-}
-.tab:hover{ background: rgba(15,23,42,.04); }
-.tab.active{
-  background: rgba(24,64,112,.10);
-  border-color: rgba(24,64,112,.28);
-  color: rgba(24,64,112,1);
-}
-.badge{
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: rgba(15,23,42,.08);
-  font-size: 11px;
-  font-weight: 1000;
-  display:inline-flex; align-items:center; justify-content:center;
-}
-
-/* Controls row */
+/* Controls compact */
 .controls{
   display:flex;
-  align-items:flex-start;
+  align-items:center;
   justify-content:space-between;
   gap:10px;
   flex-wrap:wrap;
-  padding: 8px 10px;
+  padding: 10px 12px;
 }
-.checks{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-.chk{ display:inline-flex; align-items:center; gap:8px; font-size:11.5px; font-weight:900; color:#111827; }
+.controlsLeft{ flex:1; min-width: 260px; }
+.controlsRight{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.chk{ display:inline-flex; align-items:center; gap:8px; font-size:11.5px; font-weight:900; color: var(--text); }
 .chk input{ width:15px; height:15px; border-radius:6px; }
 
-.rightInfo{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-.miniStat{
-  border:1px solid rgba(16,24,40,0.10);
-  background: rgba(15,23,42,0.02);
-  border-radius:14px;
-  padding:7px 10px;
-}
-.miniStat .k{
-  font-size:10.5px; font-weight:1000; color: rgba(15,23,42,.55);
-  text-transform: uppercase; letter-spacing:.02em;
-}
-.miniStat .v{
-  margin-top:4px;
-  font-size:12px;
-  font-weight:900;
-  color:#0f172a;
-  line-height:1.25;
-}
-.miniStat.infoOnly{ max-width: 520px; }
-
-/* ✅ Table 4 cols (no horizontal scroll) */
-.tableCard{ padding:0; overflow:hidden; }
-.tHead{
-  display:grid;
-  grid-template-columns: minmax(0, 1fr) 110px 120px 140px;
-  gap:10px;
-  padding:8px 12px;
-  background:#fafafa;
-  border-bottom:1px solid rgba(16,24,40,.10);
-  font-size:10.5px;
-  font-weight:1000;
-  color: rgba(15,23,42,.60);
-}
-.tBody{ padding:0; }
-.tRow{
-  display:grid;
-  grid-template-columns: minmax(0, 1fr) 110px 120px 140px;
-  gap:10px;
-  padding:6px 12px;
-  border-bottom:1px solid rgba(16,24,40,.10);
-  align-items:center;
-}
-.tRow:hover{ background: rgba(15,23,42,.02); }
-.tRow.touched{
-  box-shadow: inset 3px 0 0 rgba(24,64,112,0.55);
-  background: rgba(24,64,112,0.03);
-}
-.r{ text-align:right; }
-.cell{ min-width:0; }
-.emptyRow{ padding:12px 12px; color:#6b7280; font-size:12px; }
-
-/* main cell */
-.mainTop{ display:flex; align-items:center; gap:8px; }
-.sub{
-  margin-top:4px;
-  display:flex;
-  flex-wrap:wrap;
-  gap:5px;
-}
-.chip{
-  border:1px solid rgba(16,24,40,.10);
-  background: rgba(15,23,42,.02);
-  border-radius:999px;
-  padding:2px 7px;
-  font-size:10.5px;
-  font-weight:900;
-  color:#0f172a;
-  display:inline-flex; gap:6px; align-items:center;
-  max-width:100%;
-}
-.num{ text-align:right; }
-.input.num{
-  font-variant-numeric: tabular-nums;
-  padding: 6px 8px;
-  font-size: 12px;
-  border-radius: 10px;
-}
-
-/* PV pill */
-.pillFinal{
+.hintLine{
   display:inline-flex;
   align-items:center;
-  justify-content:center;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(24,64,112,0.22);
-  background: rgba(24,64,112,0.06);
-  font-weight: 1000;
-  color: rgba(24,64,112,1);
-  white-space: nowrap;
+  gap:8px;
   font-size: 12px;
+  color: rgba(15,23,42,.75);
+  flex-wrap:wrap;
 }
+.hintDot{ color: rgba(148,163,184,1); font-weight: 950; }
 
-/* tooltip */
+/* Tooltip (reuse) */
 .tipWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; flex: 0 0 auto; }
 .tipBtn{
   width: 20px; height: 20px;
   border-radius: 8px;
-  border: 1px solid rgba(16,24,40,0.12);
+  border: 1px solid rgba(226,232,240,0.95);
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
@@ -1612,12 +1709,12 @@ function extraArticlesTotalHT(): number {
   left: 28px;
   top: 50%;
   transform: translateY(-50%);
-  min-width: 230px;
-  max-width: 360px;
+  min-width: 240px;
+  max-width: 380px;
   background: rgba(17,24,39,0.96);
   color: #fff;
   border: 1px solid rgba(255,255,255,0.12);
-  padding: 7px 9px;
+  padding: 8px 10px;
   border-radius: 12px;
   font-size: 11.5px;
   line-height: 1.22;
@@ -1630,11 +1727,86 @@ function extraArticlesTotalHT(): number {
 .tipWrap:hover .tip{ opacity: 1; transform: translateY(-50%) translateX(0px); }
 .mutedLine{ display:block; margin-top: 5px; opacity: .85; }
 
-/* Footer sums */
-.tFoot{
-  padding: 6px 10px;
+/* ✅ List style (inspiré FormulesPage) */
+.listCard{ padding: 0; overflow:hidden; }
+.listHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(226,232,240,0.85);
   background: rgba(15,23,42,0.02);
-  border-top: 1px solid rgba(16,24,40,0.08);
+}
+.lh{ font-weight: 950; color: var(--text); font-size: 12px; }
+.rh{ display:flex; gap:18px; font-size: 11px; font-weight: 900; }
+.list{ display:flex; flex-direction:column; gap:8px; padding: 10px 12px; }
+.empty{ padding: 12px 0; color: var(--muted); font-size: 12px; }
+
+.item{
+  border:1px solid rgba(226,232,240,0.9);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.item:hover{ background: rgba(15,23,42,0.02); }
+.item.touched{
+  border-color: rgba(15,23,42,0.25);
+  box-shadow: inset 3px 0 0 rgba(15,23,42,0.55);
+  background: rgba(15,23,42,0.02);
+}
+.ileft{ display:flex; flex-direction:column; gap:6px; min-width:0; flex:1; }
+.ititle{ display:flex; align-items:center; gap:8px; min-width:0; }
+.iname{ font-weight: 950; font-size: 12.5px; color: var(--text); }
+
+.chips{ display:flex; flex-wrap:wrap; gap:6px; }
+.chip{
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.03);
+  border-radius:999px;
+  padding:2px 7px;
+  font-size:10.5px;
+  font-weight:900;
+  color: var(--text);
+  display:inline-flex;
+  gap:6px;
+  align-items:center;
+  max-width:100%;
+}
+
+.iright{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex:0 0 auto;
+}
+.cellMini{ min-width: 110px; text-align:right; }
+.input.num{ text-align:right; font-variant-numeric: tabular-nums; }
+.input.compact{ padding: 7px 9px; border-radius: 10px; font-size: 12px; }
+
+.pillFinal{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15,23,42,0.18);
+  background: rgba(15,23,42,0.06);
+  font-weight: 950;
+  color: rgba(15,23,42,1);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Footer sums */
+.listFoot{
+  padding: 10px 12px 12px;
+  background: rgba(15,23,42,0.02);
+  border-top: 1px solid rgba(226,232,240,0.85);
 }
 .sumGrid{
   display:grid;
@@ -1642,14 +1814,14 @@ function extraArticlesTotalHT(): number {
   gap: 10px;
 }
 .sumBox{
-  border: 1px solid rgba(16,24,40,0.10);
-  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(226,232,240,0.95);
+  background: rgba(255,255,255,0.85);
   border-radius: 14px;
-  padding: 6px 10px;
+  padding: 8px 10px;
 }
 .sumBox .k{
   font-size: 10.5px;
-  font-weight: 1000;
+  font-weight: 950;
   color: rgba(15,23,42,0.55);
   text-transform: uppercase;
   letter-spacing: .02em;
@@ -1657,8 +1829,8 @@ function extraArticlesTotalHT(): number {
 .sumBox .v{
   margin-top: 4px;
   font-size: 13px;
-  font-weight: 1000;
-  color: #0f172a;
+  font-weight: 950;
+  color: var(--text);
 }
 .sumBox .v span{
   color: rgba(15,23,42,0.55);
@@ -1668,31 +1840,87 @@ function extraArticlesTotalHT(): number {
 }
 .noteLine{ margin-top:8px; }
 
-/* Content */
+/* Content layout */
+.contentLayout{
+  display:grid;
+  grid-template-columns: 180px minmax(0, 1fr); /* ✅ nav verticale réduite */
+  gap: 12px;
+  align-items:start;
+}
+
+/* Side nav */
+.sideNav{
+  position: sticky;
+  top: 10px;
+  border: 1px solid rgba(226,232,240,0.95);
+  background: rgba(15,23,42,0.02);
+  border-radius: 16px;
+  padding: 10px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.sideTitle{
+  font-weight: 950;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.sideBtn{
+  width:100%;
+  text-align:left;
+  border: 1px solid rgba(226,232,240,0.95);
+  background: #fff;
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  color: rgba(15,23,42,.82);
+}
+.sideBtn:hover{ background: rgba(15,23,42,0.03); }
+.sideBtn.active{
+  border-color: rgba(15,23,42,0.30);
+  background: rgba(15,23,42,0.06);
+  color: var(--text);
+}
+.sideHint{ margin-top: 6px; font-size: 11px; }
+
+.contentMain{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  min-width:0;
+}
+
+/* Content sections */
 .section{ display:flex; flex-direction:column; gap:10px; }
 .sectionHead{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
-.lbl{ font-weight:1000; font-size:13px; color:#111827; }
-.subLbl{ font-weight:1000; font-size:12px; color: rgba(15,23,42,.78); }
-.kv{
-  border:1px solid rgba(16,24,40,0.10);
-  background: rgba(15,23,42,0.02);
-  border-radius: 14px;
-  padding: 6px 10px;
-}
-.k{ font-size: 11px; font-weight:1000; color:#6b7280; }
+.lbl{ font-weight:950; font-size:13px; color: var(--text); }
+.subLbl{ font-weight:950; font-size:12px; color: rgba(15,23,42,.78); }
+
+.field .k{ margin-bottom: 4px; } /* ✅ labels parfaitement au-dessus */
+.k{ font-size: 11px; font-weight:950; color: rgba(15,23,42,.55); }
 .v{ margin-top: 4px; }
 
-.grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-.grid2kv{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; min-width:0; }
+.grid2kv{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; min-width:0; }
 
-.sepLine{ height:1px; background: rgba(16,24,40,.10); margin: 8px 0; border-radius:999px; }
+.kv{
+  border:1px solid rgba(226,232,240,0.95);
+  background: rgba(15,23,42,0.02);
+  border-radius: 14px;
+  padding: 8px 10px;
+}
+
+.sepLine{ height:1px; background: rgba(226,232,240,0.95); margin: 8px 0; border-radius:999px; }
 
 .bullets{ list-style: none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
 .bullet{
-  border:1px solid rgba(16,24,40,.10);
-  background: rgba(15,23,42,.02);
+  border:1px solid rgba(226,232,240,0.95);
+  background: rgba(15,23,42,0.02);
   border-radius:14px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   display:flex;
   gap:10px;
   align-items:flex-start;
@@ -1702,60 +1930,78 @@ function extraArticlesTotalHT(): number {
   height:18px;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgba(24,64,112,0.22);
-  background: rgba(24,64,112,0.06);
-  color: rgba(24,64,112,1);
+  border: 1px solid rgba(15,23,42,0.18);
+  background: rgba(15,23,42,0.06);
+  color: rgba(15,23,42,1);
   font-size: 10.5px;
-  font-weight: 1000;
+  font-weight: 950;
   display:inline-flex;
   align-items:center;
 }
-.txt{ flex:1; color:#0f172a; font-size:12.5px; line-height:1.25; white-space: pre-wrap; }
+.txt{ flex:1; color: var(--text); font-size:12.5px; line-height:1.25; white-space: pre-wrap; min-width:0; }
 
 .mini{
-  border:1px solid #e5e7eb;
+  border:1px solid rgba(226,232,240,0.95);
   background:#fff;
   border-radius: 12px;
   padding: 8px 10px;
   font-size: 12px;
-  font-weight: 1000;
+  font-weight: 950;
   cursor:pointer;
   white-space:nowrap;
 }
-.mini:hover{ background:#f9fafb; }
+.mini:hover{ background: rgba(15,23,42,0.03); }
 .miniAdd{ align-self:flex-start; }
 
-.extras{ display:flex; flex-direction:column; gap: 10px; }
+.extras{ display:flex; flex-direction:column; gap: 10px; min-width:0; }
 .exRow{
   display:grid;
   grid-template-columns: 1.6fr .6fr .4fr auto;
   gap: 8px;
   align-items:center;
+  min-width:0;
 }
+.exRow > *{ min-width:0; }
 .exVal{ text-align:right; }
+
+/* Bottom nav */
+.bottomNav{
+  position: sticky;
+  bottom: 10px;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  padding: 10px 0 0;
+}
+.bnavBtn{
+  border:1px solid rgba(226,232,240,0.95);
+  background:#fff;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  cursor:pointer;
+}
+.bnavBtn:hover{ background: rgba(15,23,42,0.03); }
 
 /* Responsive */
 @media (max-width: 980px) {
-  .tHead{ display:none; }
-
-  .tRow{
-    grid-template-columns: 1fr;
-    gap: 10px;
-    align-items:start;
-    padding: 10px 12px;
-  }
-
-  .cell.r{ text-align:left; display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  .cell.r::before{
-    content: attr(data-label);
-    font-weight:1000;
-    color: rgba(15,23,42,.65);
-  }
-
-  .sumGrid{ grid-template-columns: 1fr; }
+  .contentLayout{ grid-template-columns: 1fr; }
+  .sideNav{ position: relative; top:auto; }
   .grid3{ grid-template-columns: 1fr; }
   .grid2kv{ grid-template-columns: 1fr; }
   .exRow{ grid-template-columns: 1fr; }
+  .iright{ width:100%; justify-content:space-between; gap:10px; }
+  .cellMini{ min-width: 0; width: 33%; text-align:left; }
+  .cellMini::before{
+    content: attr(data-label);
+    display:block;
+    font-size: 10.5px;
+    font-weight: 950;
+    color: rgba(15,23,42,.55);
+    margin-bottom: 4px;
+  }
 }
 
 /* Modal */
@@ -1772,7 +2018,7 @@ function extraArticlesTotalHT(): number {
 .modalCard{
   width: min(560px, 100%);
   background:#fff;
-  border: 1px solid rgba(16,24,40,0.12);
+  border: 1px solid var(--b);
   border-radius: 18px;
   box-shadow: 0 24px 70px rgba(2,6,23,0.35);
   padding: 12px 12px;

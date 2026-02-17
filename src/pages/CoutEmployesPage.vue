@@ -1,4 +1,8 @@
-<!-- ✅ src/pages/CoutEmployesPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize + hide zero + ✅ importer) -->
+<!-- ✅ src/pages/CoutEmployesPage.vue (FICHIER COMPLET / rows 1 ligne + KPIs + sticky subheader + toast + modal z-index + importer + generalize + ✅ Masquer 0 auto)
+     MAJ:
+     ✅ KPIs ajoutés: /m³, Total, %
+     ✅ Suppression du bloc d’indication “Saisie employés…”
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -12,8 +16,6 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   ArrowDownTrayIcon,
-
-  // ✅ icônes par poste/charge (uniquement logo + label)
   ClipboardDocumentCheckIcon,
   CpuChipIcon,
   BuildingOffice2Icon,
@@ -40,6 +42,10 @@ function toNum(v: any): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+function clamp(v: any, min = 0, max = 1e15) {
+  const x = toNum(v);
+  return Math.max(min, Math.min(max, x));
+}
 function n(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
@@ -50,10 +56,6 @@ function money(v: number, digits = 2) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(toNum(v));
-}
-function clamp(v: any, min = 0, max = 1e15) {
-  const x = toNum(v);
-  return Math.max(min, Math.min(max, x));
 }
 
 /* =========================
@@ -70,11 +72,10 @@ const variantLabel = computed(() => {
 });
 
 /* =========================
-   VOLUME + CA (pour perM3 / %)
+   VOLUME + CA (pour /m3 et %)
 ========================= */
 type DraftForm = { volumeM3: number; momd: number };
 const formDrafts = reactive<Record<string, DraftForm>>({});
-
 function getFormDraft(id: string): DraftForm {
   const k = String(id);
   if (!formDrafts[k]) formDrafts[k] = { volumeM3: 0, momd: 0 };
@@ -82,48 +83,43 @@ function getFormDraft(id: string): DraftForm {
 }
 
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
-
 watch(
   () => variant.value?.id,
   () => {
     for (const vf of formules.value) {
       const d = getFormDraft(vf.id);
-      d.volumeM3 = clamp(vf?.volumeM3);
-      d.momd = clamp(vf?.momd);
+      d.volumeM3 = clamp(vf?.volumeM3, 0, 1e15);
+      d.momd = clamp(vf?.momd, 0, 1e15);
     }
   },
   { immediate: true }
 );
 
-const volumeTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
-);
-const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
+const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
+const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen, 0, 1e15));
 
 function mpPriceUsed(mpId: string): number {
   const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-
-  if (vmp?.prix != null) return clamp(vmp.prix);
-  if (vmp?.prixOverride != null) return clamp(vmp.prixOverride);
-
-  return clamp(vmp?.mp?.prix);
+  if (vmp?.prix != null) return clamp(vmp.prix, 0, 1e15);
+  if (vmp?.prixOverride != null) return clamp(vmp.prixOverride, 0, 1e15);
+  return clamp(vmp?.mp?.prix, 0, 1e15);
 }
 function cmpParM3For(vf: any): number {
   const items = (vf?.formule?.items ?? []) as any[];
-  return items.reduce((s: number, it: any) => s + (clamp(it?.qty) / 1000) * mpPriceUsed(String(it?.mpId)), 0);
+  return items.reduce((s: number, it: any) => s + (clamp(it?.qty, 0, 1e15) / 1000) * mpPriceUsed(String(it?.mpId)), 0);
 }
 const caTotal = computed(() => {
   return formules.value.reduce((s: number, vf: any) => {
-    const vol = clamp(getFormDraft(vf.id).volumeM3);
-    const momd = clamp(getFormDraft(vf.id).momd);
+    const vol = clamp(getFormDraft(vf.id).volumeM3, 0, 1e15);
+    const momd = clamp(getFormDraft(vf.id).momd, 0, 1e15);
     const pv = cmpParM3For(vf) + transportPrixMoyen.value + momd;
     return s + pv * vol;
   }, 0);
 });
 
 /* =========================
-   DRAFT EMPLOYES
+   EMPLOYES
 ========================= */
 type Draft = Record<string, number>;
 const draft = reactive<Draft>({});
@@ -140,10 +136,6 @@ const EMP_GROUPS = [
   { key: "panierRepas", label: "Panier repas" },
 ] as const;
 
-/* =========================
-   ✅ UI MAP (LOGO + LABEL SEULEMENT)
-   (aucune logique métier)
-========================= */
 const EMP_ICON: Record<(typeof EMP_GROUPS)[number]["key"], any> = {
   responsable: ClipboardDocumentCheckIcon,
   centralistes: CpuChipIcon,
@@ -163,13 +155,83 @@ function loadFromVariant() {
   const s: any = (variant.value as any)?.employes ?? {};
   for (const g of EMP_GROUPS) {
     draft[`${g.key}Nb`] = clamp(s[`${g.key}Nb`], 0, 9999);
-    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999);
+    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999999);
   }
 }
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 
 /* =========================
-   ✅ IMPORTER (depuis autre variante / UI only)
+   ✅ Masquer 0 (AUTO)
+   - Par défaut: ON si au moins 1 champ != 0
+   - OFF si tout == 0
+========================= */
+const hideZero = ref(false);
+const hideZeroUserToggled = ref(false);
+
+const anyNonZero = computed(() => {
+  for (const g of EMP_GROUPS) {
+    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
+    const cout = clamp(draft[`${g.key}Cout`], 0, 999999999);
+    if (nb !== 0 || cout !== 0) return true;
+  }
+  return false;
+});
+const allZero = computed(() => !anyNonZero.value);
+
+function applyAutoHideZeroOnEnter() {
+  hideZeroUserToggled.value = false;
+  hideZero.value = anyNonZero.value;
+  if (allZero.value) hideZero.value = false;
+}
+
+watch(
+  () => variant.value?.id,
+  () => {
+    loadFromVariant();
+    applyAutoHideZeroOnEnter();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => allZero.value,
+  (z) => {
+    if (z) hideZero.value = false;
+  },
+  { immediate: true }
+);
+
+function toggleHideZero() {
+  hideZeroUserToggled.value = true;
+  hideZero.value = !hideZero.value;
+}
+
+/* filtre: masquer uniquement FULL 0 (nb==0 ET cout==0) */
+const empGroupsFiltered = computed(() => {
+  if (!hideZero.value) return EMP_GROUPS;
+  return EMP_GROUPS.filter((g) => {
+    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
+    const cout = clamp(draft[`${g.key}Cout`], 0, 999999999);
+    return !(nb === 0 && cout === 0);
+  });
+});
+const hiddenCount = computed(() => EMP_GROUPS.length - empGroupsFiltered.value.length);
+
+/* =========================
+   METRICS
+========================= */
+function rowMonthly(gKey: string) {
+  const nb = clamp(draft[`${gKey}Nb`], 0, 9999);
+  const cout = clamp(draft[`${gKey}Cout`], 0, 999999999);
+  return nb * cout;
+}
+const monthly = computed(() => EMP_GROUPS.reduce((s, g) => s + rowMonthly(g.key), 0));
+
+const total = computed(() => monthly.value * clamp(dureeMois.value, 0, 9999));
+const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
+const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
+
+/* =========================
+   ✅ IMPORTER (UI only)
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -178,7 +240,6 @@ const impErr = ref<string | null>(null);
 function findVariantById(variantId: string): any | null {
   const id = String(variantId ?? "").trim();
   if (!id) return null;
-
   for (const p of (store as any).pnls ?? []) {
     for (const c of (p as any)?.contracts ?? []) {
       for (const v of c?.variants ?? []) {
@@ -188,15 +249,13 @@ function findVariantById(variantId: string): any | null {
   }
   return null;
 }
-
 function applyEmployesFromVariant(srcVariant: any) {
   const s: any = srcVariant?.employes ?? {};
   for (const g of EMP_GROUPS) {
     draft[`${g.key}Nb`] = clamp(s[`${g.key}Nb`], 0, 9999);
-    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999);
+    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999999);
   }
 }
-
 async function onApplyImport(payload: { sourceVariantId: string }) {
   if (!variant.value) return;
 
@@ -212,19 +271,19 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   impErr.value = null;
   impBusy.value = true;
   try {
-    const src = findVariantById(sourceId);
+    let src = findVariantById(sourceId);
+    if (!src) await (store as any).loadPnls?.();
+    src = src ?? findVariantById(sourceId);
 
     if (!src) {
-      await (store as any).loadPnls?.();
-    }
-
-    const src2 = src ?? findVariantById(sourceId);
-    if (!src2) {
       showToast("Variante source introuvable (données non chargées).", "err");
       return;
     }
 
-    applyEmployesFromVariant(src2);
+    applyEmployesFromVariant(src);
+    hideZeroUserToggled.value = false;
+    hideZero.value = anyNonZero.value && !allZero.value;
+
     showToast("Coûts employés importés. Pense à enregistrer.", "ok");
     impOpen.value = false;
   } catch (e: any) {
@@ -234,38 +293,6 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
     impBusy.value = false;
   }
 }
-
-/* =========================
-   UI FILTER (hide zero cards)
-   ✅ masque si Nb==0 OU Cout==0
-========================= */
-const hideZero = ref(false);
-
-const empGroupsFiltered = computed(() => {
-  if (!hideZero.value) return EMP_GROUPS;
-
-  return EMP_GROUPS.filter((g) => {
-    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
-    const cout = clamp(draft[`${g.key}Cout`], 0, 999999);
-    return !(nb === 0 || cout === 0);
-  });
-});
-
-const hiddenCount = computed(() => EMP_GROUPS.length - empGroupsFiltered.value.length);
-
-/* =========================
-   METRICS
-========================= */
-const monthly = computed(() => {
-  return EMP_GROUPS.reduce((s, g) => {
-    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
-    const cout = clamp(draft[`${g.key}Cout`], 0, 999999);
-    return s + nb * cout;
-  }, 0);
-});
-const total = computed(() => monthly.value * clamp(dureeMois.value));
-const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
-const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
    TOAST
@@ -323,7 +350,7 @@ function buildPayload() {
   const out: any = { category: existing.category ?? "COUTS_CHARGES" };
   for (const g of EMP_GROUPS) {
     out[`${g.key}Nb`] = Number(clamp(draft[`${g.key}Nb`], 0, 9999));
-    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`], 0, 999999));
+    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`], 0, 999999999));
   }
   return out;
 }
@@ -342,7 +369,6 @@ async function save() {
     saving.value = false;
   }
 }
-
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts employés ?", async () => {
     closeModal();
@@ -350,9 +376,10 @@ function askSave() {
   });
 }
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
     closeModal();
     loadFromVariant();
+    applyAutoHideZeroOnEnter();
     showToast("Valeurs restaurées.", "ok");
   });
 }
@@ -429,19 +456,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             Reset
           </button>
 
-          <!-- ✅ Toggle hide zero -->
-          <button
-            class="btn"
-            :disabled="saving || genBusy || impBusy"
-            @click="hideZero = !hideZero"
-            :title="hideZero ? 'Afficher tout' : 'Masquer les blocs à 0'"
-          >
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="toggleHideZero()" :title="hideZero ? 'Afficher tout' : 'Masquer les lignes à 0'">
             <span class="dot" :class="{ on: hideZero }"></span>
             {{ hideZero ? "Afficher tout" : "Masquer 0" }}
             <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
           </button>
 
-          <!-- ✅ Importer -->
           <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
@@ -459,20 +479,23 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
 
-      <!-- ✅ KPIs en haut -->
+      <!-- ✅ KPIs -->
       <div class="kpis" v-if="variant">
         <div class="kpi">
-          <div class="kLbl">Prix / m³</div>
+          <div class="kLbl">/ m³</div>
           <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
         </div>
-        <div class="kpi">
-          <div class="kLbl">Total</div>
-          <div class="kVal mono">{{ money(total, 2) }}</div>
-        </div>
+
         <div class="kpi kpiMonth">
           <div class="kLbl">/ mois</div>
           <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
         </div>
+
+        <div class="kpi">
+          <div class="kLbl">Total</div>
+          <div class="kVal mono">{{ money(total, 2) }}</div>
+        </div>
+
         <div class="kpi">
           <div class="kLbl">%</div>
           <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
@@ -510,21 +533,18 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <template v-else>
       <div class="card">
-        <div v-if="hideZero && empGroupsFiltered.length === 0" class="emptyGrid">
-          Aucun bloc à afficher (tous à 0).
-        </div>
+        <div v-if="hideZero && empGroupsFiltered.length === 0" class="emptyGrid">Aucune ligne à afficher (tout est à 0).</div>
 
-        <div class="cards">
-          <div v-for="g in empGroupsFiltered" :key="g.key" class="empCard">
-            <!-- ✅ header minimal: icône + label uniquement -->
-            <div class="empHdr">
-              <div class="empTitleWrap">
-                <component :is="empIcon(g.key)" class="empIc" />
-                <div class="empTitle" :title="g.label">{{ g.label }}</div>
-              </div>
+        <!-- ✅ 1 poste par ligne -->
+        <div class="rows">
+          <div v-for="g in empGroupsFiltered" :key="g.key" class="r">
+            <div class="rLeft">
+              <component :is="empIcon(g.key)" class="ri" />
+              <div class="rlbl" :title="g.label">{{ g.label }}</div>
             </div>
 
-            <div class="line">
+            <div class="rMid">
+              <div class="mini">Nb</div>
               <input
                 class="inNb mono"
                 type="number"
@@ -533,44 +553,38 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 max="9999"
                 :value="draft[`${g.key}Nb`]"
                 @input="draft[`${g.key}Nb`] = clamp(($event.target as HTMLInputElement).value, 0, 9999)"
-                title="Nb"
               />
+
+              <div class="mini">Salaire</div>
               <input
-                class="inCout mono inMonth"
+                class="inCout mono"
                 type="number"
                 step="0.01"
                 min="0"
-                max="999999"
+                max="999999999"
                 :value="draft[`${g.key}Cout`]"
-                @input="draft[`${g.key}Cout`] = clamp(($event.target as HTMLInputElement).value, 0, 999999)"
-                title="Coût DH/mois"
+                @input="draft[`${g.key}Cout`] = clamp(($event.target as HTMLInputElement).value, 0, 999999999)"
               />
+              <div class="u">DH/mois</div>
             </div>
 
-            <div class="empFoot mono">
-              <span class="fLbl">/mois</span>
-              <b class="fVal">{{
-                money(clamp(draft[`${g.key}Nb`], 0, 9999) * clamp(draft[`${g.key}Cout`], 0, 999999), 2)
-              }}</b>
+            <div class="rRight mono">
+              <div class="mini2">/mois</div>
+              <div class="rVal">{{ money(rowMonthly(g.key), 2) }}</div>
             </div>
           </div>
         </div>
 
-        <div class="note muted">
-          Saisie : <b>Nb</b> et <b>Coût (DH/mois)</b>. Champs bleus = <b>DH/mois</b>.
+        <div class="note">
+          <b>Total</b> = /mois × durée • <b>/m³</b> = Total ÷ volume • <b>%</b> = Total ÷ CA.
         </div>
       </div>
     </template>
 
     <!-- ✅ IMPORT -->
-    <SectionImportModal
-      v-model="impOpen"
-      sectionLabel="Coûts employés"
-      :targetVariantId="variant?.id ?? null"
-      @apply="onApplyImport"
-    />
+    <SectionImportModal v-model="impOpen" sectionLabel="Coûts employés" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <!-- ✅ MODAL GENERALISATION -->
+    <!-- ✅ GENERALISER -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       section-label="Coûts employés"
@@ -579,7 +593,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @close="() => {}"
     />
 
-    <!-- ✅ Modal confirm/info -->
+    <!-- ✅ Modal confirm/info (au-dessus HeaderDashboard) -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -589,7 +603,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
 
           <div class="dlgBody">
-            <div class="dlgMsg">{{ modal.message }}</div>
+            <div class="dlgMsg" style="white-space: pre-line">{{ modal.message }}</div>
           </div>
 
           <div class="dlgFtr">
@@ -602,7 +616,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
-    <!-- ✅ Toast -->
+    <!-- ✅ Toast (au-dessus HeaderDashboard) -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -623,9 +637,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .mono {
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-.muted {
-  color: rgba(15, 23, 42, 0.55);
 }
 
 /* sticky subheader */
@@ -831,13 +842,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: #fff;
   overflow: hidden;
 }
-.empty {
-  padding: 12px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.6);
-}
-
-/* empty message when filtered all */
 .emptyGrid {
   padding: 10px 12px;
   margin: 8px;
@@ -848,111 +852,127 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: rgba(15, 23, 42, 0.65);
 }
 
-/* ultra compact grid */
-.cards {
+/* rows */
+.rows {
   padding: 8px;
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-}
-@media (max-width: 520px) {
-  .cards {
-    grid-template-columns: 1fr;
-  }
-}
-
-.empCard {
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 12px;
-  padding: 6px;
-  background: #fff;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
+.r {
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  background: rgba(15, 23, 42, 0.012);
+  border-radius: 14px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(320px, 1.2fr) minmax(140px, 0.6fr);
+  gap: 10px;
+  align-items: center;
+}
+@media (max-width: 980px) {
+  .r {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
 
-/* header minimal */
-.empHdr {
-  display: flex;
+.rLeft {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-}
-.empTitleWrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
-.empIc {
-  width: 16px;
-  height: 16px;
+.ri {
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
   color: rgba(2, 132, 199, 0.95);
 }
-.empTitle {
-  font-weight: 1000;
-  font-size: 12.5px;
-  color: #020617;
-  letter-spacing: 0.02em;
+.rlbl {
+  font-weight: 950;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.75);
   text-transform: uppercase;
+  letter-spacing: 0.03em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* inputs */
-.line {
+.rMid {
   display: grid;
-  grid-template-columns: 54px 1fr;
-  gap: 6px;
+  grid-template-columns: 34px 92px 54px 140px 70px;
+  gap: 8px;
   align-items: center;
+  justify-content: end;
+}
+@media (max-width: 980px) {
+  .rMid {
+    grid-template-columns: 34px 92px 54px 1fr 70px;
+    justify-content: start;
+  }
+}
+.mini {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  text-align: right;
+}
+@media (max-width: 980px) {
+  .mini {
+    text-align: left;
+  }
 }
 .inNb,
 .inCout {
-  height: 28px;
-  border-radius: 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.02);
-  padding: 0 8px;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(2, 132, 199, 0.26);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 10px;
   font-weight: 950;
   color: #0f172a;
   outline: none;
   text-align: right;
   min-width: 0;
-  font-size: 12px;
-}
-.inMonth {
-  border-color: rgba(2, 132, 199, 0.26);
-  background: rgba(2, 132, 199, 0.06);
 }
 .inNb:focus,
 .inCout:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
+.u {
+  font-size: 10.5px;
+  font-weight: 950;
+  color: rgba(2, 132, 199, 0.9);
+  white-space: nowrap;
+}
 
-.empFoot {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 6px;
-  border-top: 1px dashed rgba(16, 24, 40, 0.14);
+.rRight {
+  justify-self: end;
+  text-align: right;
   min-width: 0;
-  align-items: baseline;
 }
-.fLbl {
+@media (max-width: 980px) {
+  .rRight {
+    justify-self: start;
+    text-align: left;
+  }
+}
+.mini2 {
   font-size: 10px;
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(15, 23, 42, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
-.fVal {
-  font-size: 12px;
+.rVal {
+  font-size: 12.5px;
+  font-weight: 950;
+  color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -960,12 +980,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 .note {
   padding: 8px 10px;
-  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  border-top: 1px dashed rgba(16, 24, 40, 0.14);
   font-size: 11.5px;
   font-weight: 800;
+  color: rgba(15, 23, 42, 0.65);
 }
 
-/* modal */
+/* modal (✅ au-dessus du HeaderDashboard) */
 .ovl {
   position: fixed;
   inset: 0;
@@ -974,7 +995,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 100000;
 }
 .dlg {
   width: min(520px, 100%);
@@ -1031,12 +1052,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.28);
 }
 
-/* toast */
+/* toast (✅ au-dessus du HeaderDashboard) */
 .toast {
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 90;
+  z-index: 100000;
   display: flex;
   align-items: center;
   gap: 10px;
