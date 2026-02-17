@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / Qté + MOMD en bleu, PV neutre) -->
+<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / UI épurée + lisibilité chiffres + sans scroll horizontal + CA sans débord + MAD toujours visible) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -11,7 +11,6 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   MagnifyingGlassIcon,
-  ArrowsUpDownIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -29,17 +28,17 @@ function n(v: number, digits = 2) {
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
-function money(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "MAD",
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNum(v));
-}
 function clamp(x: any, min: number, max: number) {
   const v = toNum(x);
   return Math.max(min, Math.min(max, v));
+}
+
+/** ✅ CA: séparer nombre & devise pour éviter la troncature de "MAD" */
+function moneyNum(v: number, digits = 2) {
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
 }
 
 /* =========================
@@ -139,7 +138,7 @@ const baseRows = computed<Row[]>(() => {
 });
 
 /* =========================
-   ORDER STABLE
+   ORDER STABLE (auto only)
 ========================= */
 const orderIds = ref<string[]>([]);
 const didInitialSort = ref(false);
@@ -192,20 +191,16 @@ const caTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.ca), 0));
 const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
 
 /* =========================
-   UI TOOLBAR
+   UI (search only)
 ========================= */
 const q = ref("");
-const hideZero = ref(false);
-
 const rowsUi = computed(() => {
   const query = String(q.value ?? "").trim().toLowerCase();
   return rows.value.filter((r) => {
     const okQuery = !query || String(r.designation ?? "").toLowerCase().includes(query);
-    const okZero = !hideZero.value || !(toNum(r.qte) === 0 || toNum(r.momd) === 0);
-    return okQuery && okZero;
+    return okQuery;
   });
 });
-const hiddenCount = computed(() => rows.value.length - rowsUi.value.length);
 
 /* =========================
    TOAST
@@ -273,8 +268,11 @@ async function save() {
     });
 
     await (store as any).updateVariant(variant.value.id, { formules: { items } });
+
+    // ✅ tri auto après save
     applySortNow();
-    showToast("Quantités & MOMD enregistrées (tri PV appliqué).", "ok");
+
+    showToast("Quantités & MOMD enregistrées.", "ok");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
@@ -417,20 +415,11 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <!-- ✅ Header: titre + actions -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttlRow">
-            <div class="ttl">Qté & MOMD</div>
-            <span v-if="variant" class="badge">Variante active</span>
-          </div>
-
-          <div class="meta" v-if="variant">
-            <span class="clip"><b>{{ variant.title ?? variant.id?.slice?.(0, 8) }}</b></span>
-            <span class="sep" v-if="contract?.dureeMois">•</span>
-            <span v-if="contract?.dureeMois">Durée <b>{{ n(contract.dureeMois, 0) }}</b> mois</span>
-          </div>
-          <div class="meta" v-else>Aucune variante active.</div>
+          <div class="ttl">Qté & MOMD</div>
         </div>
 
         <div class="actions" v-if="variant">
@@ -442,11 +431,6 @@ onMounted(async () => {
           <button class="btn" :disabled="saving || genBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
-          </button>
-
-          <button class="btn" :disabled="saving || genBusy" @click="applySortNow()" title="Re-trier par PV décroissant">
-            <ArrowsUpDownIcon class="ic" />
-            Tri PV
           </button>
 
           <button class="btn pri" :disabled="saving || genBusy" @click="askSave()">
@@ -504,40 +488,26 @@ onMounted(async () => {
             <MagnifyingGlassIcon class="sic" />
             <input v-model="q" class="sin" type="text" placeholder="Rechercher une formule…" />
           </div>
-
-          <button
-            class="tbtn"
-            type="button"
-            @click="hideZero = !hideZero"
-            :title="hideZero ? 'Afficher tout' : 'Masquer lignes qté=0 ou MOMD=0'"
-          >
-            <span class="dot" :class="{ on: hideZero }"></span>
-            {{ hideZero ? "Afficher tout" : "Masquer 0" }}
-            <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
-          </button>
         </div>
 
+        <!-- ✅ Table desktop (sans scroll horizontal) -->
         <div class="tableWrap">
           <table class="table">
             <colgroup>
               <col class="colDesignation" />
               <col class="colNum" />
-              <!-- ✅ Qté + MOMD éditables -->
               <col class="colIn" />
               <col class="colIn" />
-              <!-- ✅ PV + CA neutres -->
               <col class="colNum" />
-              <col class="colNumWide" />
+              <col class="colNumCa" />
             </colgroup>
 
             <thead>
               <tr>
                 <th class="th thL">Désignation</th>
                 <th class="th thC">CMP</th>
-                <!-- ✅ BLEU sur Qté + MOMD -->
                 <th class="th thC thEdit">Qté</th>
                 <th class="th thC thEdit">MOMD</th>
-                <!-- ✅ PV NEUTRE -->
                 <th class="th thC">PV</th>
                 <th class="th thC">CA</th>
               </tr>
@@ -545,17 +515,17 @@ onMounted(async () => {
 
             <tbody>
               <tr v-for="r in rowsUi" :key="r.id" class="tr">
-                <td class="designation">
-                  <b class="designationText" :title="r.designation">{{ r.designation }}</b>
+                <td class="designation" :data-label="'Désignation'">
+                  <b class="designationText">{{ r.designation }}</b>
                 </td>
 
-                <td class="mono r val">{{ n(r.cmp, 2) }}</td>
+                <td class="mono r val" :data-label="'CMP'">{{ n(r.cmp, 2) }}</td>
 
-                <!-- ✅ Qté (editable) -->
-                <td class="cellInput cellEdit">
+                <!-- ✅ Qté (sans fond bleu derrière la colonne) -->
+                <td class="cellInput" :data-label="'Qté'">
                   <div class="inCell">
                     <input
-                      class="inputSm mono r val inputEdit"
+                      class="inputLg mono r val inputEdit"
                       type="number"
                       step="1"
                       min="0"
@@ -566,11 +536,11 @@ onMounted(async () => {
                   </div>
                 </td>
 
-                <!-- ✅ MOMD (editable) -->
-                <td class="cellInput cellEdit">
+                <!-- ✅ MOMD (sans fond bleu derrière la colonne) -->
+                <td class="cellInput" :data-label="'MOMD'">
                   <div class="inCell">
                     <input
-                      class="inputSm mono r val inputEdit"
+                      class="inputLg mono r val inputEdit"
                       type="number"
                       step="0.01"
                       min="0"
@@ -581,26 +551,27 @@ onMounted(async () => {
                   </div>
                 </td>
 
-                <!-- ✅ PV (read-only, NEUTRE, jamais bleu) -->
-                <td class="r cellPv">
+                <td class="r cellPv" :data-label="'PV'">
                   <span class="pvPill mono val">{{ n(r.pv, 2) }}</span>
                 </td>
 
-                <td class="r">
-                  <b class="mono val">{{ money(r.ca, 2) }}</b>
+                <!-- ✅ CA: anti-débord + MAD toujours visible -->
+                <td class="tdCa" :data-label="'CA'">
+                  <b class="mono val caWrap">
+                    <span class="caNum">{{ moneyNum(r.ca, 2) }}</span>
+                    <span class="caCur">MAD</span>
+                  </b>
                 </td>
               </tr>
 
               <tr v-if="rowsUi.length === 0">
-                <td class="emptyRow" colspan="6">Aucun résultat (filtre / recherche).</td>
+                <td class="emptyRow" colspan="6">Aucun résultat (recherche).</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <div class="foot muted tiny">
-          Tri PV : au chargement initial + après “Enregistrer” (tu peux aussi cliquer “Tri PV”).
-        </div>
+        <div class="foot muted tiny">Tri PV : automatique au chargement initial + après “Enregistrer”.</div>
       </div>
     </template>
 
@@ -619,7 +590,12 @@ onMounted(async () => {
 
           <div class="dlgFtr">
             <button class="btn2" type="button" @click="closeModal()">Fermer</button>
-            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
+            <button
+              v-if="modal.mode === 'confirm'"
+              class="btn2 pri"
+              type="button"
+              @click="modal.onConfirm && modal.onConfirm()"
+            >
               Confirmer
             </button>
           </div>
@@ -674,57 +650,25 @@ onMounted(async () => {
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 16px;
-  padding: 8px 10px;
+  padding: 10px;
 }
 
 .row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 260px;
-}
-.ttlRow {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  min-width: 180px;
 }
 .ttl {
   font-size: 15px;
   font-weight: 950;
   color: #0f172a;
-}
-.badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-.meta {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-}
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sep {
-  margin: 0 8px;
-  color: rgba(15, 23, 42, 0.35);
 }
 
 /* actions */
@@ -769,7 +713,7 @@ onMounted(async () => {
 
 /* KPIs (4) */
 .kpis {
-  margin-top: 8px;
+  margin-top: 10px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
@@ -853,7 +797,7 @@ onMounted(async () => {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* toolbar */
+/* toolbar (search only) */
 .toolbar {
   display: flex;
   gap: 8px;
@@ -861,10 +805,9 @@ onMounted(async () => {
   justify-content: space-between;
   padding: 10px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.06);
-  flex-wrap: wrap;
 }
 .search {
-  flex: 1 1 260px;
+  flex: 1 1 auto;
   min-width: 240px;
   display: flex;
   align-items: center;
@@ -889,48 +832,13 @@ onMounted(async () => {
   color: #0f172a;
   font-size: 12px;
 }
-.tbtn {
-  height: 34px;
-  border-radius: 12px;
-  padding: 0 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  font-weight: 950;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-.tbtn:hover {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.18);
-}
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  border: 2px solid rgba(15, 23, 42, 0.35);
-  background: transparent;
-  display: inline-block;
-}
-.dot.on {
-  border-color: rgba(2, 132, 199, 0.55);
-  background: rgba(2, 132, 199, 0.22);
-}
-.miniBadge {
-  font-size: 10px;
-  font-weight: 950;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(2, 132, 199, 0.28);
-  background: rgba(2, 132, 199, 0.08);
-  color: #0f172a;
+
+/* ✅ no horizontal scroll */
+.tableWrap {
+  overflow: hidden;
 }
 
-/* table */
-.tableWrap {
-  overflow-x: auto;
-}
+/* table desktop */
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -938,7 +846,7 @@ onMounted(async () => {
   table-layout: fixed;
 }
 
-/* colonnes optimisées */
+/* ✅ largeur totale = 100% (important sinon overflow) */
 .colDesignation {
   width: 34%;
 }
@@ -948,7 +856,7 @@ onMounted(async () => {
 .colIn {
   width: 16%;
 }
-.colNumWide {
+.colNumCa {
   width: 12%;
 }
 
@@ -956,8 +864,9 @@ onMounted(async () => {
 .table td {
   box-sizing: border-box;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  padding: 9px 10px;
+  padding: 10px 10px;
   vertical-align: middle;
+  overflow: hidden; /* ✅ anti-débord */
 }
 .th {
   background: #fafafa;
@@ -972,26 +881,12 @@ onMounted(async () => {
 .thL {
   text-align: left;
 }
-
-/* ✅ BLEU UNIQUEMENT sur Qté + MOMD */
 .thEdit {
   color: rgba(2, 132, 199, 0.95);
 }
 
-/* ✅ background bleu UNIQUEMENT sur cellules editables */
-.cellEdit {
-  background: rgba(2, 132, 199, 0.03);
-}
-
-/* ✅ hover: on garde PV neutre */
 .tr:hover td {
   background: rgba(15, 23, 42, 0.02);
-}
-.tr:hover td.cellEdit {
-  background: rgba(2, 132, 199, 0.05);
-}
-.tr:hover td.cellPv {
-  background: rgba(15, 23, 42, 0.02) !important;
 }
 
 .r {
@@ -1011,7 +906,6 @@ onMounted(async () => {
   font-weight: 950;
 }
 
-/* chiffres */
 .val {
   font-size: 12.5px;
   font-weight: 950;
@@ -1024,59 +918,76 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
 }
-.inputSm {
-  border: 1px solid rgba(16, 24, 40, 0.12);
+
+/* ✅ Inputs lisibles (mais pas de fond bleu derrière la colonne) */
+.inputLg {
+  border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 12px;
-  font-size: 12.5px;
-  padding: 7px 9px;
-  width: min(110px, 100%);
-  background: rgba(15, 23, 42, 0.02);
+  font-size: 13.5px;
+  padding: 8px 10px;
+  width: 100%;
+  max-width: 140px;
+  background: rgba(2, 132, 199, 0.08); /* uniquement l’input, pas la cellule */
   font-weight: 950;
   outline: none;
   color: #0f172a;
 }
-.inputSm:focus {
-  border-color: rgba(2, 132, 199, 0.55);
-  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
-  background: #fff;
-}
-
-/* ✅ inputs + unités bleues UNIQUEMENT (Qté + MOMD) */
-.inputEdit {
-  border-color: rgba(2, 132, 199, 0.22);
-  background: rgba(2, 132, 199, 0.06);
-}
-.inputEdit:focus {
-  border-color: rgba(2, 132, 199, 0.65);
+.inputLg:focus {
+  border-color: rgba(2, 132, 199, 0.7);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.14);
+  background: #fff;
 }
 .unit {
   color: rgba(15, 23, 42, 0.55);
   font-size: 11px;
-  min-width: 26px;
+  min-width: 28px;
   text-align: right;
-  font-weight: 900;
+  font-weight: 950;
 }
 .unitEdit {
-  color: rgba(2, 132, 199, 0.9);
+  color: rgba(2, 132, 199, 0.95);
 }
 
-/* ✅ PV NEUTRE (force) */
 .cellPv {
-  background: transparent;
+  background: transparent !important;
 }
 .pvPill {
   display: inline-block;
-  padding: 5px 12px;
+  padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid rgba(16, 24, 40, 0.16);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a !important;
   font-weight: 950;
   white-space: nowrap;
+}
+
+/* ✅ CA: jamais de débord + devise toujours visible */
+.tdCa {
+  text-align: right;
+  padding-right: 14px; /* marge de sécurité */
+}
+.caWrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.caNum {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.caCur {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.55);
 }
 
 .emptyRow {
@@ -1089,6 +1000,55 @@ onMounted(async () => {
 .foot {
   padding: 8px 10px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
+/* ✅ Mobile: table -> cards (no scroll) */
+@media (max-width: 920px) {
+  .table {
+    table-layout: auto;
+  }
+  thead {
+    display: none;
+  }
+  tbody,
+  tr,
+  td {
+    display: block;
+    width: 100%;
+  }
+  .tr {
+    border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+    padding: 10px;
+  }
+  .table td {
+    border-bottom: none;
+    padding: 8px 0;
+  }
+  .table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    font-weight: 950;
+    color: rgba(15, 23, 42, 0.55);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+  }
+  .designationText {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+  .inCell {
+    justify-content: flex-start;
+  }
+  .inputLg {
+    max-width: 100%;
+  }
+  .tdCa {
+    padding-right: 0;
+    text-align: left;
+  }
 }
 
 /* modal */

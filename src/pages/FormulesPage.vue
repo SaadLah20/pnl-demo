@@ -1,6 +1,9 @@
 <!-- src/pages/Variante/Sections/Formules/FormulesPage.vue
-     (FICHIER COMPLET / ✅ Import en “preview” visible avant save + cancel restore immédiat + save séparé
-      + options copy + modal sous HeaderDashboard + confirm modals internes)
+     (FICHIER COMPLET / UI alignée style TransportPage)
+     ✅ Enlève toutes les infos du haut (P&L / Contrat / Variante / hints)
+     ✅ Garde فقط: titre page + boutons + lignes formules
+     ✅ Message "Aucune formule…" quand vide
+     ✅ Style cohérent (variables, head sticky, boutons, cards)
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -48,13 +51,6 @@ function liters(v: number) {
 const pnl = computed(() => store.activePnl);
 const contract = computed(() => store.activeContract);
 const variant = computed(() => store.activeVariant);
-
-const pnlTitle = computed(() => pnl.value?.title ?? "—");
-const contractLabel = computed(() => {
-  const d = (contract.value as any)?.dureeMois ?? null;
-  return d != null ? `Contrat ${String((contract.value as any)?.id ?? "").slice(0, 6)} — ${d} mois` : "—";
-});
-const variantTitle = computed(() => (variant.value as any)?.title ?? "—");
 
 watch(
   () => store.activeVariantId,
@@ -108,10 +104,8 @@ function mapItemToRow(it: any, idPrefix = ""): FormuleRow {
 
 const rows = computed<FormuleRow[]>(() => {
   const v: any = variant.value ?? null;
-
   const items = v?.formules?.items ?? v?.variantFormules ?? [];
   if (!Array.isArray(items)) return [];
-
   return items.map((it: any) => mapItemToRow(it));
 });
 
@@ -128,9 +122,7 @@ const importDraft = reactive<{
   ready: boolean;
   sourceVariantId: string;
   copy: CopyPreset;
-  // preview: on stocke les items RAW de la source (avec formule/items) pour afficher la section
   previewRawItems: any[];
-  // snapshot light (pour save)
   items: SnapshotItem[];
 }>({
   ready: false,
@@ -146,8 +138,6 @@ function clearImportDraft() {
   importDraft.copy = "QTY_MOMD";
   importDraft.previewRawItems = [];
   importDraft.items = [];
-
-  // reset expand map (propre)
   for (const k of Object.keys(open)) delete open[k];
 }
 
@@ -158,20 +148,16 @@ const rowsShown = computed<FormuleRow[]>(() => {
   const items = importDraft.previewRawItems ?? [];
   if (!Array.isArray(items)) return [];
 
-  // id preview stable par formuleId
   return items.map((it: any) => {
     const f = it?.formule ?? {};
     const fid = String(it?.formuleId ?? f?.id ?? "").trim();
-    const clone = {
-      ...it,
-      id: `__preview__${fid || String(it?.id ?? "")}`,
-    };
+    const clone = { ...it, id: `__preview__${fid || String(it?.id ?? "")}` };
     return mapItemToRow(clone, "");
   });
 });
 
 /* =========================
-   ✅ AJOUT FORMULE (UI + anti-doublon)
+   ✅ AJOUT FORMULE
 ========================= */
 const addOpen = ref(false);
 const addQ = ref("");
@@ -190,7 +176,6 @@ const filteredCatalogue = computed(() => {
         const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""}`.toLowerCase();
         return blob.includes(q);
       });
-
   return out;
 });
 
@@ -210,7 +195,6 @@ async function addFormule(formuleId: string) {
     if (!variantId) return;
 
     await (store as any).addFormuleToVariant(variantId, String(formuleId));
-    // refresh
     if ((store as any).loadVariantDeep) await (store as any).loadVariantDeep(variantId);
   } catch (e: any) {
     addErr.value = e?.message ?? String(e);
@@ -220,9 +204,7 @@ async function addFormule(formuleId: string) {
 }
 
 /* =========================
-   ✅ SUPPRIMER FORMULE (variant) + confirm modal interne
-   ✅ FIX: resolve vrai variantFormuleId (ignore preview ids)
-   ✅ FIX: refresh deep après suppression -> KPIs à jour
+   ✅ SUPPRIMER FORMULE
 ========================= */
 const delBusy = reactive<Record<string, boolean>>({});
 const delErr = ref<string | null>(null);
@@ -235,14 +217,9 @@ const delConfirm = reactive({
 });
 
 function resolveVariantFormuleId(row: FormuleRow): string {
-  // 0) si preview, jamais utiliser raw.id
   const rawId = String(row?.raw?.id ?? "").trim();
-  if (rawId && !rawId.startsWith("__preview__")) {
-    // 1) si le raw contient déjà le bon id (VariantFormule.id)
-    return rawId;
-  }
+  if (rawId && !rawId.startsWith("__preview__")) return rawId;
 
-  // 2) fallback: chercher dans la variante active (deep) par formuleId
   const v: any = variant.value ?? null;
   const items = (v?.formules?.items ?? v?.variantFormules ?? []) as any[];
   const fid = String(row?.formuleId ?? "").trim();
@@ -254,8 +231,6 @@ function resolveVariantFormuleId(row: FormuleRow): string {
 
 function openDeleteConfirm(row: FormuleRow) {
   delErr.value = null;
-
-  // en preview import : pas de delete (c'est du non-enregistré)
   if (importDraft.ready) return;
 
   const vfId = resolveVariantFormuleId(row);
@@ -289,15 +264,8 @@ async function deleteFormule(variantFormuleId: string) {
   delBusy[vfId] = true;
 
   try {
-    // 1) API delete (backend idempotent)
     await (store as any).deleteVariantFormule(variantId, vfId);
-
-    // 2) refresh deep pour resync l’UI + recalcul KPIs header
-    if ((store as any).loadVariantDeep) {
-      await (store as any).loadVariantDeep(variantId);
-    }
-
-    // 3) fermer modal
+    if ((store as any).loadVariantDeep) await (store as any).loadVariantDeep(variantId);
     closeDeleteConfirm();
   } catch (e: any) {
     delErr.value = e?.message ?? String(e);
@@ -307,7 +275,7 @@ async function deleteFormule(variantFormuleId: string) {
 }
 
 /* =========================
-   Sorting MP
+   MP sorting (fallback-safe)
 ========================= */
 function normKey(v: any) {
   return String(v ?? "")
@@ -320,12 +288,8 @@ function normKey(v: any) {
 function catRank(catRaw: any): number {
   const c = normKey(catRaw);
   if (c === "ciment") return 0;
-
-  if (c === "granulats" || c === "granulat" || c === "granulas" || c === "granula" || c.includes("granul"))
-    return 1;
-
+  if (c === "granulats" || c === "granulat" || c.includes("granul")) return 1;
   if (c === "adjuvant") return 2;
-
   return 9;
 }
 
@@ -364,8 +328,7 @@ function cmpPerM3(r: FormuleRow): number {
 function getRhoFromCategorie(catRaw: any): number | null {
   const c = normKey(catRaw);
   if (c === "ciment") return 3.1;
-  if (c === "granulats" || c === "granulat" || c === "granulas" || c === "granula" || c.includes("granul"))
-    return 2.65;
+  if (c === "granulats" || c === "granulat" || c.includes("granul")) return 2.65;
   if (c === "adjuvant") return 1.1;
   return null;
 }
@@ -386,8 +349,7 @@ function normalizeItems(items: ItemDraft[]): ItemDraft[] {
 function getMpById(mpId: string): any | null {
   const list = store.mpCatalogue ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
-  const found = list.find((x: any) => String(x?.id ?? "") === String(mpId));
-  return found ?? null;
+  return list.find((x: any) => String(x?.id ?? "") === String(mpId)) ?? null;
 }
 
 function compositionStatsFor(r: FormuleRow) {
@@ -421,10 +383,7 @@ function compositionStatsFor(r: FormuleRow) {
     const rho = getRhoFromCategorie(mp?.categorie);
 
     if (!rho) {
-      missing.push({
-        mpId: String(it.mpId),
-        label: String(mp?.label ?? "MP inconnue"),
-      });
+      missing.push({ mpId: String(it.mpId), label: String(mp?.label ?? "MP inconnue") });
       continue;
     }
 
@@ -558,7 +517,6 @@ const importRows = computed<ImportRow[]>(() => {
         const vid = String(v?.id ?? "");
         if (!vid) continue;
 
-        // ne pas proposer la variante active comme source
         if (variant.value?.id && vid === String(variant.value.id)) continue;
 
         out.push({
@@ -721,7 +679,7 @@ function makePatchFor(copy: CopyPreset, s: SnapshotItem) {
 }
 
 /* =========================
-   ✅ CONFIRM IMPORT PREPARE (modal interne)
+   ✅ CONFIRM IMPORT PREPARE
 ========================= */
 const importConfirm = reactive({
   open: false,
@@ -744,13 +702,6 @@ function closeImportConfirm() {
   importConfirm.open = false;
 }
 
-/**
- * ✅ Import PREVIEW (non enregistré):
- * - Charge source en deep
- * - Stocke les items RAW pour preview (UI)
- * - Stocke snapshot light pour le save
- * - Restore variante active (target) derrière (contexte)
- */
 async function doImportPrepare() {
   if (!variant.value) return;
 
@@ -762,7 +713,6 @@ async function doImportPrepare() {
   importErr.value = null;
 
   try {
-    // 1) snapshot source (deep)
     let srcVariant: any = null;
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(srcId);
@@ -775,23 +725,19 @@ async function doImportPrepare() {
     const rawItems = (srcVariant?.formules?.items ?? srcVariant?.variantFormules ?? []) as any[];
     const snap = extractSourceSnapshot(srcVariant);
 
-    // 2) restore target (on n'écrit rien)
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(targetId);
     }
 
-    // 3) stage preview
     importDraft.ready = true;
     importDraft.sourceVariantId = srcId;
     importDraft.copy = importUi.copy ?? "QTY_MOMD";
     importDraft.previewRawItems = Array.isArray(rawItems) ? rawItems.slice() : [];
     importDraft.items = snap;
 
-    // close confirm + modal
     closeImportConfirm();
     closeImport();
 
-    // reset expand map (propre)
     for (const k of Object.keys(open)) delete open[k];
   } catch (e: any) {
     importErr.value = e?.message ?? String(e);
@@ -800,20 +746,11 @@ async function doImportPrepare() {
   }
 }
 
-/**
- * ✅ Save séparé:
- * - Supprime toutes les formules existantes de la variante active
- * - Ajoute les formules du snapshot
- * - Applique patch selon CopyPreset
- * - Reload deep final
- * - Clear preview
- */
 async function saveImportedDraft() {
   if (!variant.value) return;
 
   const targetId = String(store.activeVariantId ?? "").trim();
   if (!targetId) return;
-
   if (!importDraft.ready || !importDraft.items?.length) return;
 
   importBusy.value = true;
@@ -823,12 +760,10 @@ async function saveImportedDraft() {
     const copy = importDraft.copy ?? "QTY_MOMD";
     const src = importDraft.items.slice();
 
-    // ensure target loaded
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(targetId);
     }
 
-    // delete all existing target items
     const targetVariant = store.activeVariant as any;
     const targetItems = (targetVariant?.formules?.items ?? targetVariant?.variantFormules ?? []) as any[];
 
@@ -840,12 +775,10 @@ async function saveImportedDraft() {
       }
     }
 
-    // add all formuleIds
     for (const s of src) {
       await (store as any).addFormuleToVariant(targetId, s.formuleId);
     }
 
-    // reload target deep and apply patches
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(targetId);
     }
@@ -865,12 +798,10 @@ async function saveImportedDraft() {
       await (store as any).updateVariantFormule(targetId, createdId, patch);
     }
 
-    // final refresh
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(targetId);
     }
 
-    // clear preview => UI devient “figée” sur la DB (car on vient de sauver)
     clearImportDraft();
   } catch (e: any) {
     importErr.value = e?.message ?? String(e);
@@ -880,7 +811,7 @@ async function saveImportedDraft() {
 }
 
 /* =========================
-   ✅ GENERALISER SECTION (Formules) (inchangé)
+   ✅ GENERALISER SECTION (Formules)
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
@@ -996,54 +927,27 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 <template>
   <div class="page">
-    <div class="top">
-      <div class="tleft">
-        <div class="titleRow">
-          <div class="h1">Formules — Composition & CMP</div>
-          <span class="badge">Variante active</span>
-          <span v-if="importDraft.ready" class="badge" style="border-color:#c7d2fe;background:#eef2ff;color:#1e3a8a">
-            Preview import
-          </span>
-        </div>
-
-        <div class="meta">
-          <div class="metaLine">
-            <span class="k">P&L</span>
-            <span class="v">{{ pnlTitle }}</span>
-            <span class="sep">•</span>
-            <span class="k">Contrat</span>
-            <span class="v">{{ contractLabel }}</span>
-          </div>
-          <div class="metaLine">
-            <span class="k">Variante</span>
-            <span class="v strong">{{ variantTitle }}</span>
-          </div>
-        </div>
+    <!-- ✅ Header minimal (style TransportPage) -->
+    <div class="head">
+      <div class="hleft">
+        <div class="h1">Formules</div>
+        <div class="muted small">Composition & CMP</div>
       </div>
 
-      <div class="tright">
-        <div class="hint">
-          • CMP estimé depuis prix/t.
-          <br />
-          • Volume vérif = Σ(kg/ρ) + Eau(C×0,5) + 15L.
-        </div>
-      </div>
-
-      <div class="topActions">
-        <button class="btnPrimary" @click="addOpen = true" :disabled="!variant || addBusy || importBusy || importDraft.ready">
+      <div class="actions">
+        <button class="btn" type="button" @click="addOpen = true" :disabled="!variant || addBusy || importBusy || importDraft.ready">
           + Ajouter
         </button>
 
-        <button class="btn" @click="openImport()" :disabled="!variant || importBusy">
+        <button class="btn" type="button" @click="openImport()" :disabled="!variant || importBusy">
           <ArrowDownTrayIcon class="ic" />
           Importer
         </button>
 
-        <!-- ✅ Save séparé (uniquement si preview prêt) -->
         <button
           v-if="importDraft.ready"
-          class="btnPrimary"
-          style="background:#0f172a;border-color:#0f172a"
+          class="btn primary"
+          type="button"
           :disabled="importBusy || !variant"
           @click="saveImportedDraft()"
           title="Enregistrer l'import (commit DB)"
@@ -1053,67 +957,55 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
         <button
           v-if="importDraft.ready"
-          class="btn"
+          class="btn ghost"
+          type="button"
           :disabled="importBusy"
           @click="clearImportDraft()"
-          title="Annuler le preview (retour immédiat)"
+          title="Annuler le preview"
         >
           Annuler
         </button>
 
-        <button class="btn" @click="genOpen = true" :disabled="!variant || genBusy || importBusy || importDraft.ready">
+        <button class="btn" type="button" @click="genOpen = true" :disabled="!variant || genBusy || importBusy || importDraft.ready">
           Généraliser
         </button>
 
-        <button class="btn" @click="store.loadPnls()" :disabled="importBusy">Recharger</button>
-        <button class="btn xs" @click="openAll()" :disabled="!variant">Ouvrir</button>
-        <button class="btn xs" @click="closeAll()" :disabled="!variant">Fermer</button>
+        <button class="btn ghost" type="button" @click="store.loadPnls()" :disabled="importBusy">Recharger</button>
+        <button class="btn ghost" type="button" @click="openAll()" :disabled="!variant">Ouvrir</button>
+        <button class="btn ghost" type="button" @click="closeAll()" :disabled="!variant">Fermer</button>
       </div>
     </div>
 
-    <!-- ✅ Bandeau preview -->
-    <div v-if="importDraft.ready" class="alert" style="border-color:#c7d2fe;background:#eef2ff;color:#1e3a8a">
-      <b>Preview import (non enregistré)</b> — Source #{{ String(importDraft.sourceVariantId).slice(0, 8) }} • Mode:
-      {{ copyLabel(importDraft.copy) }} • Formules: {{ rowsShown.length }}
-      <span class="muted" style="margin-left:8px;color:rgba(30,58,138,.78)">
-        → Quitter la page = perdu • Annuler = revient comme avant • Enregistrer = commit.
-      </span>
+    <!-- Alerts -->
+    <div v-if="importDraft.ready" class="alert info">
+      <b>Preview import (non enregistré)</b>
+      <span class="muted"> — Source #{{ String(importDraft.sourceVariantId).slice(0, 8) }} • Mode: {{ copyLabel(importDraft.copy) }}</span>
     </div>
 
-    <div v-if="delErr" class="alert error"><b>Erreur :</b> {{ delErr }}</div>
-    <div v-if="genErr" class="alert error"><b>Généralisation :</b> {{ genErr }}</div>
-    <div v-if="genBusy" class="alert"><b>Généralisation :</b> traitement…</div>
+    <div v-if="delErr" class="alert err"><b>Erreur :</b> {{ delErr }}</div>
+    <div v-if="genErr" class="alert err"><b>Généralisation :</b> {{ genErr }}</div>
+    <div v-if="genBusy" class="alert info">Généralisation : traitement…</div>
 
-    <div v-if="importErr" class="alert error"><b>Import :</b> {{ importErr }}</div>
-    <div v-if="importBusy" class="alert"><b>Import :</b> traitement…</div>
+    <div v-if="importErr" class="alert err"><b>Import :</b> {{ importErr }}</div>
+    <div v-if="importBusy" class="alert info">Import : traitement…</div>
 
-    <div v-if="store.loading" class="alert">Chargement…</div>
-    <div v-else-if="store.error" class="alert error"><b>Erreur :</b> {{ store.error }}</div>
+    <div v-if="store.loading" class="alert info">Chargement…</div>
+    <div v-else-if="store.error" class="alert err"><b>Erreur :</b> {{ store.error }}</div>
 
     <template v-else>
-      <div class="card" v-if="!variant">
-        <div class="muted">Aucune variante active. Sélectionne une variante depuis le Dashboard.</div>
+      <div v-if="!variant" class="card mutedCard">
+        Sélectionne une variante (via Mes P&L) puis reviens ici.
       </div>
 
       <template v-else>
-        <div class="card slim">
-          <div class="bar">
-            <div class="barLeft">
-              <div class="h2">Formules ({{ rowsShown.length }})</div>
-              <div class="muted tiny">
-                CMP = Σ((kg/m³ ÷ 1000) × DH/t) • Volume = Σ(kg/ρ) + Eau(C×0,5) + 15L
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" v-if="rowsShown.length === 0">
-          <div class="muted">Aucune formule dans la variante.</div>
+        <div v-if="rowsShown.length === 0" class="card empty">
+          <div class="emptyTitle">Aucune formule</div>
+          <div class="muted small">Clique sur <b>+ Ajouter</b> ou <b>Importer</b> pour démarrer.</div>
         </div>
 
         <div v-else class="cards">
           <div v-for="r in rowsShown" :key="r.id" class="card">
-            <button class="rowHead" @click="toggle(r)">
+            <button class="rowHead" type="button" @click="toggle(r)">
               <div class="left">
                 <span class="chev">{{ isOpen(r) ? "▾" : "▸" }}</span>
                 <span class="name">{{ r.label || "—" }}</span>
@@ -1144,7 +1036,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                     <span class="pill mono">V <b>{{ liters(compositionStatsFor(r).vTotal) }}</b>L</span>
                     <span
                       class="pill"
-                      :class="compositionStatsFor(r).isOk ? 'ok' : compositionStatsFor(r).isLow ? 'bad' : 'warn'"
+                      :class="compositionStatsFor(r).isOk ? 'pill-ok' : compositionStatsFor(r).isLow ? 'pill-bad' : 'pill-warn'"
                     >
                       {{ compositionStatsFor(r).statusLabel }}
                     </span>
@@ -1168,10 +1060,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                   <div class="table">
                     <div class="thead">
                       <div>MP</div>
-                      <div class="rightTxt">Cat.</div>
-                      <div class="rightTxt">Qty</div>
-                      <div class="rightTxt">Prix/t</div>
-                      <div class="rightTxt">Total</div>
+                      <div class="r">Cat.</div>
+                      <div class="r">Qty</div>
+                      <div class="r">Prix/t</div>
+                      <div class="r">Total</div>
                     </div>
 
                     <div
@@ -1183,10 +1075,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                         <span class="mpName">{{ it?.mp?.label ?? "—" }}</span>
                         <span class="mpSub muted">{{ it?.mp?.resistance ?? "" }}</span>
                       </div>
-                      <div class="rightTxt muted">{{ it?.mp?.categorie ?? "—" }}</div>
-                      <div class="rightTxt mono strong">{{ n(it?.qty ?? 0, 0) }}</div>
-                      <div class="rightTxt mono">{{ n(it?.mp?.prix ?? 0) }}</div>
-                      <div class="rightTxt mono strong">
+                      <div class="r muted">{{ it?.mp?.categorie ?? "—" }}</div>
+                      <div class="r mono strong">{{ n(it?.qty ?? 0, 0) }}</div>
+                      <div class="r mono">{{ n(it?.mp?.prix ?? 0) }}</div>
+                      <div class="r mono strong">
                         {{ n(((toNum(it?.qty ?? 0) / 1000) * toNum(it?.mp?.prix ?? 0))) }}
                       </div>
                     </div>
@@ -1195,17 +1087,18 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
                 <div class="box">
                   <div class="boxTitle">Contrôle volume</div>
+
                   <div class="kpis">
                     <div class="kpi">
-                      <div class="k">Volume total</div>
+                      <div class="k muted">Volume total</div>
                       <div class="v mono strong">{{ liters(compositionStatsFor(r).vTotal) }} L</div>
                     </div>
                     <div class="kpi">
-                      <div class="k">Cible</div>
+                      <div class="k muted">Cible</div>
                       <div class="v mono">{{ liters(compositionStatsFor(r).target) }} L</div>
                     </div>
                     <div class="kpi">
-                      <div class="k">Δ</div>
+                      <div class="k muted">Δ</div>
                       <div
                         class="v mono"
                         :class="compositionStatsFor(r).isOk ? 'okTxt' : compositionStatsFor(r).isLow ? 'badTxt' : 'warnTxt'"
@@ -1214,13 +1107,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                       </div>
                     </div>
                     <div class="kpi">
-                      <div class="k">Eau estimée</div>
+                      <div class="k muted">Eau estimée</div>
                       <div class="v mono">{{ liters(compositionStatsFor(r).vEau) }} L</div>
                     </div>
                   </div>
 
-                  <div class="muted tiny">
-                    Note : contrôle de cohérence indicatif (ρ approx).
+                  <div class="muted small" style="margin-top:8px">
+                    Contrôle indicatif (ρ approx).
                   </div>
                 </div>
               </div>
@@ -1229,85 +1122,84 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <!-- MODAL AJOUT -->
-        <div v-if="addOpen" class="modalOverlay underDash" @click.self="addOpen = false">
+        <div v-if="addOpen" class="overlay underDash" @click.self="addOpen = false">
           <div class="modal">
-            <div class="modalHead">
-              <div class="modalTitle">Ajouter une formule</div>
-              <button class="x" @click="addOpen = false">✕</button>
+            <div class="mhead">
+              <div class="mtitle">Ajouter une formule</div>
+              <button class="x" @click="addOpen = false">×</button>
             </div>
 
-            <div class="modalSearch">
+            <div class="mbody">
               <input v-model="addQ" class="in" placeholder="Rechercher…" />
-            </div>
+              <div v-if="addErr" class="alert err" style="margin-top:10px"><b>Erreur :</b> {{ addErr }}</div>
 
-            <div v-if="addErr" class="modalErr"><b>Erreur :</b> {{ addErr }}</div>
-
-            <div class="modalList">
-              <div
-                v-for="f in filteredCatalogue"
-                :key="String(f?.id ?? '')"
-                class="modalItem"
-                :class="isAlreadyInVariant(String(f?.id ?? '')) ? 'disabled' : ''"
-              >
-                <div class="miLeft">
-                  <div class="miTitle">
-                    <span class="miName">{{ f?.label ?? "—" }}</span>
-                    <span class="chip">{{ f?.resistance ?? "—" }}</span>
+              <div class="list">
+                <div
+                  v-for="f in filteredCatalogue"
+                  :key="String(f?.id ?? '')"
+                  class="item"
+                  :class="isAlreadyInVariant(String(f?.id ?? '')) ? 'disabled' : ''"
+                >
+                  <div class="ileft">
+                    <div class="ititle">
+                      <span class="iname">{{ f?.label ?? "—" }}</span>
+                      <span class="chip">{{ f?.resistance ?? "—" }}</span>
+                    </div>
+                    <div class="muted small">{{ f?.city ?? "—" }} • {{ f?.region ?? "—" }}</div>
                   </div>
-                  <div class="miSub muted">{{ f?.city ?? "—" }} • {{ f?.region ?? "—" }}</div>
-                </div>
 
-                <div class="miRight">
-                  <span v-if="isAlreadyInVariant(String(f?.id ?? ''))" class="tag">Déjà ajouté</span>
-                  <button
-                    v-else
-                    class="btnPrimary xs"
-                    :disabled="addBusy || importBusy || importDraft.ready"
-                    @click="addFormule(String(f?.id ?? ''))"
-                  >
-                    Ajouter
-                  </button>
+                  <div class="iright">
+                    <span v-if="isAlreadyInVariant(String(f?.id ?? ''))" class="tag">Déjà ajouté</span>
+                    <button
+                      v-else
+                      class="btn primary"
+                      style="padding:7px 10px;font-size:12px"
+                      :disabled="addBusy || importBusy || importDraft.ready"
+                      @click="addFormule(String(f?.id ?? ''))"
+                    >
+                      Ajouter
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div class="modalFoot">
-              <button class="btn" @click="addOpen = false">Fermer</button>
+            <div class="mact">
+              <button class="btn ghost" @click="addOpen = false">Fermer</button>
             </div>
           </div>
         </div>
 
         <!-- ✅ MODAL IMPORT -->
-        <div v-if="importUi.open" class="modalOverlay underDash" @click.self="closeImport()">
+        <div v-if="importUi.open" class="overlay underDash" @click.self="closeImport()">
           <div class="modal">
-            <div class="modalHead">
-              <div class="modalTitle">Importer — Formules</div>
-              <button class="x" @click="closeImport()">✕</button>
+            <div class="mhead">
+              <div class="mtitle">Importer — Formules</div>
+              <button class="x" @click="closeImport()">×</button>
             </div>
 
-            <div class="importTop">
-              <div class="importControls">
-                <label class="chk">
+            <div class="mbody">
+              <div class="rowBetween">
+                <label class="check">
                   <input type="checkbox" v-model="importUi.onlyActivePnl" />
-                  <span>P&L active uniquement</span>
+                  <span><b>P&L active uniquement</b></span>
                 </label>
 
-                <div class="importBtns">
-                  <button class="btn xs" type="button" @click="openAllImport()">Tout ouvrir</button>
-                  <button class="btn xs" type="button" @click="closeAllImport()">Tout fermer</button>
+                <div class="btns">
+                  <button class="btn ghost" type="button" @click="openAllImport()">Tout ouvrir</button>
+                  <button class="btn ghost" type="button" @click="closeAllImport()">Tout fermer</button>
                 </div>
               </div>
 
-              <div class="modalSearch" style="padding: 10px 14px 0; border-bottom: 0">
-                <input
-                  v-model="importUi.q"
-                  class="in"
-                  placeholder="Rechercher… (PNL / contrat / variante / status / id)"
-                />
-              </div>
+              <input
+                v-model="importUi.q"
+                class="in"
+                placeholder="Rechercher… (PNL / contrat / variante / status / id)"
+                style="margin-top:10px"
+              />
 
-              <div class="importCopy">
-                <div class="copyTitle">Mode d’import (valeurs)</div>
+              <div class="section">
+                <div class="sectionTitle">Mode d’import</div>
                 <div class="copyGrid">
                   <label class="radio">
                     <input type="radio" v-model="importUi.copy" value="QTY_MOMD" />
@@ -1328,37 +1220,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 </div>
               </div>
 
-              <div class="importHint muted tiny">
+              <div class="muted small" style="margin-top:10px">
                 Import = affiche un <b>preview</b> (non enregistré). Enregistrer est séparé.
               </div>
-            </div>
 
-            <div class="modalList importList">
-              <div
-                v-if="importTree.length === 0"
-                class="modalErr"
-                style="border-color:#e5e7eb;background:#f9fafb;color:#374151"
-              >
+              <div v-if="importTree.length === 0" class="alert info" style="margin-top:10px">
                 Aucune variante trouvée (filtre trop strict ?).
               </div>
 
-              <div v-else class="importTree">
-                <div v-for="p in importTree" :key="p.pnlId" class="pnlBlock">
-                  <button class="treeRow pnlRow" type="button" @click="togglePnl(p.pnlId)">
+              <div v-else class="tree" style="margin-top:10px">
+                <div v-for="p in importTree" :key="p.pnlId" class="block">
+                  <button class="treeRow" type="button" @click="togglePnl(p.pnlId)">
                     <span class="caret" :class="{ on: openPnl[p.pnlId] }">▾</span>
-                    <span class="treeTitle ell">{{ p.pnlTitle }}</span>
-                    <span class="muted tiny mono">#{{ String(p.pnlId).slice(0, 8) }}</span>
+                    <span class="tTitle ell">{{ p.pnlTitle }}</span>
+                    <span class="muted small mono">#{{ String(p.pnlId).slice(0, 8) }}</span>
                   </button>
 
-                  <div v-if="openPnl[p.pnlId]" class="pnlBody">
-                    <div v-for="c in p.contracts" :key="c.contractId" class="contractBlock">
-                      <button class="treeRow contractRow" type="button" @click="toggleContract(p.pnlId, c.contractId)">
+                  <div v-if="openPnl[p.pnlId]" class="body">
+                    <div v-for="c in p.contracts" :key="c.contractId" class="block">
+                      <button class="treeRow subRow" type="button" @click="toggleContract(p.pnlId, c.contractId)">
                         <span class="caret" :class="{ on: contractIsOpen(p.pnlId, c.contractId) }">▾</span>
-                        <span class="treeTitle ell">{{ c.contractLabel }}</span>
-                        <span class="muted tiny mono">#{{ String(c.contractId).slice(0, 8) }}</span>
+                        <span class="tTitle ell">{{ c.contractLabel }}</span>
+                        <span class="muted small mono">#{{ String(c.contractId).slice(0, 8) }}</span>
                       </button>
 
-                      <div v-if="contractIsOpen(p.pnlId, c.contractId)" class="contractBody">
+                      <div v-if="contractIsOpen(p.pnlId, c.contractId)" class="body">
                         <button
                           v-for="v in c.variants"
                           :key="v.variantId"
@@ -1368,57 +1254,48 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                           @click="importUi.sourceVariantId = v.variantId"
                         >
                           <span class="dotVar" :class="{ ok: v.hasFormules }"></span>
-                          <span class="treeTitle ell">{{ v.variantTitle }}</span>
+                          <span class="tTitle ell">{{ v.variantTitle }}</span>
                           <span class="statusPill">{{ v.variantStatus }}</span>
-                          <span class="muted tiny mono">#{{ String(v.variantId).slice(0, 8) }}</span>
+                          <span class="muted small mono">#{{ String(v.variantId).slice(0, 8) }}</span>
                         </button>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div class="muted tiny" style="margin-top: 10px">
+                <div class="muted small" style="margin-top:10px">
                   Indicateur: <span class="dotLeg ok"></span> a des formules • <span class="dotLeg"></span> vide
                 </div>
               </div>
             </div>
 
-            <div class="modalFoot">
-              <button class="btn" @click="closeImport()">Annuler</button>
-              <button
-                class="btnPrimary"
-                :disabled="!importUi.sourceVariantId || !variant || importBusy"
-                @click="openImportConfirm()"
-              >
+            <div class="mact">
+              <button class="btn ghost" @click="closeImport()">Annuler</button>
+              <button class="btn primary" :disabled="!importUi.sourceVariantId || !variant || importBusy" @click="openImportConfirm()">
                 Importer (preview)
               </button>
             </div>
           </div>
         </div>
 
-        <!-- ✅ MODAL CONFIRM IMPORT (preview only) -->
-        <div v-if="importConfirm.open" class="modalOverlay underDash" @click.self="closeImportConfirm()">
-          <div class="modal confirmModal">
-            <div class="modalHead">
-              <div class="modalTitle">Confirmer l’import</div>
-              <button class="x" @click="closeImportConfirm()">✕</button>
+        <!-- ✅ MODAL CONFIRM IMPORT -->
+        <div v-if="importConfirm.open" class="overlay underDash" @click.self="closeImportConfirm()">
+          <div class="modal confirm">
+            <div class="mhead">
+              <div class="mtitle">Confirmer l’import</div>
+              <button class="x" @click="closeImportConfirm()">×</button>
             </div>
 
-            <div class="confirmBody">
+            <div class="mbody">
               <div class="confirmText">{{ importConfirm.msg }}</div>
-
-              <div class="confirmMini muted tiny">
-                Note : tu verras les formules importées dans la section, mais rien n’est écrit tant que tu n’enregistres pas.
+              <div class="muted small" style="margin-top:8px">
+                Tu verras les formules importées, mais rien n’est écrit tant que tu n’enregistres pas.
               </div>
             </div>
 
-            <div class="modalFoot">
-              <button class="btn" :disabled="importBusy" @click="closeImportConfirm()">Annuler</button>
-              <button
-                class="btnPrimary"
-                :disabled="importBusy || !variant || !importUi.sourceVariantId"
-                @click="doImportPrepare()"
-              >
+            <div class="mact">
+              <button class="btn ghost" :disabled="importBusy" @click="closeImportConfirm()">Annuler</button>
+              <button class="btn primary" :disabled="importBusy || !variant || !importUi.sourceVariantId" @click="doImportPrepare()">
                 {{ importBusy ? "..." : "Confirmer & afficher" }}
               </button>
             </div>
@@ -1426,196 +1303,439 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <!-- ✅ MODAL CONFIRM DELETE -->
-        <div v-if="delConfirm.open" class="modalOverlay underDash" @click.self="closeDeleteConfirm()">
-          <div class="modal confirmModal">
-            <div class="modalHead">
-              <div class="modalTitle">Supprimer la formule</div>
-              <button class="x" @click="closeDeleteConfirm()">✕</button>
+        <div v-if="delConfirm.open" class="overlay underDash" @click.self="closeDeleteConfirm()">
+          <div class="modal confirm">
+            <div class="mhead">
+              <div class="mtitle">Supprimer la formule</div>
+              <button class="x" @click="closeDeleteConfirm()">×</button>
             </div>
 
-            <div class="confirmBody">
+            <div class="mbody">
               <div class="confirmText">
                 Supprimer cette formule de la variante ?
                 <span class="muted" style="display:block;margin-top:6px;font-weight:900;">{{ delConfirm.label || "—" }}</span>
               </div>
-
-              <div class="confirmMini muted tiny">
-                Cette action est définitive.
-              </div>
+              <div class="muted small" style="margin-top:8px">Cette action est définitive.</div>
             </div>
 
-            <div class="modalFoot">
-              <button class="btn" :disabled="delBusy[delConfirm.variantFormuleId]" @click="closeDeleteConfirm()">Annuler</button>
+            <div class="mact">
+              <button class="btn ghost" :disabled="delBusy[delConfirm.variantFormuleId]" @click="closeDeleteConfirm()">Annuler</button>
               <button
-                class="btnPrimary"
-                style="background:#b91c1c;border-color:#b91c1c"
+                class="btn"
+                style="border-color:#fecaca;background:#fff5f5;color:#7f1d1d;font-weight:950"
                 :disabled="delBusy[delConfirm.variantFormuleId] || importBusy || importDraft.ready"
                 @click="deleteFormule(delConfirm.variantFormuleId)"
               >
-                Confirmer la suppression
+                Confirmer
               </button>
             </div>
           </div>
         </div>
 
         <!-- ✅ MODAL GENERALISATION -->
-<SectionGeneralizeModal
-  v-model="genOpen"
-  section-label="Formules"
-  :source-variant-id="String(store.activeVariantId ?? '') || null"
-  @apply="onApplyGeneralize"
-/>
-
-
-
+        <SectionGeneralizeModal
+          v-model="genOpen"
+          section-label="Formules"
+          :source-variant-id="String(store.activeVariantId ?? '') || null"
+          @apply="onApplyGeneralize"
+        />
       </template>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* styles identiques à ta version + z-index overlay haut + underDash sous HeaderDashboard */
-.page { display:flex; flex-direction:column; gap:8px; padding:10px; }
-.top { display:flex; justify-content:space-between; align-items:flex-end; gap:8px; flex-wrap:wrap; }
-.tleft { display:flex; flex-direction:column; gap:2px; min-width:260px; }
-.titleRow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.h1 { font-weight:950; font-size:14px; }
-.badge { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#374151; font-weight:900; }
-.meta { display:flex; flex-direction:column; gap:1px; }
-.metaLine { display:flex; align-items:center; gap:6px; font-size:11px; }
-.k { color:#6b7280; font-weight:800; }
-.v { color:#111827; }
-.strong { font-weight:950; }
-.sep { opacity:.5; }
-.tright { display:flex; align-items:flex-end; flex:1 1 auto; min-width:220px; }
-.hint { font-size:10.5px; color:#6b7280; line-height:1.2; }
-.topActions { display:flex; gap:6px; align-items:center; flex:0 0 auto; flex-wrap:wrap; }
-.btn, .btnPrimary { border:1px solid #e5e7eb; background:#fff; padding:7px 10px; border-radius:12px; cursor:pointer; font-weight:900; font-size:12px; display:inline-flex; align-items:center; gap:8px; }
-.btn:hover { background:#f9fafb; }
-.btnPrimary { border-color:#111827; background:#111827; color:#fff; }
-.btnPrimary:hover { filter:brightness(1.05); }
-.btn.xs, .btnPrimary.xs { padding:6px 8px; font-size:11px; }
-.alert { border:1px solid #e5e7eb; background:#fff; padding:10px 12px; border-radius:14px; font-size:12px; }
-.alert.error { border-color:#fecaca; background:#fff5f5; color:#7f1d1d; }
-.muted { color:#6b7280; }
-.tiny { font-size:10.5px; }
-.mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
-.card { border:1px solid #e5e7eb; background:#fff; border-radius:16px; overflow:hidden; }
-.card.slim { padding:8px 10px; }
-.cards { display:flex; flex-direction:column; gap:8px; }
-.bar { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.h2 { font-weight:950; font-size:12.5px; }
-.rowHead { width:100%; border:0; background:#fff; cursor:pointer; padding:8px 10px; display:flex; gap:10px; justify-content:space-between; align-items:center; text-align:left; }
-.rowHead:hover { background:#f9fafb; }
-.left { display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow:hidden; }
-.chev { color:#6b7280; width:16px; display:inline-block; flex:0 0 auto; }
-.name { font-weight:950; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:420px; }
-.chip { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#374151; font-weight:950; flex:0 0 auto; }
-.dot { opacity:.5; flex:0 0 auto; }
-.sub { font-size:10.5px; color:#6b7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px; }
-.right { display:flex; gap:8px; align-items:center; justify-content:flex-end; flex:0 0 auto; }
-.iconDanger { border:1px solid #fee2e2; background:#fff; color:#b91c1c; width:30px; height:28px; border-radius:10px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; font-size:14px; flex:0 0 auto; }
-.iconDanger:hover { background:#fff5f5; }
-.iconDanger:disabled { opacity:.5; cursor:not-allowed; }
-.cmpBox { display:inline-flex; align-items:baseline; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; }
-.cmpLbl { font-size:10px; color:#6b7280; font-weight:900; }
-.cmpVal { font-size:12px; font-weight:950; color:#111827; }
-.pills { display:inline-flex; gap:6px; align-items:center; }
-.pill { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; font-weight:900; }
-.pill.ok { border-color:#bbf7d0; background:#f0fdf4; color:#166534; }
-.pill.warn { border-color:#fde68a; background:#fffbeb; color:#92400e; }
-.pill.bad { border-color:#fecaca; background:#fff5f5; color:#7f1d1d; }
-.rowBody { padding:10px; border-top:1px solid #eef2f7; }
-.grid { display:grid; grid-template-columns:1.5fr 1fr; gap:10px; }
-@media (max-width: 980px) { .grid { grid-template-columns:1fr; } }
-.box { border:1px solid #eef2f7; background:#fcfcfd; border-radius:14px; padding:10px; }
-.boxTitle { font-weight:950; font-size:12px; margin-bottom:8px; }
-.miniErr { border:1px solid #fecaca; background:#fff5f5; color:#7f1d1d; border-radius:12px; padding:8px 10px; font-size:11px; margin-bottom:8px; }
-.miniChip { display:inline-flex; align-items:center; gap:6px; padding:2px 6px; border-radius:999px; border:1px solid #fecaca; background:#fff; margin-left:6px; font-size:10px; font-weight:900; }
-.table { display:flex; flex-direction:column; gap:6px; }
-.thead, .trow { display:grid; grid-template-columns:1.4fr 0.8fr 0.6fr 0.7fr 0.7fr; gap:8px; align-items:center; }
-.thead { font-size:10px; color:#6b7280; font-weight:900; padding:0 2px 4px; }
-.trow { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:7px 8px; font-size:11.5px; }
-.mp { display:flex; flex-direction:column; gap:1px; min-width:0; }
-.mpName { font-weight:950; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.mpSub { font-size:10px; }
-.rightTxt { text-align:right; }
-.kpis { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.kpi { border:1px solid #eef2f7; border-radius:14px; background:#fff; padding:8px 10px; }
-.kpi .k { font-size:10px; color:#6b7280; font-weight:900; }
-.kpi .v { font-size:12px; margin-top:2px; }
-.okTxt { color:#166534; font-weight:950; }
-.warnTxt { color:#92400e; font-weight:950; }
-.badTxt { color:#7f1d1d; font-weight:950; }
+/* ✅ Style calqué sur TransportPage (variables + head sticky + boutons) */
+.page{
+  --text:#0f172a;
+  --muted: rgba(15,23,42,0.62);
+  --b: rgba(16,24,40,0.12);
+  --soft: rgba(15,23,42,0.04);
 
-/* ✅ IMPORTANT: z-index haut + underDash sous HeaderDashboard */
-.modalOverlay { position:fixed; inset:0; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; padding:18px; z-index:99999; }
-.modalOverlay.underDash{ align-items:flex-start; padding-top: 82px; } /* ✅ sous HeaderDashboard */
-.modal { width:min(900px, 96vw); max-height:82vh; overflow:auto; background:#fff; border-radius:18px; border:1px solid #e5e7eb; box-shadow:0 25px 50px rgba(0,0,0,.15); }
-.modalHead { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #eef2f7; position:sticky; top:0; background:#fff; z-index:2; }
-.modalTitle { font-weight:950; font-size:13px; }
-.x { border:1px solid #e5e7eb; background:#fff; width:34px; height:32px; border-radius:12px; cursor:pointer; font-weight:900; }
-.x:hover { background:#f9fafb; }
-.modalSearch { padding:10px 14px; border-bottom:1px solid #eef2f7; }
-.in { width:100%; border:1px solid #e5e7eb; border-radius:12px; padding:10px 12px; outline:none; font-size:12px; }
-.in:focus { border-color:#111827; box-shadow:0 0 0 3px rgba(17,24,39,.12); }
-.modalErr { margin:10px 14px 0; border:1px solid #fecaca; background:#fff5f5; color:#7f1d1d; border-radius:14px; padding:10px 12px; font-size:12px; }
-.modalList { padding:10px 14px; display:flex; flex-direction:column; gap:8px; }
-.modalItem { border:1px solid #eef2f7; border-radius:14px; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; background:#fff; }
-.modalItem:hover { background:#fcfcfd; }
-.modalItem.disabled { opacity:.6; }
-.miLeft { display:flex; flex-direction:column; gap:3px; min-width:0; }
-.miTitle { display:flex; align-items:center; gap:8px; min-width:0; }
-.miName { font-weight:950; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px; }
-.miSub { font-size:11px; }
-.miRight { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
-.tag { font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid #e5e7eb; background:#fafafa; color:#6b7280; font-weight:900; }
-.modalFoot { border-top:1px solid #eef2f7; padding:12px 14px; display:flex; justify-content:flex-end; gap:8px; position:sticky; bottom:0; background:#fff; }
-.ic{ width:14px; height:14px; }
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding: 0 10px 14px;
+}
+.page, .page *{ box-sizing: border-box; }
+.muted{ color: var(--muted); }
+.small{ font-size: 11px; }
+.mono{ font-variant-numeric: tabular-nums; }
+.r{ text-align:right; }
+.dot{ color: rgba(148,163,184,1); font-weight: 900; }
+.ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 
-.importTop{ padding: 10px 0 8px; border-bottom: 1px solid #eef2f7; }
-.importControls{ padding: 0 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
-.chk{ display:flex; align-items:center; gap:8px; font-size:12px; font-weight:900; color:#111827; user-select:none; }
-.chk input{ width:16px; height:16px; }
-.importBtns{ display:flex; gap:8px; align-items:center; }
-.importHint{ padding: 6px 14px 0; }
-.importList{ padding-top: 8px; }
+/* Header */
+.head{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fff;
+  padding: 10px 0 6px;
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:10px;
+  border-bottom: 1px solid rgba(226,232,240,.65);
+}
+.hleft{ display:flex; flex-direction:column; gap:2px; }
+.h1{ font-weight: 950; font-size: 14px; color: var(--text); }
+.actions{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 
-.importCopy{ padding: 10px 14px 0; }
-.copyTitle{ font-size:11.5px; font-weight:950; color:#111827; margin-bottom:8px; }
+/* Buttons */
+.btn{
+  border: 1px solid var(--b);
+  background: #fff;
+  padding: 8px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 900;
+  font-size: 12px;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  color: var(--text);
+}
+.btn:hover{ background: rgba(15,23,42,0.03); }
+.btn:disabled{ opacity:.55; cursor:not-allowed; }
+.btn.primary{
+  border-color: rgba(15,23,42,0.85);
+  background: rgba(15,23,42,0.92);
+  color:#fff;
+}
+.btn.primary:hover{ filter: brightness(1.05); }
+.btn.ghost{ background: rgba(15,23,42,0.03); }
+
+/* Alerts */
+.alert{
+  border: 1px solid var(--b);
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.alert.info{ background: rgba(15,23,42,0.03); }
+.alert.err{ border-color:#fecaca; background:#fff5f5; color:#7f1d1d; }
+
+/* Cards */
+.card{
+  border: 1px solid rgba(226,232,240,0.85);
+  background:#fff;
+  border-radius: 16px;
+  overflow:hidden;
+}
+.mutedCard{
+  padding: 14px;
+  color: var(--muted);
+  font-weight: 900;
+}
+.empty{
+  padding: 16px;
+}
+.emptyTitle{
+  font-weight: 950;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.cards{ display:flex; flex-direction:column; gap:8px; }
+
+/* Formule row head */
+.rowHead{
+  width:100%;
+  border:0;
+  background:#fff;
+  cursor:pointer;
+  padding:10px 12px;
+  display:flex;
+  gap:10px;
+  justify-content:space-between;
+  align-items:center;
+  text-align:left;
+}
+.rowHead:hover{ background: rgba(15,23,42,0.02); }
+.left{ display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow:hidden; }
+.chev{ color: var(--muted); width:16px; display:inline-block; flex:0 0 auto; }
+.name{ font-weight: 950; font-size: 12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 520px; }
+.chip{
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.03);
+  font-weight: 950;
+  flex:0 0 auto;
+}
+.sub{ font-size: 10.5px; color: var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 180px; }
+.right{ display:flex; gap:8px; align-items:center; justify-content:flex-end; flex:0 0 auto; }
+
+.iconDanger{
+  border:1px solid #fee2e2;
+  background:#fff;
+  color:#b91c1c;
+  width:32px;
+  height:30px;
+  border-radius: 12px;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size: 14px;
+}
+.iconDanger:hover{ background:#fff5f5; }
+.iconDanger:disabled{ opacity:.55; cursor:not-allowed; }
+
+.cmpBox{
+  display:inline-flex;
+  align-items:baseline;
+  gap:6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.03);
+}
+.cmpLbl{ font-size:10px; color: var(--muted); font-weight: 900; }
+.cmpVal{ font-size:12px; font-weight:950; color: var(--text); }
+
+.pills{ display:inline-flex; gap:6px; align-items:center; }
+.pill{
+  font-size:10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border:1px solid rgba(226,232,240,0.9);
+  background:#fff;
+  font-weight: 900;
+}
+.pill-ok{ border-color:#bbf7d0; background:#f0fdf4; color:#166534; }
+.pill-warn{ border-color:#fde68a; background:#fffbeb; color:#92400e; }
+.pill-bad{ border-color:#fecaca; background:#fff5f5; color:#7f1d1d; }
+
+.rowBody{ padding: 12px; border-top: 1px solid rgba(226,232,240,0.7); }
+.grid{ display:grid; grid-template-columns: 1.5fr 1fr; gap:10px; }
+@media (max-width: 980px){ .grid{ grid-template-columns:1fr; } }
+
+.box{
+  border:1px solid rgba(226,232,240,0.8);
+  background: rgba(15,23,42,0.02);
+  border-radius: 14px;
+  padding: 10px;
+}
+.boxTitle{ font-weight: 950; font-size: 12px; margin-bottom: 8px; color: var(--text); }
+
+.miniErr{
+  border:1px solid #fecaca;
+  background:#fff5f5;
+  color:#7f1d1d;
+  border-radius:12px;
+  padding:8px 10px;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.miniChip{
+  display:inline-flex;
+  align-items:center;
+  padding:2px 6px;
+  border-radius:999px;
+  border:1px solid #fecaca;
+  background:#fff;
+  margin-left:6px;
+  font-size:10px;
+  font-weight:900;
+}
+
+.table{ display:flex; flex-direction:column; gap:6px; }
+.thead, .trow{ display:grid; grid-template-columns: 1.4fr 0.8fr 0.6fr 0.7fr 0.7fr; gap:8px; align-items:center; }
+.thead{ font-size:10px; color: var(--muted); font-weight: 900; padding: 0 2px 4px; }
+.trow{
+  background:#fff;
+  border:1px solid rgba(226,232,240,0.9);
+  border-radius:12px;
+  padding: 8px 8px;
+  font-size: 11.5px;
+}
+.mp{ display:flex; flex-direction:column; gap:1px; min-width:0; }
+.mpName{ font-weight:950; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mpSub{ font-size:10px; }
+
+.kpis{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+.kpi{
+  border:1px solid rgba(226,232,240,0.9);
+  border-radius:14px;
+  background:#fff;
+  padding: 8px 10px;
+}
+.kpi .v{ font-size: 12px; margin-top:2px; color: var(--text); }
+.okTxt{ color:#166534; font-weight: 950; }
+.warnTxt{ color:#92400e; font-weight: 950; }
+.badTxt{ color:#7f1d1d; font-weight: 950; }
+
+/* Overlay & Modal (z-index haut + underDash sous HeaderDashboard) */
+.overlay{
+  position:fixed;
+  inset:0;
+  background: rgba(0,0,0,.28);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 18px;
+  z-index: 99999;
+}
+.overlay.underDash{ align-items:flex-start; padding-top: 82px; }
+
+.modal{
+  width: min(920px, 96vw);
+  max-height: 82vh;
+  overflow:auto;
+  background:#fff;
+  border-radius: 18px;
+  border:1px solid rgba(226,232,240,0.95);
+  box-shadow: 0 25px 50px rgba(0,0,0,.15);
+}
+.modal.confirm{ width: min(620px, 96vw); }
+
+.mhead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(226,232,240,0.8);
+  position: sticky;
+  top: 0;
+  background:#fff;
+  z-index:2;
+}
+.mtitle{ font-weight: 950; font-size: 13px; color: var(--text); }
+.x{
+  border:1px solid var(--b);
+  background:#fff;
+  width: 34px;
+  height: 32px;
+  border-radius: 12px;
+  cursor:pointer;
+  font-weight: 950;
+  font-size: 18px;
+  line-height: 1;
+}
+.x:hover{ background: rgba(15,23,42,0.03); }
+
+.mbody{ padding: 12px 14px; }
+.mact{
+  border-top: 1px solid rgba(226,232,240,0.8);
+  padding: 12px 14px;
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  position: sticky;
+  bottom:0;
+  background:#fff;
+}
+.in{
+  width:100%;
+  border:1px solid rgba(226,232,240,0.95);
+  border-radius: 12px;
+  padding: 10px 12px;
+  outline:none;
+  font-size: 12px;
+}
+.in:focus{ border-color: rgba(15,23,42,0.55); box-shadow: 0 0 0 3px rgba(15,23,42,.10); }
+
+.list{ margin-top: 10px; display:flex; flex-direction:column; gap:8px; }
+.item{
+  border:1px solid rgba(226,232,240,0.9);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.item:hover{ background: rgba(15,23,42,0.02); }
+.item.disabled{ opacity:.6; }
+.ileft{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.ititle{ display:flex; align-items:center; gap:8px; min-width:0; }
+.iname{ font-weight: 950; font-size: 12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 560px; }
+.iright{ display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+.tag{
+  font-size:10px;
+  padding:2px 7px;
+  border-radius: 999px;
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.03);
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.rowBetween{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.btns{ display:flex; gap:8px; }
+.check{ display:flex; align-items:center; gap:8px; user-select:none; }
+.check input{ width: 16px; height: 16px; }
+
+.section{ margin-top: 12px; }
+.sectionTitle{ font-weight: 950; font-size: 12px; color: var(--text); margin-bottom: 8px; }
 .copyGrid{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
 @media (max-width: 820px){ .copyGrid{ grid-template-columns:1fr; } }
-.radio{ display:flex; gap:8px; align-items:flex-start; border:1px solid #eef2f7; background:#fcfcfd; padding:8px 10px; border-radius:12px; font-size:12px; font-weight:900; color:#111827; }
+.radio{
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.02);
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--text);
+}
 .radio input{ margin-top:2px; }
 
-.importTree{ border:1px solid #eef2f7; border-radius:14px; background:#fcfcfd; padding:10px; }
-.treeRow{ width:100%; text-align:left; border:1px solid #eef2f7; background:#fff; border-radius:12px; padding:9px 10px; display:flex; gap:10px; align-items:center; cursor:pointer; }
+.tree{ border:1px solid rgba(226,232,240,0.9); border-radius: 14px; background: rgba(15,23,42,0.02); padding: 10px; }
+.treeRow{
+  width:100%;
+  text-align:left;
+  border:1px solid rgba(226,232,240,0.9);
+  background:#fff;
+  border-radius: 12px;
+  padding: 9px 10px;
+  display:flex;
+  gap:10px;
+  align-items:center;
+  cursor:pointer;
+}
 .treeRow + .treeRow{ margin-top: 8px; }
-.treeRow:hover{ background:#f9fafb; }
+.treeRow:hover{ background: rgba(15,23,42,0.02); }
+.subRow{ opacity:.96; font-size: 11.5px; font-weight: 950; }
+.varRow{ font-size: 11.25px; font-weight: 900; opacity:.98; }
+.varRow.active{ border-color: rgba(15,23,42,.22); box-shadow: 0 0 0 3px rgba(15,23,42,.10); }
 
-.pnlRow{ font-weight: 950; font-size: 12px; padding: 10px 10px; }
-.contractRow{ margin-top: 8px; font-weight: 950; font-size: 11.5px; background:#fff; opacity:.96; }
-.varRow{ margin-top: 8px; font-weight: 900; font-size: 11.25px; background:#fff; opacity:.98; }
-.varRow.active{ border-color: rgba(17,24,39,.22); box-shadow: 0 0 0 3px rgba(17,24,39,.10); }
-
-.caret{ width: 18px; display:inline-flex; justify-content:center; color: #6b7280; transform: rotate(-90deg); transition: transform .12s ease; flex: 0 0 auto; }
+.caret{
+  width: 18px;
+  display:inline-flex;
+  justify-content:center;
+  color: var(--muted);
+  transform: rotate(-90deg);
+  transition: transform .12s ease;
+  flex: 0 0 auto;
+}
 .caret.on{ transform: rotate(0deg); }
 
-.treeTitle{ flex:1; min-width:0; }
-.ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.pnlBody{ margin-left: 18px; margin-top: 8px; display:flex; flex-direction:column; gap:8px; }
-.contractBody{ margin-left: 18px; margin-top: 8px; display:flex; flex-direction:column; gap:8px; }
-
-.dotVar{ width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid #e5e7eb; flex: 0 0 auto; }
+.tTitle{ flex:1; min-width:0; }
+.dotVar{ width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid rgba(226,232,240,0.9); flex:0 0 auto; }
 .dotVar.ok{ background: #22c55e; border-color: #bbf7d0; }
-.dotLeg{ display:inline-block; width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid #e5e7eb; transform: translateY(1px); }
+.dotLeg{ display:inline-block; width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid rgba(226,232,240,0.9); transform: translateY(1px); }
 .dotLeg.ok{ background: #22c55e; border-color: #bbf7d0; }
 
-.statusPill{ border:1px solid #e5e7eb; background:#fafafa; border-radius:999px; padding:2px 8px; font-size:10.5px; font-weight:900; color:#6b7280; white-space:nowrap; flex:0 0 auto; }
+.statusPill{
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.03);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 900;
+  color: var(--muted);
+  white-space:nowrap;
+  flex:0 0 auto;
+}
 
-/* ✅ Confirm modal */
-.confirmModal { width: min(620px, 96vw); }
-.confirmBody { padding: 12px 14px; }
-.confirmText{ white-space: pre-line; font-size: 12px; font-weight: 950; color:#111827; line-height: 1.35; }
-.confirmMini{ margin-top: 8px; }
+.confirmText{ white-space: pre-line; font-size: 12px; font-weight: 950; color: var(--text); line-height: 1.35; }
+.ic{ width: 14px; height: 14px; }
 </style>

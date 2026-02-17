@@ -1,4 +1,8 @@
-<!-- ✅ src/pages/MpPage.vue (FICHIER COMPLET / compact + sticky header + search + filtres modernes + pagination 10) -->
+<!-- ✅ src/pages/MpPage.vue (FICHIER COMPLET)
+     MAJ demandée :
+     ✅ Enlever le fournisseur qui apparaît sous le libellé MP (on n’affiche plus aucune “sous-ligne” liée au fournisseur)
+     ✅ Afficher Qté totale en TONNES (T) au lieu de kg (conversion kg -> T /1000)
+-->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -6,7 +10,6 @@ import { usePnlStore } from "@/stores/pnl.store";
 // Heroicons
 import {
   ArrowPathIcon,
-  MagnifyingGlassIcon,
   PencilSquareIcon,
   ArrowUturnLeftIcon,
   CheckIcon,
@@ -14,7 +17,6 @@ import {
   ExclamationTriangleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  AdjustmentsHorizontalIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -32,11 +34,19 @@ function toNum(v: any): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-function n(v: any, digits = 2) {
+function fmt(v: any, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(toNum(v));
+}
+function round2(x: number) {
+  return Math.round(toNum(x) * 100) / 100;
+}
+function pricePerKg(prixTonne: number): number {
+  const p = toNum(prixTonne);
+  if (p <= 0) return 0;
+  return p / 1000; // DH/tonne -> DH/kg
 }
 
 /* =========================
@@ -45,8 +55,9 @@ function n(v: any, digits = 2) {
 const contract = computed(() => store.activeContract);
 const variant = computed(() => store.activeVariant);
 
-const dureeMois = computed(() => toNum((contract.value as any)?.dureeMois ?? 0));
-const variantTitle = computed(() => String((variant.value as any)?.title ?? (variant.value as any)?.name ?? "Variante"));
+const variantTitle = computed(() =>
+  String((variant.value as any)?.title ?? (variant.value as any)?.name ?? "Variante")
+);
 const contractTitle = computed(() => {
   const c: any = contract.value as any;
   const client = c?.client ?? c?.clientName ?? null;
@@ -54,6 +65,28 @@ const contractTitle = computed(() => {
   const bits = [client, name].filter(Boolean);
   return bits.length ? bits.join(" — ") : "Contrat";
 });
+
+/* =========================
+   MAJORATIONS (MP)
+   - pour coller au CMP du header : key = `mp:${mpId}`
+========================= */
+function readPersistedMajorations(variantAny: any): Record<string, number> {
+  try {
+    const raw = variantAny?.autresCouts?.majorations;
+    if (!raw) return {};
+    if (typeof raw === "object") return raw as Record<string, number>;
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+function getMajorationPct(key: string, persisted: Record<string, number>): number {
+  return toNum((persisted as any)?.[key]);
+}
+function applyMajoration(value: number, pct: number): number {
+  return value * (1 + toNum(pct) / 100);
+}
 
 /* =========================
    DATA
@@ -67,15 +100,57 @@ type MpRow = {
   unite: string;
   fournisseur: string;
 
-  comment: string; // ✅ à afficher (à la place du mpId)
+  // ✅ commentaire : UNIQUEMENT celui du MP catalogue (pas it.comment), pour éviter d’afficher le fournisseur “déguisé”
+  comment: string;
 
   prixCatalogue: number;
-  prixModifie: number | null; // (override)
-  prixUtilise: number; // = modifié si existe sinon catalogue
+  prixModifie: number | null;
+  prixUtilise: number;
+
+  qteTotaleKg: number;
+  qteTotaleT: number;
+  coutTotal: number;
 };
 
+const majorationsPersisted = computed(() => readPersistedMajorations(variant.value));
+
+/**
+ * Map mpId -> qtyTotalKg (sur l'ensemble des formules de la variante)
+ * qty dans la compo = kg / m3, donc qtyTotalKg = Σ(qtyKgParM3 * volumeM3)
+ */
+const mpQtyTotalKgByMpId = computed<Record<string, number>>(() => {
+  const v: any = variant.value as any;
+  const items = v?.formules?.items ?? [];
+  const map: Record<string, number> = {};
+
+  for (const it of items) {
+    const vol = toNum(it?.volumeM3);
+    const formule = it?.formule;
+    const compo = formule?.items ?? [];
+    if (vol <= 0 || !Array.isArray(compo)) continue;
+
+    for (const c of compo) {
+      const mpId = String(c?.mpId ?? "");
+      if (!mpId) continue;
+      const qtyKgParM3 = toNum(c?.qty);
+      const add = qtyKgParM3 * vol;
+      map[mpId] = (map[mpId] ?? 0) + add;
+    }
+  }
+
+  // TS strict: map[k] peut être number|undefined -> on sécurise
+  for (const k of Object.keys(map)) {
+    map[k] = round2(map[k] ?? 0);
+  }
+  return map;
+});
+
 const mpRows = computed<MpRow[]>(() => {
-  const items = (variant.value as any)?.mp?.items ?? [];
+  const v: any = variant.value as any;
+  const items = v?.mp?.items ?? [];
+  const qtyMap = mpQtyTotalKgByMpId.value;
+  const maj = majorationsPersisted.value;
+
   return items.map((it: any) => {
     const mp = it?.mp ?? {};
     const prixCatalogue = toNum(mp?.prix);
@@ -84,13 +159,23 @@ const mpRows = computed<MpRow[]>(() => {
     const raw = it?.prixOverride ?? it?.prix ?? null;
     const prixModifie = raw == null ? null : toNum(raw);
 
-    const comment = String(
-      mp?.comment ?? mp?.commentaire ?? it?.comment ?? it?.commentaire ?? ""
-    ).trim();
+    const prixUtilise = prixModifie ?? prixCatalogue;
+
+    // ✅ IMPORTANT : on ne prend PAS it.comment/it.commentaire (souvent = fournisseur/legacy)
+    const comment = String(mp?.comment ?? mp?.commentaire ?? "").trim();
+
+    const mpId = String(it?.mpId ?? mp?.id ?? "");
+    const qteTotaleKg = toNum(qtyMap[mpId] ?? 0);
+    const qteTotaleT = round2(qteTotaleKg / 1000);
+
+    // ✅ Coût total aligné CMP header : prix DH/tonne -> DH/kg + majoration mp:mpId
+    const pct = getMajorationPct(`mp:${mpId}`, maj);
+    const prixKg = applyMajoration(pricePerKg(prixUtilise), pct);
+    const coutTotal = round2(qteTotaleKg * prixKg);
 
     return {
       variantMpId: String(it?.id ?? ""),
-      mpId: String(it?.mpId ?? mp?.id ?? ""),
+      mpId,
       categorie: String(mp?.categorie ?? "").trim(),
       label: String(mp?.label ?? "").trim(),
       unite: String(mp?.unite ?? "").trim(),
@@ -98,86 +183,35 @@ const mpRows = computed<MpRow[]>(() => {
       comment,
       prixCatalogue,
       prixModifie,
-      prixUtilise: prixModifie ?? prixCatalogue,
+      prixUtilise,
+      qteTotaleKg,
+      qteTotaleT,
+      coutTotal,
     };
   });
 });
 
 /* =========================
-   UI (filters + pagination)
+   CMP TOTAL (somme des coûts totaux)
+========================= */
+const cmpTotal = computed(() => {
+  return round2(mpRows.value.reduce((s, r) => s + toNum(r.coutTotal), 0));
+});
+
+/* =========================
+   PAGINATION (simple)
 ========================= */
 const ui = reactive({
-  q: "",
-  groupByCategorie: true,
-
-  // ✅ filtres modernes
-  categorie: "__ALL__",
-  fournisseur: "__ALL__",
-  showFilters: false,
-
-  // ✅ pagination
   pageSize: 10,
   page: 1,
 });
 
-function hay(r: MpRow) {
-  // recherche globale
-  return `${r.categorie} ${r.label} ${r.fournisseur} ${r.unite} ${r.comment}`.toLowerCase();
-}
-
-const categories = computed(() => {
-  const set = new Set<string>();
-  for (const r of mpRows.value) {
-    const c = r.categorie || "Autre";
-    set.add(c);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
-});
-
-const fournisseurs = computed(() => {
-  const set = new Set<string>();
-  for (const r of mpRows.value) {
-    const f = r.fournisseur || "—";
-    set.add(f);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
-});
-
-const filteredRows = computed(() => {
-  const q = ui.q.trim().toLowerCase();
-
-  let rows = mpRows.value;
-
-  // catégorie
-  if (ui.categorie !== "__ALL__") {
-    rows = rows.filter((r) => (r.categorie || "Autre") === ui.categorie);
-  }
-
-  // fournisseur
-  if (ui.fournisseur !== "__ALL__") {
-    rows = rows.filter((r) => (r.fournisseur || "—") === ui.fournisseur);
-  }
-
-  // recherche
-  if (q) rows = rows.filter((r) => hay(r).includes(q));
-
-  return rows;
-});
-
-// reset pagination when filters change
-watch(
-  () => [ui.q, ui.categorie, ui.fournisseur, ui.pageSize].join("|"),
-  () => {
-    ui.page = 1;
-  }
-);
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / ui.pageSize)));
+const total = computed(() => mpRows.value.length);
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / ui.pageSize)));
 
 watch(
-  () => filteredRows.value.length,
+  () => total.value,
   () => {
-    // clamp page
     if (ui.page > totalPages.value) ui.page = totalPages.value;
     if (ui.page < 1) ui.page = 1;
   }
@@ -186,25 +220,7 @@ watch(
 const pagedRows = computed(() => {
   const start = (ui.page - 1) * ui.pageSize;
   const end = start + ui.pageSize;
-  return filteredRows.value.slice(start, end);
-});
-
-const grouped = computed(() => {
-  if (!ui.groupByCategorie) return [{ key: "__ALL__", title: "Toutes", rows: pagedRows.value }];
-
-  const map = new Map<string, MpRow[]>();
-  for (const r of pagedRows.value) {
-    const k = r.categorie || "Autre";
-    if (!map.has(k)) map.set(k, []);
-    map.get(k)!.push(r);
-  }
-
-  const keys = [...map.keys()].sort((a, b) => a.localeCompare(b, "fr"));
-  return keys.map((k) => ({
-    key: k,
-    title: k,
-    rows: (map.get(k) ?? []).sort((a, b) => a.label.localeCompare(b.label, "fr")),
-  }));
+  return mpRows.value.slice(start, end);
 });
 
 /* =========================
@@ -365,21 +381,24 @@ function nextPage() {
 
 <template>
   <div class="page" ref="rootEl">
-    <!-- ✅ Sticky header (compact, cohérent) -->
-    <div class="head">
-      <div class="headL">
-        <div class="h1">MP</div>
-        <div class="sub" v-if="variant">
-          <span class="pill" :title="variantTitle">{{ variantTitle }}</span>
-          <span class="dot">•</span>
-          <span class="pill" :title="contractTitle">{{ contractTitle }}</span>
-          <span v-if="dureeMois" class="dot">•</span>
-          <span v-if="dureeMois" class="pill">{{ dureeMois }} mois</span>
+    <!-- Entête : CMP total -->
+    <div class="subhdr">
+      <div class="subhdr__left">
+        <div class="ttlRow">
+          <div class="ttl">MP (variante)</div>
         </div>
-        <div class="sub muted" v-else>Aucune variante active.</div>
+
+        <div class="cmpLine" v-if="variant">
+          <span class="cmpLab">CMP total</span>
+          <span class="cmpVal mono">{{ fmt(cmpTotal) }}</span>
+          <span class="cmpDh">DH</span>
+          <span class="cmpHint muted">• {{ variantTitle }} — {{ contractTitle }}</span>
+        </div>
+
+        <div class="cmpLine muted" v-else>Aucune variante active.</div>
       </div>
 
-      <div class="headR">
+      <div class="subhdr__right">
         <button class="btn" :disabled="store.loading" @click="reload" title="Recharger">
           <ArrowPathIcon class="ic" />
           <span>Recharger</span>
@@ -402,164 +421,110 @@ function nextPage() {
       </div>
 
       <div class="card" v-else>
-        <!-- Tools row (compact) -->
-        <div class="tools">
-          <div class="search">
-            <MagnifyingGlassIcon class="sic" />
-            <input v-model="ui.q" class="sin" placeholder="Rechercher (MP, fournisseur, unité, catégorie, commentaire)…" />
-            <button v-if="ui.q" class="sclear" @click="ui.q = ''" title="Effacer">×</button>
-          </div>
-
-          <button class="btn ghost" @click="ui.showFilters = !ui.showFilters" title="Filtres">
-            <AdjustmentsHorizontalIcon class="ic" />
-            <span>Filtres</span>
-          </button>
-
-          <label class="toggle" title="Grouper par catégorie">
-            <input type="checkbox" v-model="ui.groupByCategorie" />
-            <span>Catégories</span>
-          </label>
-        </div>
-
-        <!-- ✅ Filtres modernes (pliables) -->
-        <div v-show="ui.showFilters" class="filters">
-          <div class="frow">
-            <div class="f">
-              <div class="flab">Catégorie</div>
-              <select class="sel" v-model="ui.categorie">
-                <option value="__ALL__">Toutes</option>
-                <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
-              </select>
-            </div>
-
-            <div class="f">
-              <div class="flab">Fournisseur</div>
-              <select class="sel" v-model="ui.fournisseur">
-                <option value="__ALL__">Tous</option>
-                <option v-for="f in fournisseurs" :key="f" :value="f">{{ f }}</option>
-              </select>
-            </div>
-
-            <div class="f">
-              <div class="flab">Par page</div>
-              <select class="sel" v-model.number="ui.pageSize">
-                <option :value="10">10</option>
-                <option :value="20">20</option>
-                <option :value="50">50</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="filteredRows.length === 0" class="empty muted">Aucun résultat.</div>
+        <div v-if="total === 0" class="empty muted">Aucune MP.</div>
 
         <template v-else>
-          <!-- ✅ Pagination (affichée seulement si > 10 affichés au total filtré) -->
-          <div v-if="filteredRows.length > ui.pageSize" class="pager">
+          <!-- Pagination top -->
+          <div v-if="total > ui.pageSize" class="pager">
             <button class="pbtn" :disabled="ui.page <= 1" @click="prevPage" title="Page précédente">
               <ChevronLeftIcon class="pi" />
             </button>
-            <div class="ptext">
-              Page <b>{{ ui.page }}</b> / {{ totalPages }}
-            </div>
+            <div class="ptext">Page <b>{{ ui.page }}</b> / {{ totalPages }}</div>
             <button class="pbtn" :disabled="ui.page >= totalPages" @click="nextPage" title="Page suivante">
               <ChevronRightIcon class="pi" />
             </button>
           </div>
 
-          <div v-for="g in grouped" :key="g.key" class="group">
-            <div v-if="ui.groupByCategorie" class="ghead">
-              <div class="gttl">
-                <span class="gdot"></span>
-                <span class="gtxt">{{ g.title }}</span>
-              </div>
-              <div class="muted">{{ g.rows.length }} ligne(s)</div>
-            </div>
+          <!-- Table -->
+          <div class="tableWrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th class="cMp">MP</th>
+                  <th class="cF">Fourn.</th>
+                  <th class="cCat">Cat.</th>
 
-            <div class="tableWrap">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th class="cMp">MP</th>
-                    <th class="cF">Fourn.</th>
-                    <th class="cCat">Cat.</th>
-                    <th class="cCatP r">Catalogue</th>
-                    <th class="cOv r">Modifié</th>
-                    <th class="cUsed r">Utilisé</th>
-                  </tr>
-                </thead>
+                  <th class="cCatP r">Catalogue</th>
+                  <th class="cOv r">Modifié</th>
+                  <th class="cUsed r">Utilisé</th>
 
-                <tbody>
-                  <tr v-for="r in g.rows" :key="r.variantMpId" class="row">
-                    <td class="cMp">
-                      <div class="mpCell">
-                        <div class="mpTop">
-                          <b class="ell" :title="r.label">{{ r.label || "—" }}</b>
-                          <span class="unit">({{ r.unite || "—" }})</span>
-                        </div>
+                  <!-- ✅ tonnes -->
+                  <th class="cQty r">Qté totale (T)</th>
+                  <th class="cCost r">Coût total (DH)</th>
+                </tr>
+              </thead>
 
-                        <!-- ✅ commentaire au lieu de l’ID -->
-                        <div class="mpSub muted" v-if="r.comment">
-                          <span class="ell" :title="r.comment">{{ r.comment }}</span>
-                        </div>
-                        <div class="mpSub muted" v-else>
-                          <span class="ell">—</span>
-                        </div>
+              <tbody>
+                <tr v-for="r in pagedRows" :key="r.variantMpId" class="row">
+                  <td class="cMp">
+                    <div class="mpCell">
+                      <div class="mpTop">
+                        <b class="ell" :title="r.label">{{ r.label || "—" }}</b>
+                        <span class="unit">({{ r.unite || "—" }})</span>
                       </div>
-                    </td>
 
-                    <td class="cF ell" :title="r.fournisseur">{{ r.fournisseur || "—" }}</td>
-                    <td class="cCat ell">
-                      <span class="pill2" :title="r.categorie">{{ r.categorie || "—" }}</span>
-                    </td>
+                      <!-- ✅ On n’affiche PLUS rien qui pourrait être le fournisseur sous le libellé -->
+                      <div class="mpSub muted" v-if="r.comment">
+                        <span class="ell" :title="r.comment">{{ r.comment }}</span>
+                      </div>
+                      <!-- si pas de comment => rien (pas de “—”) -->
+                    </div>
+                  </td>
 
-                    <td class="cCatP r mono">{{ n(r.prixCatalogue) }}</td>
+                  <td class="cF ell" :title="r.fournisseur">{{ r.fournisseur || "—" }}</td>
 
-                    <!-- MODIFIÉ -->
-                    <td class="cOv r" @click.stop>
-                      <template v-if="eOf(r).editing">
-                        <div class="editCell">
-                          <input
-                            class="inSm r mono"
-                            type="number"
-                            step="0.01"
-                            v-model.number="eOf(r).draft"
-                            @keydown.enter.prevent="save(r)"
-                            @keydown.esc.prevent="stopAllEdits()"
-                          />
+                  <td class="cCat ell">
+                    <span class="catPill" :title="r.categorie">{{ r.categorie || "—" }}</span>
+                  </td>
 
-                          <button class="iconBtn ok" :disabled="eOf(r).saving" @click="save(r)" title="Enregistrer">
-                            <CheckIcon class="ib" />
-                          </button>
-                          <button class="iconBtn" :disabled="eOf(r).saving" @click="stopAllEdits()" title="Annuler">
-                            <XMarkIcon class="ib" />
-                          </button>
-                        </div>
+                  <td class="cCatP r mono">{{ fmt(r.prixCatalogue) }}</td>
 
-                        <div v-if="eOf(r).error" class="errLine">
-                          {{ eOf(r).error }}
-                        </div>
-                      </template>
+                  <!-- MODIFIÉ -->
+                  <td class="cOv r" @click.stop>
+                    <template v-if="eOf(r).editing">
+                      <div class="editCell">
+                        <input
+                          class="inSm r mono"
+                          type="number"
+                          step="0.01"
+                          v-model.number="eOf(r).draft"
+                          @keydown.enter.prevent="save(r)"
+                          @keydown.esc.prevent="stopAllEdits()"
+                        />
 
-                      <template v-else>
+                        <button class="iconBtn ok" :disabled="eOf(r).saving" @click="save(r)" title="Enregistrer">
+                          <CheckIcon class="ib" />
+                        </button>
+                        <button class="iconBtn" :disabled="eOf(r).saving" @click="stopAllEdits()" title="Annuler">
+                          <XMarkIcon class="ib" />
+                        </button>
+                      </div>
+
+                      <div v-if="eOf(r).error" class="errLine">{{ eOf(r).error }}</div>
+                    </template>
+
+                    <template v-else>
+                      <div class="cellAct">
                         <span
                           class="val clickable mono"
                           :class="{ dash: r.prixModifie == null, hasOv: r.prixModifie != null }"
                           @click="startEdit(r)"
                           :title="r.prixModifie == null ? 'Cliquer pour modifier le prix' : 'Cliquer pour modifier à nouveau'"
                         >
-                          {{ r.prixModifie == null ? "—" : n(r.prixModifie) }}
+                          {{ r.prixModifie == null ? "—" : fmt(r.prixModifie) }}
                         </span>
 
                         <button class="miniIcon" @click="startEdit(r)" title="Modifier">
                           <PencilSquareIcon class="mi" />
                         </button>
-                      </template>
-                    </td>
+                      </div>
+                    </template>
+                  </td>
 
-                    <!-- UTILISÉ (restore si modifié existe) -->
-                    <td class="cUsed r" @click.stop>
-                      <span class="val mono">{{ n(r.prixUtilise) }}</span>
+                  <!-- UTILISÉ -->
+                  <td class="cUsed r" @click.stop>
+                    <div class="cellAct">
+                      <span class="val mono">{{ fmt(r.prixUtilise) }}</span>
 
                       <button
                         v-if="r.prixModifie != null"
@@ -569,21 +534,23 @@ function nextPage() {
                       >
                         <ArrowUturnLeftIcon class="mi" />
                       </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                    </div>
+                  </td>
+
+                  <!-- ✅ affichage en tonnes (plus lisible en 3 décimales) -->
+                  <td class="cQty r mono">{{ fmt(r.qteTotaleT, 3) }}</td>
+                  <td class="cCost r mono">{{ fmt(r.coutTotal) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          <!-- pagination bottom (si beaucoup) -->
-          <div v-if="filteredRows.length > ui.pageSize" class="pager bottom">
+          <!-- Pagination bottom -->
+          <div v-if="total > ui.pageSize" class="pager bottom">
             <button class="pbtn" :disabled="ui.page <= 1" @click="prevPage" title="Page précédente">
               <ChevronLeftIcon class="pi" />
             </button>
-            <div class="ptext">
-              Page <b>{{ ui.page }}</b> / {{ totalPages }}
-            </div>
+            <div class="ptext">Page <b>{{ ui.page }}</b> / {{ totalPages }}</div>
             <button class="pbtn" :disabled="ui.page >= totalPages" @click="nextPage" title="Page suivante">
               <ChevronRightIcon class="pi" />
             </button>
@@ -607,15 +574,13 @@ function nextPage() {
 
             <div class="mkv muted">
               <span>Modifié :</span>
-              <b class="mono">{{ n(restoreModal.row.prixModifie) }}</b>
+              <b class="mono">{{ fmt(restoreModal.row.prixModifie) }}</b>
               <span class="sep">•</span>
               <span>Catalogue :</span>
-              <b class="mono">{{ n(restoreModal.row.prixCatalogue) }}</b>
+              <b class="mono">{{ fmt(restoreModal.row.prixCatalogue) }}</b>
             </div>
 
-            <div class="note">
-              Action : mettre <b>modifié = catalogue</b> pour cette MP (variante active).
-            </div>
+            <div class="note">Action : mettre <b>modifié = catalogue</b> pour cette MP (variante active).</div>
 
             <div v-if="restoreModal.error" class="merr">{{ restoreModal.error }}</div>
           </div>
@@ -633,71 +598,76 @@ function nextPage() {
 </template>
 
 <style scoped>
-/* =========================
-   PAGE (compact + cohérent)
-========================= */
 .page{
   --text:#0f172a;
   --muted: rgba(15,23,42,0.62);
   --b: rgba(16,24,40,0.12);
-  --soft: rgba(15,23,42,0.04);
-
   display:flex;
   flex-direction:column;
-  gap:8px;
+  gap:10px;
   padding: 0 10px 12px;
 }
 
-/* Sticky header under HeaderDashboard */
-.head{
+.subhdr{
   position: sticky;
-  top: -15px; /* ajuste si besoin */
-  z-index: 30;
-
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-end;
-  gap:10px;
-
-  padding: 8px 0;
+  top: -15px;
+  z-index: 40;
   background: rgba(248,250,252,0.92);
   backdrop-filter: blur(8px);
-  border-bottom: 1px solid rgba(16,24,40,0.08);
+  border: 1px solid rgba(16,24,40,0.10);
+  border-radius: 16px;
+  padding: 10px 10px;
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:flex-start;
 }
+.subhdr__left{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+.ttlRow{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.ttl{ font-size:15px; font-weight:950; color: var(--text); }
 
-.headL{ display:flex; flex-direction:column; gap:4px; min-width:0; }
-.h1{ font-size:14px; font-weight:1000; color:var(--text); line-height:1.05; }
-.sub{
-  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-  font-size: 11.5px; color: var(--muted); min-width:0;
+.muted{ color: rgba(15,23,42,0.55); font-weight:850; }
+.mono{ font-variant-numeric: tabular-nums; }
+
+.cmpLine{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  font-size: 12px;
+  min-width:0;
 }
-.dot{ color: rgba(148,163,184,1); font-weight:900; }
-.pill{
-  max-width: 48vw;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-
-  border:1px solid rgba(16,24,40,0.10);
-  background: rgba(255,255,255,0.82);
+.cmpLab{
+  font-weight: 950;
+  color: rgba(15,23,42,0.70);
+  background: rgba(15,23,42,0.04);
+  border: 1px solid rgba(16,24,40,0.10);
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 950;
-  color: rgba(15,23,42,0.78);
 }
+.cmpVal{
+  font-weight: 1000;
+  color: rgba(24,64,112,0.95);
+  background: rgba(2,132,199,0.08);
+  border: 1px solid rgba(2,132,199,0.22);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.cmpDh{ font-weight: 950; color: rgba(15,23,42,0.70); }
+.cmpHint{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 72vw; }
 
-.headR{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-
+.subhdr__right{ display:flex; gap:8px; align-items:center; }
 .btn{
-  height: 30px;
+  height: 34px;
   border:1px solid var(--b);
   background: rgba(255,255,255,0.84);
-  border-radius:12px;
-  padding:6px 10px;
+  border-radius:14px;
+  padding:6px 12px;
   font-size:12px;
-  font-weight:900;
+  font-weight:950;
   color: rgba(15,23,42,0.86);
   cursor:pointer;
-  box-shadow: 0 4px 14px rgba(15,23,42,0.06);
+  box-shadow: 0 10px 22px rgba(15,23,42,0.06);
   display:inline-flex; align-items:center; gap:8px;
 }
 .btn:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
@@ -706,6 +676,7 @@ function nextPage() {
 .btn.ghost{ background: rgba(255,255,255,0.75); }
 .ic{ width:16px; height:16px; }
 
+/* alerts */
 .alert{
   border:1px solid var(--b);
   border-radius:14px;
@@ -730,81 +701,7 @@ function nextPage() {
   padding:10px;
   box-shadow: 0 10px 22px rgba(15,23,42,0.06);
 }
-
-/* tools row */
-.tools{
-  display:flex;
-  gap:8px;
-  align-items:center;
-  flex-wrap:wrap;
-  margin-bottom: 8px;
-}
-.search{
-  flex: 1 1 320px;
-  display:flex; align-items:center; gap:8px;
-  border:1px solid rgba(16,24,40,0.12);
-  background:#fff;
-  border-radius:12px;
-  padding:6px 10px;
-  min-width: 260px;
-}
-.sic{ width:16px; height:16px; color: rgba(15,23,42,0.45); }
-.sin{ border:0; outline:none; width:100%; font-size:12.5px; font-weight:850; color: var(--text); }
-.sclear{ border:0; background:transparent; cursor:pointer; font-size:18px; line-height:1; color: rgba(15,23,42,0.55); padding:0 4px; }
-
-.toggle{
-  display:inline-flex; align-items:center; gap:8px;
-  border:1px solid rgba(16,24,40,0.12);
-  background: rgba(255,255,255,0.82);
-  border-radius:12px;
-  padding:6px 10px;
-  font-size:12px;
-  font-weight:900;
-  color: rgba(15,23,42,0.86);
-}
-.toggle input{ transform: translateY(1px); }
-.muted{ color: var(--muted); }
-
-/* filters panel */
-.filters{
-  margin: 6px 0 10px;
-  border: 1px solid rgba(16,24,40,0.10);
-  background: rgba(15,23,42,0.02);
-  border-radius: 14px;
-  padding: 8px;
-}
-.frow{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-}
-.f{
-  min-width: 200px;
-  flex: 1 1 200px;
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
-.flab{
-  font-size: 10.5px;
-  font-weight: 950;
-  color: rgba(15,23,42,0.55);
-}
-.sel{
-  height: 30px;
-  border-radius: 12px;
-  border: 1px solid rgba(16,24,40,0.12);
-  background: rgba(255,255,255,0.92);
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(15,23,42,0.86);
-  outline: none;
-}
-.sel:focus{
-  border-color: rgba(32,184,232,0.35);
-  box-shadow: 0 0 0 4px rgba(32,184,232,0.12);
-}
+.empty{ padding: 10px 2px; }
 
 /* pager */
 .pager{
@@ -829,24 +726,7 @@ function nextPage() {
 .pbtn:disabled{ opacity: 0.55; cursor:not-allowed; }
 .pbtn:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
 .pi{ width: 16px; height: 16px; color: rgba(15,23,42,0.78); }
-.ptext{
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(15,23,42,0.75);
-  white-space: nowrap;
-}
-
-/* group */
-.group{ margin-top: 8px; }
-.ghead{
-  display:flex; justify-content:space-between; align-items:center;
-  padding: 6px 2px 8px;
-}
-.gttl{ display:flex; align-items:center; gap:8px; min-width:0; }
-.gdot{ width:8px; height:8px; border-radius:999px; background: rgba(37,99,235,0.35); }
-.gtxt{ font-weight:950; color: var(--text); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-.empty{ padding: 10px 2px; }
+.ptext{ font-size: 12px; font-weight: 900; color: rgba(15,23,42,0.75); white-space: nowrap; }
 
 /* table */
 .tableWrap{
@@ -865,7 +745,7 @@ function nextPage() {
 }
 .table th, .table td{
   border-bottom:1px solid rgba(16,24,40,0.08);
-  padding: 6px 8px; /* compact height */
+  padding: 6px 8px;
   vertical-align:middle;
 }
 .table thead th{
@@ -884,21 +764,25 @@ function nextPage() {
 
 .r{ text-align:right; }
 .ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.mono{ font-variant-numeric: tabular-nums; }
 
 /* cols */
-.cMp{ width: 34%; }
-.cF{ width: 18%; }
-.cCat{ width: 14%; }
-.cCatP{ width: 11%; }
-.cOv{ width: 12.5%; }
-.cUsed{ width: 10.5%; }
+.cMp   { width: 26%; }
+.cF    { width: 12%; }
+.cCat  { width: 10%; }
+.cCatP { width: 9%; }
+.cOv   { width: 12%; }
+.cUsed { width: 11%; }
+.cQty  { width: 10%; }
+.cCost { width: 10%; }
 
+/* superposition fix */
+.cCatP{ position: relative; z-index: 1; overflow: hidden; }
+.cOv  { position: relative; z-index: 5; overflow: visible; }
+.cUsed{ position: relative; z-index: 6; overflow: visible; }
+
+/* mp cell */
 .mpCell{ min-width:0; }
-.mpTop{
-  display:flex; align-items:baseline; gap:6px;
-  min-width:0;
-}
+.mpTop{ display:flex; align-items:baseline; gap:6px; min-width:0; }
 .unit{
   font-size: 11px;
   font-weight: 900;
@@ -911,23 +795,25 @@ function nextPage() {
   font-weight: 900;
 }
 
-.pill2{
+/* category pill */
+.catPill{
   display:inline-flex;
   max-width:100%;
   padding: 2px 8px;
   border-radius:999px;
   border:1px solid rgba(16,24,40,0.12);
-  background: rgba(255,255,255,0.9);
+  background: rgba(15,23,42,0.03);
   font-size: 11px;
   font-weight: 950;
   color: rgba(15,23,42,0.86);
+  box-sizing: border-box;
 }
 
 /* values */
 .val{
   display:inline-flex;
   justify-content:flex-end;
-  min-width: 80px;
+  min-width: 76px;
   font-weight: 950;
 }
 .val.dash{ color: rgba(15,23,42,0.35); }
@@ -935,15 +821,25 @@ function nextPage() {
 .val.clickable:hover{ text-decoration: underline; }
 .val.hasOv{ color: rgba(24,64,112,0.95); }
 
-/* mini icons */
+.cellAct{
+  display:inline-flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  width:100%;
+}
+
 .miniIcon{
-  margin-left: 6px;
+  width: 28px;
+  height: 28px;
   border: 1px solid rgba(16,24,40,0.10);
   background: rgba(15,23,42,0.03);
   border-radius: 10px;
-  padding: 4px;
   cursor: pointer;
-  vertical-align: middle;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex: 0 0 auto;
 }
 .miniIcon:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
 .miniIcon.restore:hover{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.18); }
@@ -955,24 +851,30 @@ function nextPage() {
   gap:6px;
   align-items:center;
   justify-content:flex-end;
+  flex-wrap: nowrap;
+  position: relative;
+  z-index: 10;
+  max-width: 100%;
 }
 .inSm{
-  width: 96px;
+  width: 110px;
+  min-width: 110px;
   height: 28px;
   border-radius: 12px;
   border: 1px solid rgba(16,24,40,0.12);
   background: #fff;
-  padding: 0 8px;
+  padding: 0 10px;
   font-size: 12px;
   font-weight: 900;
   outline: none;
+  box-sizing: border-box;
 }
 .inSm:focus{
   border-color: rgba(32,184,232,0.35);
   box-shadow: 0 0 0 4px rgba(32,184,232,0.12);
 }
 .iconBtn{
-  width: 30px;
+  width: 28px;
   height: 28px;
   border-radius: 12px;
   border: 1px solid rgba(16,24,40,0.12);
@@ -981,11 +883,9 @@ function nextPage() {
   display:inline-flex;
   align-items:center;
   justify-content:center;
+  flex: 0 0 auto;
 }
-.iconBtn.ok{
-  background: rgba(24,64,112,0.92);
-  border-color: rgba(24,64,112,0.6);
-}
+.iconBtn.ok{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); }
 .iconBtn.ok .ib{ color:#fff; }
 .iconBtn:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
 .iconBtn.ok:hover{ background: rgba(24,64,112,1); }
@@ -1070,13 +970,17 @@ function nextPage() {
   background: rgba(255,255,255,0.72);
 }
 
-/* responsive */
-@media (max-width: 980px){
+@media (max-width: 1100px){
   .cCat{ display:none; }
-  .cMp{ width: 44%; }
-  .cF{ width: 20%; }
-  .cCatP{ width: 14%; }
-  .cOv{ width: 14%; }
-  .cUsed{ width: 12%; }
+  .cMp { width: 30%; }
+  .cF { width: 14%; }
+  .cCatP { width: 10%; }
+  .cOv { width: 13%; }
+  .cUsed { width: 12%; }
+  .cQty { width: 10.5%; }
+  .cCost { width: 10.5%; }
+}
+@media (max-width: 980px){
+  .inSm{ width: 96px; min-width: 96px; }
 }
 </style>

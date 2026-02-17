@@ -1,10 +1,4 @@
-<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI améliorée sans dégrader)
-     Objectifs:
-     ✅ Aucun débordement / superposition sur : En-tête, Prix complémentaires, Articles hors formules, Signature
-     ✅ Libellés EXACTEMENT au-dessus des champs
-     ✅ Articles hors formules : PU toujours en DH/m³ ⇒ unité supprimée (UI + modèle, sauvegarde force unit="m3" en compat)
-     ✅ Reste inchangé (logique, tri stable, dirty guard, surcharges, styles globaux)
--->
+<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / pompage deletable + transport fields OK) -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -69,6 +63,15 @@ function formatDateFr(x: any) {
   }
 }
 
+function parseBoolLike(v: any): boolean | null {
+  if (v === true || v === false) return v;
+  if (v == null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "oui"].includes(s)) return true;
+  if (["0", "false", "no", "n", "non"].includes(s)) return false;
+  return null;
+}
+
 /* =========================
    STATE
 ========================= */
@@ -94,7 +97,9 @@ const draft = reactive({
   applyToDashboardOnSave: true,
 });
 
-/* ✅ Surcharges enregistrées (tri stable) */
+/* ✅ Surcharges enregistrées (tri stable)
+   - Le tri ne doit PAS bouger pendant l'édition
+   - On met à jour après reload/save */
 const savedSurcharges = ref<Record<string, number>>({});
 
 function rowKey(r: any): string {
@@ -121,20 +126,7 @@ function getSavedSurcharge(r: any): number {
 ========================= */
 type LineItem = { label: string; value?: string; locked?: boolean };
 type PriceExtra = { label: string; unit?: string; value: number; note?: string };
-
-/* ✅ Articles hors formules (PU toujours DH/m³ => pas d'unité) */
-type ExtraArticle = {
-  label: string;
-  qty: number | null; // null => "-"
-  pu: number; // DH/m³
-};
-
-function defaultExtraArticles(): ExtraArticle[] {
-  return [
-    { label: "Plus value hydrofuge", qty: null, pu: 50 },
-    { label: "Prestation de pompage", qty: null, pu: 50 },
-  ];
-}
+type ExtraArticle = { label: string; qty: number; pu: number };
 
 const DELAY_PENALTY_LABEL = "Pénalité de dépassement de délai (selon conditions contractuelles)";
 
@@ -148,6 +140,7 @@ const content = reactive({
     date: todayISO(),
     client: "",
     titreProjet: "",
+    includePompage: true as boolean,
   },
   intro: "",
   rappel: {
@@ -207,19 +200,16 @@ function normalizePriceExtras(x: any, fallback: PriceExtra[]): PriceExtra[] {
   return out.length ? out : fallback;
 }
 
-/* compat: on accepte meta.extraArticles ancien format (avec unit/qty/pu) et on ignore l'unité */
 function normalizeExtraArticles(x: any, fallback: ExtraArticle[]): ExtraArticle[] {
   const arr = Array.isArray(x) ? x : [];
   const out: ExtraArticle[] = [];
   for (const it of arr) {
-    const label = String(it?.label ?? it?.designation ?? it?.name ?? "").trim();
+    const label = String(it?.label ?? "").trim();
     if (!label) continue;
-
-    const qtyRaw = it?.qty ?? it?.quantity ?? it?.qte;
     out.push({
       label,
-      qty: qtyRaw === null || qtyRaw === undefined || String(qtyRaw).trim() === "-" || String(qtyRaw).trim() === "" ? null : n(qtyRaw),
-      pu: n(it?.pu ?? it?.prixUnitaire ?? it?.unitPrice ?? 0),
+      qty: n(it?.qty),
+      pu: n(it?.pu),
     });
   }
   return out.length ? out : fallback;
@@ -289,14 +279,27 @@ function dedupeAcrossSides(lhm: LineItem[], client: LineItem[], templateSideByLa
   return { lhm: outL, client: outC };
 }
 
+// ✅ capacité centrale depuis CAB (variant.cab.capacite ou contract.cabCapacite fallback)
+function getCabCapacityText(): string {
+  const cab: any = (variant.value as any)?.cab ?? (contract.value as any)?.cab ?? {};
+  const cap =
+    String((cab as any)?.capacite ?? (cab as any)?.capacity ?? (cab as any)?.capacité ?? "").trim() ||
+    String((contract.value as any)?.cabCapacite ?? (contract.value as any)?.cabCapacity ?? "").trim();
+
+  if (!cap) return "2m3";
+  // On laisse l’utilisateur stocker "2m3" ou "2 m3" etc
+  return cap.replace(/\s+/g, "");
+}
+
 function buildContractTemplateLocked() {
   const c: any = contract.value ?? {};
+  const cap = getCabCapacityText();
 
   const LABELS = {
-    groupTransportInstall: "Transport et installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
-    transportOnly: "Transport sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
-    installOnly: "Installation sur site d’une centrale à béton de capacité de malaxeur de 2m3;",
-    cabOnly: "Mise à disposition d’une centrale à béton de capacité de malaxeur de 2m3;",
+    groupTransportInstall: `Transport et installation sur site d’une centrale à béton de capacité de malaxeur de ${cap};`,
+    transportOnly: `Transport sur site d’une centrale à béton de capacité de malaxeur de ${cap};`,
+    installOnly: `Installation sur site d’une centrale à béton de capacité de malaxeur de ${cap};`,
+    cabOnly: `Mise à disposition d’une centrale à béton de capacité de malaxeur de ${cap};`,
 
     genieCivil:
       "Travaux de génie civil de la centrale à béton et ses annexes (bassins de décantation, casiers, clôture…)",
@@ -382,7 +385,13 @@ function buildWordDefaultsEditable() {
     labo: "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP.",
   };
 
-  const lhm: LineItem[] = [{ label: L.personnel }, { label: L.reception }, { label: L.etudes }, { label: L.autocontroles }, { label: L.gestion }];
+  const lhm: LineItem[] = [
+    { label: L.personnel },
+    { label: L.reception },
+    { label: L.etudes },
+    { label: L.autocontroles },
+    { label: L.gestion },
+  ];
   const client: LineItem[] = [
     { label: L.programme },
     { label: L.confirmation },
@@ -447,9 +456,9 @@ function makeSnapshot(): string {
     value: n(x?.value),
     note: x?.note != null ? String(x.note) : "",
   });
-  const extraArt = (a: any) => ({
+  const ea = (a: any) => ({
     label: String(a?.label ?? ""),
-    qty: a?.qty == null ? null : n(a.qty),
+    qty: n(a?.qty),
     pu: n(a?.pu),
   });
 
@@ -463,7 +472,7 @@ function makeSnapshot(): string {
     chargeFournisseur: (content.chargeFournisseur ?? []).map(line),
     chargeClient: (content.chargeClient ?? []).map(line),
     prixComplementaires: (content.prixComplementaires ?? []).map(extra),
-    extraArticles: (content.extraArticles ?? []).map(extraArt),
+    extraArticles: (content.extraArticles ?? []).map(ea),
     dureeQuantiteTexte: String(content.dureeQuantiteTexte ?? ""),
     validiteTexte: String(content.validiteTexte ?? ""),
     signature: { ...content.signature },
@@ -557,6 +566,62 @@ const caDevisTotal = computed(() => rows.value.reduce((s, r) => s + pvDefinitifM
 const touchedCount = computed(() => rows.value.filter((r) => isRowTouched(r)).length);
 
 /* =========================
+   Extra articles (hors formules)
+========================= */
+const EXTRA_POMPAGE_LABEL = "Pompage";
+
+function isPompageArticle(a: any): boolean {
+  const lbl = String(a?.label ?? "").toLowerCase().trim();
+  return lbl === "pompage" || lbl === "prestation de pompage" || lbl.includes("pompage");
+}
+
+function defaultExtraArticles(): ExtraArticle[] {
+  return [];
+}
+
+function syncPompageFromTransport(list: ExtraArticle[], include: boolean) {
+  // ✅ Si l'utilisateur a supprimé le pompage dans le devis, on ne le réinjecte plus.
+  if (!include) {
+    const kept = (list ?? []).filter((x) => !isPompageArticle(x));
+    list.splice(0, list.length, ...kept);
+    return;
+  }
+
+  const t: any = variant.value?.transport ?? {};
+
+  // ✅ TransportPage stocke: includePompage (bool), volumePompePct (%), prixVentePompe (DH/m³)
+  const pct = n(t?.volumePompePct ?? 0);
+  const pu = n(t?.prixVentePompe ?? 0);
+
+  // Base volume = quantité projet (contrat) si dispo, sinon somme formules
+  const baseVol = quantiteProjetM3.value > 0 ? quantiteProjetM3.value : volumeTotalFromFormules.value;
+  const qty = pct > 0 ? (baseVol * pct) / 100 : 0;
+
+  // Si Transport n'a rien, on retire la ligne (pas de ligne vide)
+  if (qty <= 0 || pu <= 0) {
+    const kept = (list ?? []).filter((x) => !isPompageArticle(x));
+    list.splice(0, list.length, ...kept);
+    return;
+  }
+
+  const payload: ExtraArticle = {
+    label: "Pompage",
+    qty,
+    pu,
+  };
+
+  const idx = (list ?? []).findIndex((x) => isPompageArticle(x));
+  if (idx >= 0) list[idx] = payload;
+  else list.unshift(payload);
+}
+
+function canonicalExtraArticlesForSave(list: ExtraArticle[]): ExtraArticle[] {
+  return (list ?? [])
+    .map((x) => ({ label: String(x?.label ?? "").trim(), qty: n(x?.qty), pu: n(x?.pu) }))
+    .filter((x) => x.label && x.qty > 0 && x.pu > 0);
+}
+
+/* =========================
    Load / Sync
 ========================= */
 function loadPersistedAll() {
@@ -592,8 +657,6 @@ function loadPersistedAll() {
   content.meta.date = String(persistedMeta?.date ?? todayISO());
   content.meta.client = String(persistedMeta?.client ?? pnl.value?.client ?? "");
   content.meta.titreProjet = String(persistedMeta?.titreProjet ?? pnlTitle);
-
-  content.extraArticles = normalizeExtraArticles(persistedMeta?.extraArticles, defaultExtraArticles());
 
   content.intro =
     typeof (vDevis as any)?.intro === "string" && String((vDevis as any).intro).trim().length
@@ -636,6 +699,23 @@ function loadPersistedAll() {
     return !tset.has(lbl);
   });
   content.prixComplementaires = [...templateExtras, ...keepCustomExtras];
+
+  // ✅ Pompage (ligne suppressible côté Devis via meta.includePompage=false)
+  // Par défaut: on suit Transport (includePompage + volumePompePct + prixVentePompe).
+  const t: any = variant.value?.transport ?? {};
+  const transportInc = parseBoolLike(t?.includePompage); // true/false/null
+  const transportHasData = n(t?.volumePompePct ?? 0) > 0 && n(t?.prixVentePompe ?? 0) > 0;
+
+  let includePompage = persistedMeta?.includePompage === false ? false : true;
+  if (transportInc === false) includePompage = false;
+  else if (transportInc === true) includePompage = true;
+  else if (!transportHasData) includePompage = false;
+
+  content.meta.includePompage = includePompage;
+
+  content.extraArticles = normalizeExtraArticles(persistedMeta?.extraArticles, defaultExtraArticles());
+  // ✅ Pompage: alimenté depuis Transport (non modifiable) sauf si supprimé
+  syncPompageFromTransport(content.extraArticles, Boolean(content.meta.includePompage));
 
   const q = content.rappel.quantiteM3;
   const d = content.rappel.dureeMois;
@@ -681,6 +761,9 @@ function syncDevisFromContract() {
 
   content.rappel.quantiteM3 = quantiteProjetM3.value;
   content.rappel.dureeMois = dureeMois.value;
+
+  // ✅ Pompage (synchronisé Transport) sauf si supprimé
+  syncPompageFromTransport(content.extraArticles, Boolean(content.meta.includePompage));
 }
 
 /* =========================
@@ -730,13 +813,7 @@ async function saveDevis() {
 
       meta: {
         ...content.meta,
-        /* compat: on continue à stocker unit="m3" pour les articles HF, mais UI n'en affiche pas */
-        extraArticles: (content.extraArticles ?? []).map((a) => ({
-          label: String(a?.label ?? "").trim(),
-          unit: "m3",
-          qty: a?.qty == null ? null : n(a.qty),
-          pu: n(a?.pu),
-        })),
+        extraArticles: canonicalExtraArticlesForSave(content.extraArticles),
       },
       intro: String(content.intro ?? ""),
       rappel: { ...content.rappel },
@@ -746,10 +823,9 @@ async function saveDevis() {
       dureeQuantiteTexte: String(content.dureeQuantiteTexte ?? ""),
       validiteTexte: String(content.validiteTexte ?? ""),
       signature: { ...content.signature },
-      extraArticles: content.extraArticles ?? [],
-
     });
 
+    // ✅ Après Save : tri devient basé sur la nouvelle version enregistrée
     savedSurcharges.value = { ...draft.surcharges };
 
     await (store as any).loadPnls();
@@ -840,6 +916,14 @@ watch(
   }
 );
 
+watch(
+  () => JSON.stringify(variant.value?.transport ?? {}),
+  () => {
+    // ✅ Pompage suit transport tant qu'il n'a pas été explicitement supprimé côté devis
+    syncPompageFromTransport(content.extraArticles, Boolean(content.meta.includePompage));
+  }
+);
+
 /* =========================
    UI helpers - content editing
 ========================= */
@@ -863,16 +947,22 @@ function removeExtra(idx: number) {
 function addExtraArticle() {
   content.extraArticles.push({ label: "", qty: 0, pu: 0 });
 }
+
 function removeExtraArticle(idx: number) {
+  const it = content.extraArticles[idx];
+  const isPompe = isPompageArticle(it);
+
   content.extraArticles.splice(idx, 1);
+
+  // ✅ Si on supprime le pompage, on persiste l'intention (pour ne pas le réinjecter)
+  if (isPompe) content.meta.includePompage = false;
 }
-function setExtraQty(a: any, raw: any) {
-  const s = String(raw ?? "");
-  if (!s.trim()) {
-    a.qty = null;
-    return;
-  }
-  a.qty = n(s);
+
+function extraArticleTotal(a: ExtraArticle): number {
+  return n(a?.qty) * n(a?.pu);
+}
+function extraArticlesTotalHT(): number {
+  return (content.extraArticles ?? []).reduce((s, a) => s + extraArticleTotal(a), 0);
 }
 </script>
 
@@ -1073,33 +1163,30 @@ function setExtraQty(a: any, raw: any) {
 
     <!-- TAB 2 : CONTENU -->
     <template v-else>
-      <!-- ✅ En-tête (labels au-dessus + grid responsive sans débordement) -->
       <div class="card section">
         <div class="sectionHead">
           <div class="lbl">En-tête</div>
           <div class="muted">{{ content.meta.ville || (pnl?.city ?? "") }}, le <b>{{ todayFr() }}</b></div>
         </div>
 
-        <div class="formGrid">
-          <div class="field">
-            <div class="fieldLabel">Ville</div>
+        <div class="grid3">
+          <div>
+            <div class="k">Ville</div>
             <input class="input" v-model="content.meta.ville" placeholder="Ville" />
           </div>
-
-          <div class="field">
-            <div class="fieldLabel">Date</div>
+          <div>
+            <div class="k">Date</div>
             <input class="input" v-model="content.meta.date" type="date" />
           </div>
-
-          <div class="field">
-            <div class="fieldLabel">Client</div>
+          <div>
+            <div class="k">Client</div>
             <input class="input" v-model="content.meta.client" placeholder="Client" />
           </div>
+        </div>
 
-          <div class="field fieldWide">
-            <div class="fieldLabel">Titre projet</div>
-            <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
-          </div>
+        <div style="margin-top: 10px">
+          <div class="k">Titre projet</div>
+          <input class="input" v-model="content.meta.titreProjet" placeholder="Titre projet" />
         </div>
       </div>
 
@@ -1169,77 +1256,47 @@ function setExtraQty(a: any, raw: any) {
         <button class="btn miniAdd" type="button" @click="addLine('client')">+ Ajouter ligne</button>
       </div>
 
-      <!-- ✅ Prix complémentaires (grille propre + labels au-dessus + pas de débordement) -->
       <div class="card section">
-        <div class="sectionHead">
-          <div class="lbl">Prix complémentaires</div>
-          <div class="muted">Le prix est verrouillé. Modifiable : libellé / unité.</div>
-        </div>
+        <div class="lbl">Prix complémentaires</div>
 
-        <div class="pcList">
-          <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="pcItem">
-            <div class="field pcLabel">
-              <div class="fieldLabel">Libellé</div>
-              <input class="input" v-model="x.label" placeholder="Libellé" />
-            </div>
-
-            <div class="field pcUnit">
-              <div class="fieldLabel">Unité</div>
-              <input class="input" v-model="x.unit" placeholder="Unité" />
-            </div>
-
-            <div class="field pcVal">
-              <div class="fieldLabel">Valeur</div>
-              <input class="input num" type="number" step="1" :value="x.value" readonly />
-            </div>
-
-            <div class="pcActions">
-              <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
-            </div>
+        <div class="extras">
+          <div v-for="(x, i) in content.prixComplementaires" :key="'ex' + i" class="exRow">
+            <input class="input" v-model="x.label" placeholder="Libellé" />
+            <input class="input exUnit" v-model="x.unit" placeholder="Unité" />
+            <input class="input exVal" type="number" step="1" :value="x.value" readonly />
+            <button class="mini" type="button" @click="removeExtra(i)">Suppr</button>
           </div>
         </div>
 
         <button class="btn miniAdd" type="button" @click="addExtra">+ Ajouter prix complémentaire</button>
+        <div class="muted noteLine">(Le prix est verrouillé. Tu peux modifier uniquement le libellé / l’unité.)</div>
       </div>
 
-      <!-- ✅ Articles hors formules (sans unité) -->
       <div class="card section">
-        <div class="sectionHead">
-          <div class="lbl">Articles hors formules</div>
-          <div class="muted">PU en <b>DH/m³</b>. Quantité vide ⇒ “-”.</div>
-        </div>
+        <div class="lbl">Articles hors formules</div>
 
-        <div class="hfList">
-          <div v-for="(a, i) in content.extraArticles" :key="'hf' + i" class="hfItem">
-            <div class="field hfLabel">
-              <div class="fieldLabel">Désignation</div>
-              <input class="input" v-model="a.label" placeholder="Désignation" />
-            </div>
-
-            <div class="field hfQty">
-              <div class="fieldLabel">Quantité (m³)</div>
-              <input
-                class="input num"
-                type="number"
-                step="0.01"
-                :value="a.qty ?? ''"
-                placeholder="-"
-                @input="setExtraQty(a, ($event.target as HTMLInputElement).value)"
-              />
-            </div>
-
-            <div class="field hfPu">
-              <div class="fieldLabel">PU (DH/m³)</div>
-              <input class="input num" type="number" step="0.01" :value="a.pu" @input="a.pu = n(($event.target as HTMLInputElement).value)" />
-            </div>
-
-            <div class="hfActions">
-              <button class="mini" type="button" @click="removeExtraArticle(i)">Suppr</button>
-            </div>
+        <div class="extras">
+          <div v-for="(a, i) in content.extraArticles" :key="'ea' + i" class="exRow">
+            <input class="input" v-model="a.label" placeholder="Libellé" :readonly="isPompageArticle(a)" />
+            <input class="input exUnit" type="number" step="0.01" :value="a.qty" readonly />
+            <input class="input exVal" type="number" step="0.01" :value="a.pu" readonly />
+            <button class="mini" type="button" @click="removeExtraArticle(i)">Suppr</button>
           </div>
         </div>
 
         <button class="btn miniAdd" type="button" @click="addExtraArticle">+ Ajouter article</button>
+        <div class="muted noteLine">
+          (Le prix est toujours en m³. Le pompage est alimenté depuis Transport et n'est pas modifiable — mais il est supprimable.)
+        </div>
+
+        <div class="sepLine"></div>
+
+        <div class="grid2kv">
+          <div class="kv">
+            <div class="k">Total HT (articles)</div>
+            <div class="v"><b class="mono">{{ money2(extraArticlesTotalHT()) }}</b> <span class="muted">DH</span></div>
+          </div>
+        </div>
       </div>
 
       <div class="card section">
@@ -1252,26 +1309,25 @@ function setExtraQty(a: any, raw: any) {
         <textarea class="ta" v-model="content.validiteTexte" rows="2"></textarea>
       </div>
 
-      <!-- ✅ Signature (grid propre + labels au-dessus + pas de débordement) -->
       <div class="card section">
-        <div class="sectionHead">
-          <div class="lbl">Signature</div>
-          <div class="muted">En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b></div>
-        </div>
-
-        <div class="sigGrid">
-          <div class="field">
-            <div class="fieldLabel">Nom</div>
+        <div class="lbl">Signature</div>
+        <div class="grid3">
+          <div>
+            <div class="k">Nom</div>
             <input class="input" v-model="content.signature.nom" placeholder="Nom" />
           </div>
-          <div class="field">
-            <div class="fieldLabel">Poste</div>
+          <div>
+            <div class="k">Poste</div>
             <input class="input" v-model="content.signature.poste" placeholder="Poste" />
           </div>
-          <div class="field">
-            <div class="fieldLabel">Téléphone</div>
+          <div>
+            <div class="k">Téléphone</div>
             <input class="input" v-model="content.signature.telephone" placeholder="Téléphone" />
           </div>
+        </div>
+
+        <div class="muted noteLine">
+          En-tête export : <b>{{ pnl?.title ?? "—" }}</b> - offre de prix - <b>{{ todayFr() }}</b>
         </div>
       </div>
     </template>
@@ -1307,17 +1363,21 @@ function setExtraQty(a: any, raw: any) {
 </template>
 
 <style scoped>
+/* ✅ FIX overflow/superposition + labels toujours au-dessus des champs (sans toucher au reste)
+   - box-sizing global pour éviter que width:100% + padding déborde
+   - min-width:0 sur containers/grid items pour autoriser l'ellipsis/les champs à se contraindre
+   - champs/textarea en block + alignement vertical stable
+*/
+*, *::before, *::after { box-sizing: border-box; }
+.grid3 > div, .grid2kv > div { min-width: 0; }
+.grid3 > div { display:flex; flex-direction:column; gap:6px; }
+.exRow { min-width: 0; }
+.exRow > * { min-width: 0; }
+.k { display:block; }
+
 /* Base */
-/* ✅ Anti overflow universel dans cette page */
-* { box-sizing: border-box; }
-
-.input, .ta {
-  max-width: 100%;
-  min-width: 0;
-}
-
 .page { padding: 12px; display:flex; flex-direction:column; gap:10px; }
-.card { background:#fff; border:1px solid rgba(16,24,40,.12); border-radius:16px; padding:10px 12px; overflow: hidden; }
+.card { background:#fff; border:1px solid rgba(16,24,40,.12); border-radius:16px; padding:10px 12px; }
 .muted { color:#6b7280; font-size:12px; }
 .mono { font-variant-numeric: tabular-nums; }
 .ell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1355,7 +1415,7 @@ function setExtraQty(a: any, raw: any) {
 .iconBtn:hover{ background:#f9fafb; }
 .ic{ width:16px; height:16px; }
 
-.input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:12px; font-size:12.5px; background:#fff; min-width: 0; }
+.input { width:100%; padding:7px 9px; border:1px solid #d1d5db; border-radius:12px; font-size:12.5px; background:#fff; display:block; }
 .ta{
   width:100%;
   border:1px solid #d1d5db;
@@ -1364,21 +1424,9 @@ function setExtraQty(a: any, raw: any) {
   font-size: 13px;
   background:#fff;
   resize: vertical;
-  min-width: 0;
+  display:block;
 }
 .ta.small{ font-size: 12px; }
-
-.num{ text-align:right; }
-.input.num{ font-variant-numeric: tabular-nums; }
-
-/* ✅ Form fields: label au-dessus (strict) */
-.field{ display:flex; flex-direction:column; gap:6px; min-width: 0; }
-.fieldLabel{
-  font-size: 11px;
-  font-weight: 1000;
-  color: rgba(15,23,42,.72);
-  line-height: 1.1;
-}
 
 /* Header */
 .top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
@@ -1524,7 +1572,9 @@ function setExtraQty(a: any, raw: any) {
   display:inline-flex; gap:6px; align-items:center;
   max-width:100%;
 }
+.num{ text-align:right; }
 .input.num{
+  font-variant-numeric: tabular-nums;
   padding: 6px 8px;
   font-size: 12px;
   border-radius: 10px;
@@ -1632,6 +1682,7 @@ function setExtraQty(a: any, raw: any) {
 .k{ font-size: 11px; font-weight:1000; color:#6b7280; }
 .v{ margin-top: 4px; }
 
+.grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 .grid2kv{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 .sepLine{ height:1px; background: rgba(16,24,40,.10); margin: 8px 0; border-radius:999px; }
@@ -1642,13 +1693,9 @@ function setExtraQty(a: any, raw: any) {
   background: rgba(15,23,42,.02);
   border-radius:14px;
   padding: 6px 10px;
-
   display:flex;
   gap:10px;
   align-items:flex-start;
-
-  /* ✅ évite les débordements quand un enfant a width:100% */
-  min-width: 0;
 }
 .lock{
   flex:0 0 auto;
@@ -1663,28 +1710,8 @@ function setExtraQty(a: any, raw: any) {
   display:inline-flex;
   align-items:center;
 }
-.txt{
-  flex: 1 1 auto;
-  min-width: 0;
-  color:#0f172a;
-  font-size:12.5px;
-  line-height:1.25;
-  white-space: pre-wrap;
-}
+.txt{ flex:1; color:#0f172a; font-size:12.5px; line-height:1.25; white-space: pre-wrap; }
 
-/* ✅ CRITIQUE: textarea dans un flex row doit être flex:1 (pas width:100%) */
-.bullet .ta.small{
-  flex: 1 1 auto;
-  min-width: 0;
-  width: auto;          /* ✅ neutralise le 100% */
-  max-width: 100%;
-}
-/* bouton à droite sans overlap */
-.bullet .mini{
-  flex: 0 0 auto;
-  align-self: flex-start;
-  white-space: nowrap;
-}
 .mini{
   border:1px solid #e5e7eb;
   background:#fff;
@@ -1698,63 +1725,14 @@ function setExtraQty(a: any, raw: any) {
 .mini:hover{ background:#f9fafb; }
 .miniAdd{ align-self:flex-start; }
 
-/* ✅ En-tête grid (anti overflow) */
-.formGrid{
+.extras{ display:flex; flex-direction:column; gap: 10px; }
+.exRow{
   display:grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: 1.6fr .6fr .4fr auto;
+  gap: 8px;
+  align-items:center;
 }
-.fieldWide{ grid-column: 1 / -1; }
-
-/* ✅ Prix complémentaires: layout stable */
-.pcList{ display:flex; flex-direction:column; gap: 10px; }
-.pcItem{
-  border:1px solid rgba(16,24,40,0.10);
-  background: rgba(15,23,42,0.02);
-  border-radius:14px;
-  padding: 10px;
-
-  display:grid;
-
-  /* ✅ Libellé prend le reste, Unité + Valeur ont des tailles raisonnables */
-  grid-template-columns: minmax(0, 1fr) 220px 170px auto;
-
-  gap: 10px;
-  align-items:end;
-
-  min-width: 0;
-}
-.pcLabel, .pcUnit, .pcVal { min-width: 0; }
-.pcActions{ display:flex; justify-content:flex-end; align-items:end; }
-
-/* ✅ Articles HF: layout stable */
-.hfList{ display:flex; flex-direction:column; gap: 10px; }
-.hfItem{
-  border:1px solid rgba(16,24,40,0.10);
-  background: rgba(15,23,42,0.02);
-  border-radius:14px;
-  padding: 10px;
-
-  display:grid;
-
-  /* ✅ Désignation flexible + Qty/PU compacts */
-  grid-template-columns: minmax(0, 1fr) 170px 190px auto;
-
-  gap: 10px;
-  align-items:end;
-
-  min-width: 0;
-}
-.hfLabel, .hfQty, .hfPu { min-width: 0; }
-
-.hfActions{ display:flex; justify-content:flex-end; align-items:end; }
-
-/* ✅ Signature grid */
-.sigGrid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
+.exVal{ text-align:right; }
 
 /* Responsive */
 @media (max-width: 980px) {
@@ -1775,18 +1753,9 @@ function setExtraQty(a: any, raw: any) {
   }
 
   .sumGrid{ grid-template-columns: 1fr; }
+  .grid3{ grid-template-columns: 1fr; }
   .grid2kv{ grid-template-columns: 1fr; }
-
-  .formGrid{ grid-template-columns: 1fr; }
-  .fieldWide{ grid-column: auto; }
-
-  .pcItem{ grid-template-columns: 1fr; align-items:stretch; }
-  .pcActions{ justify-content:flex-start; }
-
-  .hfItem{ grid-template-columns: 1fr; align-items:stretch; }
-  .hfActions{ justify-content:flex-start; }
-
-  .sigGrid{ grid-template-columns: 1fr; }
+  .exRow{ grid-template-columns: 1fr; }
 }
 
 /* Modal */
