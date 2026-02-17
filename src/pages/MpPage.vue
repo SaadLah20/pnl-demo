@@ -1,6 +1,6 @@
 <!-- ✅ src/pages/MpPage.vue (FICHIER COMPLET)
      MAJ demandée :
-     ✅ Enlever le fournisseur qui apparaît sous le libellé MP (on n’affiche plus aucune “sous-ligne” liée au fournisseur)
+     ✅ Enlever le fournisseur qui apparaît au dessus/sous le libellé MP dans la cellule MP (plus aucune sous-ligne)
      ✅ Afficher Qté totale en TONNES (T) au lieu de kg (conversion kg -> T /1000)
 -->
 <script setup lang="ts">
@@ -100,7 +100,7 @@ type MpRow = {
   unite: string;
   fournisseur: string;
 
-  // ✅ commentaire : UNIQUEMENT celui du MP catalogue (pas it.comment), pour éviter d’afficher le fournisseur “déguisé”
+  // gardé côté data (utile ailleurs si besoin), mais plus affiché dans cellule MP
   comment: string;
 
   prixCatalogue: number;
@@ -463,11 +463,10 @@ function nextPage() {
                         <span class="unit">({{ r.unite || "—" }})</span>
                       </div>
 
-                      <!-- ✅ On n’affiche PLUS rien qui pourrait être le fournisseur sous le libellé -->
-                      <div class="mpSub muted" v-if="r.comment">
+                      <!-- ✅ SUPPRIMÉ : aucune sous-ligne (donc plus de fournisseur/legacy sous le libellé) -->
+                      <!-- <div class="mpSub muted" v-if="r.comment">
                         <span class="ell" :title="r.comment">{{ r.comment }}</span>
-                      </div>
-                      <!-- si pas de comment => rien (pas de “—”) -->
+                      </div> -->
                     </div>
                   </td>
 
@@ -789,6 +788,7 @@ function nextPage() {
   color: rgba(15,23,42,0.55);
   flex: 0 0 auto;
 }
+/* mpSub gardé au cas où, mais plus utilisé */
 .mpSub{
   margin-top: 2px;
   font-size: 10.5px;

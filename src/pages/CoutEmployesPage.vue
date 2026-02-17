@@ -1,15 +1,10 @@
-<!-- ✅ src/pages/CoutEmployesPage.vue (FICHIER COMPLET / rows 1 ligne + KPIs + sticky subheader + toast + modal z-index + importer + generalize + ✅ Masquer 0 auto)
-     MAJ:
-     ✅ KPIs ajoutés: /m³, Total, %
-     ✅ Suppression du bloc d’indication “Saisie employés…”
--->
+<!-- ✅ src/pages/CoutEmployesPage.vue (FICHIER COMPLET / inputs alignés sur une colonne fixe “poste” + Nb/Salaire collés au titre) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
-// Heroicons
 import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
@@ -95,7 +90,10 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
+const volumeTotal = computed(() =>
+  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3, 0, 1e15), 0)
+);
+
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen, 0, 1e15));
 
 function mpPriceUsed(mpId: string): number {
@@ -161,8 +159,6 @@ function loadFromVariant() {
 
 /* =========================
    ✅ Masquer 0 (AUTO)
-   - Par défaut: ON si au moins 1 champ != 0
-   - OFF si tout == 0
 ========================= */
 const hideZero = ref(false);
 const hideZeroUserToggled = ref(false);
@@ -191,7 +187,6 @@ watch(
   },
   { immediate: true }
 );
-
 watch(
   () => allZero.value,
   (z) => {
@@ -205,7 +200,6 @@ function toggleHideZero() {
   hideZero.value = !hideZero.value;
 }
 
-/* filtre: masquer uniquement FULL 0 (nb==0 ET cout==0) */
 const empGroupsFiltered = computed(() => {
   if (!hideZero.value) return EMP_GROUPS;
   return EMP_GROUPS.filter((g) => {
@@ -217,21 +211,30 @@ const empGroupsFiltered = computed(() => {
 const hiddenCount = computed(() => EMP_GROUPS.length - empGroupsFiltered.value.length);
 
 /* =========================
-   METRICS
+   METRICS (global + per row)
 ========================= */
 function rowMonthly(gKey: string) {
   const nb = clamp(draft[`${gKey}Nb`], 0, 9999);
   const cout = clamp(draft[`${gKey}Cout`], 0, 999999999);
   return nb * cout;
 }
-const monthly = computed(() => EMP_GROUPS.reduce((s, g) => s + rowMonthly(g.key), 0));
+function rowTotal(gKey: string) {
+  return rowMonthly(gKey) * clamp(dureeMois.value, 0, 9999);
+}
+function rowPerM3(gKey: string) {
+  return volumeTotal.value > 0 ? rowTotal(gKey) / volumeTotal.value : 0;
+}
+function rowPct(gKey: string) {
+  return caTotal.value > 0 ? (rowTotal(gKey) / caTotal.value) * 100 : 0;
+}
 
+const monthly = computed(() => EMP_GROUPS.reduce((s, g) => s + rowMonthly(g.key), 0));
 const total = computed(() => monthly.value * clamp(dureeMois.value, 0, 9999));
 const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.value : 0));
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
-   ✅ IMPORTER (UI only)
+   ✅ IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -309,7 +312,7 @@ function showToast(msg: string, kind: "ok" | "err" = "ok") {
 }
 
 /* =========================
-   MODAL (confirm/info)
+   MODAL
 ========================= */
 const modal = reactive({
   open: false,
@@ -324,13 +327,6 @@ function openConfirm(title: string, message: string, onConfirm: () => void | Pro
   modal.message = message;
   modal.mode = "confirm";
   modal.onConfirm = onConfirm;
-}
-function openInfo(title: string, message: string) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "info";
-  modal.onConfirm = null;
 }
 function closeModal() {
   modal.open = false;
@@ -413,7 +409,6 @@ async function generalizeEmployesTo(variantIds: string[]) {
     genBusy.value = false;
   }
 }
-
 async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
   const ids = payload?.variantIds ?? [];
   if (!ids.length) return;
@@ -433,7 +428,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
@@ -456,9 +450,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             Reset
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="toggleHideZero()" :title="hideZero ? 'Afficher tout' : 'Masquer les lignes à 0'">
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="toggleHideZero()">
             <span class="dot" :class="{ on: hideZero }"></span>
-            {{ hideZero ? "Afficher tout" : "Masquer 0" }}
+            {{ hideZero ? "Afficher" : "Masquer 0" }}
             <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
           </button>
 
@@ -479,23 +473,19 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
 
-      <!-- ✅ KPIs -->
       <div class="kpis" v-if="variant">
         <div class="kpi">
           <div class="kLbl">/ m³</div>
           <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
         </div>
-
         <div class="kpi kpiMonth">
-          <div class="kLbl">/ mois</div>
+          <div class="kLbl">Total/mois</div>
           <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
         </div>
-
         <div class="kpi">
           <div class="kLbl">Total</div>
           <div class="kVal mono">{{ money(total, 2) }}</div>
         </div>
-
         <div class="kpi">
           <div class="kLbl">%</div>
           <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
@@ -506,24 +496,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ err }}</div>
       </div>
-
       <div v-if="impErr" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Import :</b> {{ impErr }}</div>
       </div>
-
       <div v-if="genErr" class="alert err">
         <ExclamationTriangleIcon class="aic" />
         <div><b>Généralisation :</b> {{ genErr }}</div>
-      </div>
-
-      <div v-if="(store as any).loading" class="alert">
-        <div>Chargement…</div>
-      </div>
-
-      <div v-else-if="(store as any).error" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
-        <div><b>Erreur :</b> {{ (store as any).error }}</div>
       </div>
     </div>
 
@@ -533,18 +512,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <template v-else>
       <div class="card">
-        <div v-if="hideZero && empGroupsFiltered.length === 0" class="emptyGrid">Aucune ligne à afficher (tout est à 0).</div>
+        <div v-if="hideZero && empGroupsFiltered.length === 0" class="emptyGrid">Aucune ligne (tout est à 0).</div>
 
-        <!-- ✅ 1 poste par ligne -->
-        <div class="rows">
-          <div v-for="g in empGroupsFiltered" :key="g.key" class="r">
-            <div class="rLeft">
-              <component :is="empIcon(g.key)" class="ri" />
-              <div class="rlbl" :title="g.label">{{ g.label }}</div>
-            </div>
+        <div class="list">
+          <div v-for="g in empGroupsFiltered" :key="g.key" class="rowCard">
+            <!-- ✅ Inputs “collés” au titre : layout fixe basé sur le titre le plus long -->
+            <div class="top">
+              <div class="poste">
+                <component :is="empIcon(g.key)" class="pi" />
+                <div class="plbl" :title="g.label">{{ g.label }}</div>
+              </div>
 
-            <div class="rMid">
-              <div class="mini">Nb</div>
               <input
                 class="inNb mono"
                 type="number"
@@ -553,38 +531,46 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 max="9999"
                 :value="draft[`${g.key}Nb`]"
                 @input="draft[`${g.key}Nb`] = clamp(($event.target as HTMLInputElement).value, 0, 9999)"
+                title="Nb"
               />
-
-              <div class="mini">Salaire</div>
               <input
-                class="inCout mono"
+                class="inSalaire mono"
                 type="number"
                 step="0.01"
                 min="0"
                 max="999999999"
                 :value="draft[`${g.key}Cout`]"
                 @input="draft[`${g.key}Cout`] = clamp(($event.target as HTMLInputElement).value, 0, 999999999)"
+                title="Salaire DH/mois"
               />
-              <div class="u">DH/mois</div>
+              <div class="unit">DH/mois</div>
             </div>
 
-            <div class="rRight mono">
-              <div class="mini2">/mois</div>
-              <div class="rVal">{{ money(rowMonthly(g.key), 2) }}</div>
+            <div class="krow">
+              <div class="rk">
+                <div class="rkLbl">Mois</div>
+                <div class="rkVal mono">{{ money(rowMonthly(g.key), 2) }}</div>
+              </div>
+              <div class="rk">
+                <div class="rkLbl">/m³</div>
+                <div class="rkVal mono">{{ n(rowPerM3(g.key), 2) }} <span class="rkU">DH/m³</span></div>
+              </div>
+              <div class="rk">
+                <div class="rkLbl">Total</div>
+                <div class="rkVal mono">{{ money(rowTotal(g.key), 2) }}</div>
+              </div>
+              <div class="rk">
+                <div class="rkLbl">%</div>
+                <div class="rkVal mono">{{ n(rowPct(g.key), 2) }} <span class="rkU">%</span></div>
+              </div>
             </div>
           </div>
-        </div>
-
-        <div class="note">
-          <b>Total</b> = /mois × durée • <b>/m³</b> = Total ÷ volume • <b>%</b> = Total ÷ CA.
         </div>
       </div>
     </template>
 
-    <!-- ✅ IMPORT -->
     <SectionImportModal v-model="impOpen" sectionLabel="Coûts employés" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <!-- ✅ GENERALISER -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       section-label="Coûts employés"
@@ -593,7 +579,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @close="() => {}"
     />
 
-    <!-- ✅ Modal confirm/info (au-dessus HeaderDashboard) -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -601,11 +586,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             <div class="dlgTtl">{{ modal.title }}</div>
             <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
           </div>
-
           <div class="dlgBody">
-            <div class="dlgMsg" style="white-space: pre-line">{{ modal.message }}</div>
+            <div class="dlgMsg">{{ modal.message }}</div>
           </div>
-
           <div class="dlgFtr">
             <button class="btn2" type="button" @click="closeModal()">Fermer</button>
             <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
@@ -616,7 +599,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
-    <!-- ✅ Toast (au-dessus HeaderDashboard) -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -629,7 +611,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 <style scoped>
 .page {
-  padding: 10px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -637,6 +619,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .mono {
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+* {
+  box-sizing: border-box; /* ✅ évite les “superpositions” dues au padding/border */
 }
 
 /* sticky subheader */
@@ -647,10 +632,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(248, 250, 252, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 8px 10px;
 }
-
 .row {
   display: flex;
   align-items: flex-end;
@@ -662,9 +646,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 240px;
+  min-width: 220px;
 }
-
 .ttlRow {
   display: flex;
   align-items: center;
@@ -672,7 +655,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   flex-wrap: wrap;
 }
 .ttl {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 950;
   color: #0f172a;
 }
@@ -706,17 +689,18 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .btn {
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
   padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a;
   font-weight: 950;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -734,18 +718,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.28);
 }
-.btn.pri:hover {
-  background: rgba(2, 132, 199, 0.18);
-}
 .ic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
-
-/* toggle dot */
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   border: 2px solid rgba(15, 23, 42, 0.35);
   background: transparent;
@@ -762,10 +741,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-radius: 999px;
   border: 1px solid rgba(2, 132, 199, 0.28);
   background: rgba(2, 132, 199, 0.08);
-  color: #0f172a;
 }
 
-/* KPIs */
+/* KPIs header */
 .kpis {
   margin-top: 8px;
   display: grid;
@@ -780,22 +758,22 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 14px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 .kLbl {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .kVal {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
@@ -806,7 +784,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
   margin-left: 6px;
-  font-size: 11px;
+  font-size: 10px;
 }
 .kpiMonth {
   border-color: rgba(2, 132, 199, 0.28);
@@ -816,81 +794,101 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 /* alerts */
 .alert {
   margin-top: 8px;
-  border-radius: 14px;
-  padding: 9px 10px;
+  border-radius: 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  font-size: 12px;
+  font-weight: 800;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.22);
 }
 .aic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   margin-top: 1px;
 }
 
 /* card */
 .card {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   overflow: hidden;
 }
+.empty {
+  padding: 12px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.6);
+}
 .emptyGrid {
   padding: 10px 12px;
   margin: 8px;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px dashed rgba(16, 24, 40, 0.18);
   background: rgba(15, 23, 42, 0.02);
   font-weight: 900;
   color: rgba(15, 23, 42, 0.65);
 }
 
-/* rows */
-.rows {
+.list {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
-.r {
+.rowCard {
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: rgba(15, 23, 42, 0.012);
-  border-radius: 14px;
-  padding: 8px 10px;
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(320px, 1.2fr) minmax(140px, 0.6fr);
-  gap: 10px;
-  align-items: center;
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-@media (max-width: 980px) {
-  .r {
-    grid-template-columns: 1fr;
+
+/* ✅ Ligne “poste + inputs” ALIGNÉE sur une largeur fixe (Technicien labo) */
+.top {
+  --posteW: 230px; /* ✅ base sur “Technicien labo” + icône */
+  display: grid;
+  grid-template-columns: var(--posteW) 44px 148px 60px;
+  gap: 6px; /* ✅ évite la superposition */
+  align-items: center; /* ✅ alignement vertical identique pour tous */
+}
+@media (max-width: 780px) {
+  .top {
+    --posteW: 1fr;
+    grid-template-columns: 1fr 44px 1fr 60px; /* ✅ reste compact */
+  }
+}
+@media (max-width: 560px) {
+  .top {
+    grid-template-columns: 1fr; /* ✅ stack mobile */
     gap: 8px;
   }
 }
 
-.rLeft {
+.poste {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
-.ri {
-  width: 18px;
-  height: 18px;
+.pi {
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   color: rgba(2, 132, 199, 0.95);
 }
-.rlbl {
+.plbl {
   font-weight: 950;
-  font-size: 12px;
+  font-size: 11.5px;
   color: rgba(15, 23, 42, 0.75);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -900,93 +898,92 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   white-space: nowrap;
 }
 
-.rMid {
-  display: grid;
-  grid-template-columns: 34px 92px 54px 140px 70px;
-  gap: 8px;
-  align-items: center;
-  justify-content: end;
-}
-@media (max-width: 980px) {
-  .rMid {
-    grid-template-columns: 34px 92px 54px 1fr 70px;
-    justify-content: start;
-  }
-}
-.mini {
-  font-size: 10px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.5);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  text-align: right;
-}
-@media (max-width: 980px) {
-  .mini {
-    text-align: left;
-  }
-}
+/* inputs (plus de width fixe sur l’input lui-même => pas de chevauchement) */
 .inNb,
-.inCout {
-  height: 30px;
-  border-radius: 12px;
+.inSalaire {
+  width: 100%;
+  height: 28px;
+  border-radius: 11px;
   border: 1px solid rgba(2, 132, 199, 0.26);
   background: rgba(2, 132, 199, 0.06);
-  padding: 0 10px;
+  padding: 0 8px;
   font-weight: 950;
+  font-size: 12px;
   color: #0f172a;
   outline: none;
   text-align: right;
-  min-width: 0;
+}
+.inNb {
+  padding: 0 6px; /* ✅ plus petit */
+}
+.inNb::-webkit-outer-spin-button,
+.inNb::-webkit-inner-spin-button,
+.inSalaire::-webkit-outer-spin-button,
+.inSalaire::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .inNb:focus,
-.inCout:focus {
+.inSalaire:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
-.u {
-  font-size: 10.5px;
+.unit {
+  font-size: 10px;
   font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
 }
-
-.rRight {
-  justify-self: end;
-  text-align: right;
-  min-width: 0;
-}
-@media (max-width: 980px) {
-  .rRight {
-    justify-self: start;
-    text-align: left;
+@media (max-width: 560px) {
+  .unit {
+    display: none;
   }
 }
-.mini2 {
-  font-size: 10px;
+
+/* KPIs par poste */
+.krow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+@media (max-width: 820px) {
+  .krow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.rk {
+  background: #fff;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 12px;
+  padding: 6px 8px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rkLbl {
+  font-size: 9.5px;
   font-weight: 950;
-  color: rgba(15, 23, 42, 0.5);
+  color: rgba(15, 23, 42, 0.55);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.rVal {
-  font-size: 12.5px;
+.rkVal {
+  font-size: 12px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.note {
-  padding: 8px 10px;
-  border-top: 1px dashed rgba(16, 24, 40, 0.14);
-  font-size: 11.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.65);
+.rkU {
+  font-size: 10px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.55);
+  margin-left: 6px;
 }
 
-/* modal (✅ au-dessus du HeaderDashboard) */
+/* modal + toast */
 .ovl {
   position: fixed;
   inset: 0;
@@ -995,12 +992,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 100000;
+  z-index: 120000;
 }
 .dlg {
   width: min(520px, 100%);
   background: #fff;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   overflow: hidden;
 }
@@ -1016,8 +1013,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: #0f172a;
 }
 .x {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
@@ -1039,7 +1036,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-top: 1px solid rgba(16, 24, 40, 0.08);
 }
 .btn2 {
-  height: 34px;
+  height: 32px;
   border-radius: 12px;
   padding: 0 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -1052,7 +1049,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.28);
 }
 
-/* toast (✅ au-dessus du HeaderDashboard) */
 .toast {
   position: fixed;
   right: 12px;

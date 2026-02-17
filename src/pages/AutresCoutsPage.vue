@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/AutresCoutsPage.vue (FICHIER COMPLET / charte “subheader sticky” + KPIs en haut + actions compactes + inputs bleu unité/valeur + ✅ importer) -->
+<!-- ✅ src/pages/AutresCoutsPage.vue (FICHIER COMPLET / UI alignée aux autres pages + mêmes logiques) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -21,6 +21,19 @@ onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
     await (store as any).loadPnls();
   }
+});
+
+const fgRow = computed<DraftRow | null>(() => {
+  const r = rows.value.find((x) => isFraisGenerauxRow(x));
+  return r ?? null;
+});
+
+const fgPct = computed<number>(() => (fgRow.value ? pctFor(fgRow.value) : 0));
+
+const fgLow = computed<boolean>(() => {
+  if (!fgRow.value) return false;
+  if (clamp(caTotal.value) <= 0) return false;
+  return fgPct.value < 5; // ✅ seuil à 5%
 });
 
 /* =========================
@@ -75,15 +88,19 @@ const variantLabel = computed(() => {
 
 /* =========================
    KPIs requis (Volume / CA)
+   (on garde pour calculer % et conversions)
 ========================= */
 type DraftForm = { volumeM3: number; momd: number };
 const formDrafts = reactive<Record<string, DraftForm>>({});
+
 function getFormDraft(id: string): DraftForm {
   const k = String(id);
   if (!formDrafts[k]) formDrafts[k] = { volumeM3: 0, momd: 0 };
   return formDrafts[k];
 }
+
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
+
 watch(
   () => variant.value?.id,
   () => {
@@ -115,6 +132,7 @@ function cmpParM3For(vf: any): number {
     return s + (qtyKg / 1000) * prixTonne;
   }, 0);
 }
+
 const caTotal = computed(() => {
   return formules.value.reduce((s: number, vf: any) => {
     const vol = clamp(getFormDraft(vf.id).volumeM3);
@@ -124,11 +142,6 @@ const caTotal = computed(() => {
     return s + pv * vol;
   }, 0);
 });
-const pvMoy = computed(() => {
-  const vol = volumeTotal.value;
-  if (vol <= 0) return 0;
-  return caTotal.value / vol;
-});
 
 /* =========================
    AUTRES COUTS - UI MODEL
@@ -137,6 +150,7 @@ type Unite = "FORFAIT" | "MOIS" | "M3" | "POURCENT_CA";
 type DraftRow = { _id: string; label: string; unite: Unite; valeur: number };
 
 const rows = ref<DraftRow[]>([]);
+
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -146,6 +160,7 @@ function isFraisGenerauxRow(r: DraftRow | null | undefined) {
   return normLabel(r.label) === FG_NORM;
 }
 
+/** ✅ FG existe une seule fois (sans mise en avant UI) */
 function ensureFraisGeneraux() {
   const idx = rows.value.findIndex((r) => isFraisGenerauxRow(r));
   if (idx === -1) {
@@ -157,6 +172,7 @@ function ensureFraisGeneraux() {
     });
     return;
   }
+  // On remonte FG en premier pour éviter “doublon perçu”
   if (idx > 0) {
     const [fg] = rows.value.splice(idx, 1);
     if (fg) rows.value.unshift(fg);
@@ -173,17 +189,15 @@ function loadFromVariant() {
   }));
   ensureFraisGeneraux();
 }
+
 watch(
   () => variant.value?.id,
   () => loadFromVariant(),
   { immediate: true }
 );
 
-const fgRow = computed<DraftRow | null>(() => {
-  const r = rows.value.find((x) => isFraisGenerauxRow(x));
-  return r ?? null;
-});
 const displayRows = computed(() => {
+  ensureFraisGeneraux();
   const fg = rows.value.find((r) => isFraisGenerauxRow(r));
   const rest = rows.value.filter((r) => !isFraisGenerauxRow(r));
   return fg ? [fg, ...rest] : rest;
@@ -233,14 +247,6 @@ const pctGlobal = computed(() => {
   return (totalGlobal.value / ca) * 100;
 });
 
-/* Frais généraux: alerte si <= 4% */
-const fgPct = computed<number>(() => (fgRow.value ? pctFor(fgRow.value) : 0));
-const fgLow = computed<boolean>(() => {
-  if (!fgRow.value) return false;
-  if (clamp(caTotal.value) <= 0) return false;
-  return fgPct.value <= 4;
-});
-
 /* =========================
    TOAST (charte pages)
 ========================= */
@@ -266,10 +272,11 @@ function addRow() {
     valeur: 0,
   });
 }
+
 function removeRowById(id: string) {
   const idx = rows.value.findIndex((r) => r._id === id);
   if (idx < 0) return;
-  if (isFraisGenerauxRow(rows.value[idx])) return;
+  if (isFraisGenerauxRow(rows.value[idx])) return; // FG non supprimable
   rows.value.splice(idx, 1);
 }
 
@@ -302,6 +309,7 @@ const modal = reactive({
   mode: "confirm" as "confirm" | "info",
   onConfirm: null as null | (() => void | Promise<void>),
 });
+
 function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
   modal.open = true;
   modal.title = title;
@@ -529,9 +537,9 @@ function valuePlaceholder(u: Unite): string {
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader (charte) -->
+    <!-- ✅ Sticky subheader (alignée charte pages) -->
     <div class="subhdr">
-      <div class="rowTop">
+      <div class="row">
         <div class="left">
           <div class="ttlRow">
             <div class="ttl">Autres coûts</div>
@@ -542,17 +550,7 @@ function valuePlaceholder(u: Unite): string {
             <span class="clip"><b>{{ variantLabel }}</b></span>
             <span class="sep" v-if="dureeMois">•</span>
             <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
-
-            <span class="sep" v-if="volumeTotal">•</span>
-            <span v-if="volumeTotal">Vol <b>{{ n(volumeTotal, 0) }}</b> m³</span>
-
-            <span class="sep" v-if="caTotal">•</span>
-            <span v-if="caTotal">CA <b>{{ money(caTotal, 0) }}</b></span>
-
-            <span class="sep" v-if="pvMoy">•</span>
-            <span v-if="pvMoy">PV moy <b>{{ money(pvMoy, 2) }}</b>/m³</span>
           </div>
-
           <div class="meta" v-else>Aucune variante active.</div>
         </div>
 
@@ -567,7 +565,6 @@ function valuePlaceholder(u: Unite): string {
             Reset
           </button>
 
-          <!-- ✅ Importer -->
           <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
@@ -585,28 +582,28 @@ function valuePlaceholder(u: Unite): string {
         </div>
       </div>
 
-      <!-- ✅ KPIs en haut (charte) -->
+      <!-- ✅ KPIs compacts (inchangés) -->
       <div class="kpis" v-if="variant">
-        <div class="kpi kpiMain">
+        <div class="kpi main">
           <div class="kLbl">Total</div>
           <div class="kVal mono">{{ money(totalGlobal, 2) }}</div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">/ m³</div>
-          <div class="kVal mono">{{ n(perM3Global, 2) }} <span>DH/m³</span></div>
-        </div>
-
-        <div class="kpi kpiMonth">
-          <div class="kLbl">/ mois</div>
-          <div class="kVal mono">{{ money(monthlyGlobal, 2) }} <span>DH/mois</span></div>
-        </div>
-
-        <div class="kpi" :class="{ warn: fgLow }" :title="fgLow ? 'Frais généraux <= 4%' : ''">
-          <div class="kLbl">% FG</div>
           <div class="kVal mono">
-            {{ n(fgPct, 2) }} <span>%</span>
+            {{ n(perM3Global, 2) }} <span class="unit">DH/m³</span>
           </div>
+        </div>
+
+        <div class="kpi month">
+          <div class="kLbl">/ mois</div>
+          <div class="kVal mono">{{ money(monthlyGlobal, 2) }} <span class="unit">DH/mois</span></div>
+        </div>
+
+        <div class="kpi">
+          <div class="kLbl">% du CA</div>
+          <div class="kVal mono">{{ n(pctGlobal, 2) }} <span class="unit">%</span></div>
         </div>
       </div>
 
@@ -642,6 +639,7 @@ function valuePlaceholder(u: Unite): string {
     <template v-else>
       <div class="card">
         <div class="listWrap">
+          <!-- ✅ header tableau style “table head” (comme pages Maintenance) -->
           <div class="listHead">
             <div class="cLabel">Libellé</div>
             <div class="cPm3 r">/m³</div>
@@ -653,7 +651,7 @@ function valuePlaceholder(u: Unite): string {
 
           <div v-if="displayRows.length === 0" class="empty muted">Aucun autre coût.</div>
 
-          <div v-for="r0 in displayRows" :key="r0._id" class="rowLine" :class="{ fg: isFraisGenerauxRow(r0) }">
+          <div v-for="r0 in displayRows" :key="r0._id" class="rowLine">
             <div class="cell cLabel">
               <div class="labelWrap">
                 <input
@@ -680,18 +678,21 @@ function valuePlaceholder(u: Unite): string {
                       v-model.number="r0.valeur"
                       :placeholder="valuePlaceholder(r0.unite)"
                     />
-                    <span class="unit">{{ valueUnitLabel(r0.unite) }}</span>
+                    <span class="unitInline">{{ valueUnitLabel(r0.unite) }}</span>
                   </div>
                 </div>
               </div>
 
-              <div v-if="isFraisGenerauxRow(r0) && fgLow" class="fgHint">⚠ Frais généraux ≤ <b>4%</b></div>
+              <!-- ✅ Seule indication FG (discrète, sans KPI) -->
+              <div v-if="isFraisGenerauxRow(r0) && fgLow" class="fgHint">
+                ⚠ Frais généraux &lt; <b>5%</b>
+              </div>
             </div>
 
             <div class="cell cPm3 r mono">{{ n(perM3For(r0), 2) }}</div>
             <div class="cell cMonth r mono">{{ money(monthlyFor(r0), 2) }}</div>
             <div class="cell cTot r mono"><b>{{ money(totalFor(r0), 2) }}</b></div>
-            <div class="cell cPct r mono" :class="{ red: isFraisGenerauxRow(r0) && fgLow }">{{ n(pctFor(r0), 2) }}%</div>
+            <div class="cell cPct r mono">{{ n(pctFor(r0), 2) }}%</div>
 
             <div class="cell cAct r">
               <button
@@ -708,7 +709,7 @@ function valuePlaceholder(u: Unite): string {
           </div>
 
           <div class="note muted">
-            Unité <b>M3</b> et <b>%CA</b> calculées sur le volume total et le CA total. (<b>/mois</b> = 0 pour M3/%CA par design)
+            <b>M3</b> et <b>%CA</b> utilisent le volume total et le CA total de la variante.
           </div>
         </div>
       </div>
@@ -746,7 +747,12 @@ function valuePlaceholder(u: Unite): string {
 
           <div class="dlgFtr">
             <button class="btn2" type="button" @click="closeModal()">Fermer</button>
-            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
+            <button
+              v-if="modal.mode === 'confirm'"
+              class="btn2 pri"
+              type="button"
+              @click="modal.onConfirm && modal.onConfirm()"
+            >
               Confirmer
             </button>
           </div>
@@ -770,7 +776,7 @@ function valuePlaceholder(u: Unite): string {
   padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .mono {
   font-variant-numeric: tabular-nums;
@@ -791,17 +797,17 @@ function valuePlaceholder(u: Unite): string {
   border-radius: 16px;
   padding: 8px 10px;
 }
-.rowTop {
+.row {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 240px;
 }
 .ttlRow {
@@ -816,36 +822,31 @@ function valuePlaceholder(u: Unite): string {
   color: #0f172a;
 }
 .badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-
-/* ✅ meta: 1 ligne, ellipsis comme tes pages */
-.meta {
   font-size: 10.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  min-width: 0;
+  font-weight: 950;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(236, 253, 245, 0.9);
+  color: rgba(6, 95, 70, 0.95);
 }
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.meta {
+  font-size: 12px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.65);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 .sep {
-  margin: 0 6px;
-  color: rgba(15, 23, 42, 0.35);
+  opacity: 0.6;
+}
+.clip {
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* actions */
@@ -888,7 +889,7 @@ function valuePlaceholder(u: Unite): string {
   height: 18px;
 }
 
-/* KPIs */
+/* ✅ KPIs compacts */
 .kpis {
   margin-top: 8px;
   display: grid;
@@ -904,44 +905,40 @@ function valuePlaceholder(u: Unite): string {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
   border-radius: 14px;
-  padding: 8px 10px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
+.kpi.main {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(236, 253, 245, 0.9);
+}
+.kpi.month {
+  border-color: rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.06);
+}
 .kLbl {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .kVal {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.kVal span {
+.kVal .unit {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
   margin-left: 6px;
   font-size: 11px;
-}
-.kpiMonth {
-  border-color: rgba(2, 132, 199, 0.28);
-  background: rgba(2, 132, 199, 0.06);
-}
-.kpiMain {
-  border-color: rgba(16, 185, 129, 0.42);
-  background: rgba(236, 253, 245, 0.9);
-}
-.kpi.warn {
-  border-color: rgba(239, 68, 68, 0.22);
-  background: rgba(239, 68, 68, 0.06);
 }
 
 /* alerts */
@@ -1007,10 +1004,6 @@ function valuePlaceholder(u: Unite): string {
 .rowLine:last-of-type {
   border-bottom: 0;
 }
-.rowLine.fg {
-  background: rgba(15, 23, 42, 0.02);
-}
-
 .cell {
   min-width: 0;
 }
@@ -1036,12 +1029,8 @@ function valuePlaceholder(u: Unite): string {
   border-color: rgba(2, 132, 199, 0.5);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
-.in.lock {
-  border-color: rgba(16, 24, 40, 0.18);
-  background: rgba(15, 23, 42, 0.02);
-}
 
-/* ✅ bleu uniquement pour unité + valeur (comme tes autres pages) */
+/* bleu uniquement pour unité + valeur */
 .inBlue {
   border-color: rgba(2, 132, 199, 0.26);
   background: rgba(2, 132, 199, 0.06);
@@ -1049,6 +1038,12 @@ function valuePlaceholder(u: Unite): string {
 .inBlue:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+
+/* FG: discrètement distingué (mais reste éditable) */
+.lock {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(236, 253, 245, 0.7);
 }
 
 .labelWrap {
@@ -1079,24 +1074,13 @@ function valuePlaceholder(u: Unite): string {
   width: 100%;
   max-width: 160px;
 }
-.unit {
+.unitInline {
   font-size: 11px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.5);
   min-width: 56px;
   text-align: right;
   white-space: nowrap;
-}
-
-.fgHint {
-  font-size: 11.5px;
-  font-weight: 900;
-  color: rgba(185, 28, 28, 0.95);
-  margin-top: 2px;
-}
-.red {
-  color: rgba(185, 28, 28, 0.95);
-  font-weight: 950;
 }
 
 /* delete icon */
@@ -1136,11 +1120,8 @@ function valuePlaceholder(u: Unite): string {
   .inlineRight {
     grid-template-columns: 130px minmax(140px, 1fr);
   }
-  .unit {
+  .unitInline {
     min-width: 48px;
-  }
-  .clip {
-    max-width: 420px;
   }
 }
 @media (max-width: 920px) {
@@ -1155,10 +1136,6 @@ function valuePlaceholder(u: Unite): string {
     margin-bottom: 8px;
     background: rgba(255, 255, 255, 0.92);
   }
-  .rowLine.fg {
-    background: rgba(15, 23, 42, 0.03);
-  }
-
   .cLabel {
     grid-column: 1 / -1;
   }
@@ -1172,7 +1149,6 @@ function valuePlaceholder(u: Unite): string {
     grid-column: 2;
     justify-self: end;
   }
-
   .inlineRight {
     grid-template-columns: 1fr 1fr;
   }
@@ -1182,18 +1158,12 @@ function valuePlaceholder(u: Unite): string {
   .inSm {
     max-width: 100%;
   }
-  .unit {
+  .unitInline {
     min-width: 36px;
-  }
-  .meta {
-    flex-wrap: wrap; /* mobile ok */
-  }
-  .clip {
-    max-width: 92vw;
   }
 }
 
-/* modal */
+/* modal (au-dessus HeaderDashboard) */
 .ovl {
   position: fixed;
   inset: 0;
@@ -1202,7 +1172,7 @@ function valuePlaceholder(u: Unite): string {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 120000;
 }
 .dlg {
   width: min(520px, 100%);
@@ -1259,12 +1229,12 @@ function valuePlaceholder(u: Unite): string {
   border-color: rgba(2, 132, 199, 0.28);
 }
 
-/* toast */
+/* toast (au-dessus HeaderDashboard) */
 .toast {
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 90;
+  z-index: 120010;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1285,5 +1255,12 @@ function valuePlaceholder(u: Unite): string {
 .tmsg {
   font-weight: 900;
   color: rgba(15, 23, 42, 0.85);
+}
+
+.fgHint {
+  font-size: 11.5px;
+  font-weight: 900;
+  color: rgba(185, 28, 28, 0.95);
+  margin-top: 2px;
 }
 </style>

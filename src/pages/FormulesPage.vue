@@ -905,21 +905,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   const ids = payload?.variantIds ?? [];
   const copy = payload?.copy ?? "QTY_MOMD";
   if (!ids.length) return;
-
-  const label =
-    copy === "ZERO"
-      ? "Formules seulement (0 m³ / 0 MOMD / 0 DH)"
-      : copy === "QTY_ONLY"
-      ? "Formules + Quantités (MOMD=0 / 0 DH)"
-      : "Formules + Quantités + MOMD";
-
-  const ok = window.confirm(
-    payload.mode === "ALL"
-      ? `Généraliser les Formules sur TOUTES les variantes ?\nMode: ${label}`
-      : `Généraliser les Formules sur ${ids.length} variante(s) ?\nMode: ${label}`
-  );
-  if (!ok) return;
-
   await generalizeFormulesTo(ids, copy);
   if (!genErr.value) genOpen.value = false;
 }

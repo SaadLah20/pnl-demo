@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / ultra-compact cards + KPIs en haut + sticky subheader + toast + modal + generalize + ✅ masquer 0 + ✅ importer + ✅ verrouillage contrat (installation/genieCivil/transport) => force 0 + ✅ confirmation: liste variantes impactées (→0)) -->
+<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / lignes compactes + KPIs + masquer 0 auto + locks contrat + importer + generalize + confirmation variantes impactées) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -13,6 +13,7 @@ import {
   Squares2X2Icon,
   ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
+import { LockClosedIcon } from "@heroicons/vue/24/solid";
 
 const store = usePnlStore();
 
@@ -46,9 +47,6 @@ function clamp(v: any, min = 0, max = 1e15) {
   const x = toNum(v);
   return Math.max(min, Math.min(max, x));
 }
-function isZero(v: any) {
-  return clamp(v) === 0;
-}
 
 /* =========================
    ACTIVE
@@ -64,11 +62,18 @@ const variantLabel = computed(() => {
 });
 
 /* =========================
+   ✅ UI: Masquer 0 (auto)
+========================= */
+const hideZeros = ref(false);
+const hideZerosUserToggled = ref(false);
+
+function toggleHideZeros() {
+  hideZeros.value = !hideZeros.value;
+  hideZerosUserToggled.value = true;
+}
+
+/* =========================
    ✅ VERROUILLAGE (contrat)
-   - installation => draft.installation (legacy Installation CAB)
-   - genieCivil => draft.genieCivil
-   - transport => draft.transport
-   Si "CLIENT" => force 0 + input disabled + KPI ignore (0)
 ========================= */
 function norm(s: any): string {
   return String(s ?? "")
@@ -80,19 +85,12 @@ function norm(s: any): string {
 function isChargeClient(v: any): boolean {
   return norm(v).includes("client");
 }
-
 const lockInstallation = computed<boolean>(() => isChargeClient(contract.value?.installation));
 const lockGenieCivil = computed<boolean>(() => isChargeClient(contract.value?.genieCivil));
 const lockTransport = computed<boolean>(() => isChargeClient(contract.value?.transport));
 
-function enforceLocks() {
-  if (lockInstallation.value) draft.installation = 0;
-  if (lockGenieCivil.value) draft.genieCivil = 0;
-  if (lockTransport.value) draft.transport = 0;
-}
-
 /* =========================
-   VOLUME + CA (pour perM3 / %)
+   VOLUME + CA (pour /m3 et %)
 ========================= */
 type DraftForm = { volumeM3: number; momd: number };
 const formDrafts = reactive<Record<string, DraftForm>>({});
@@ -139,7 +137,6 @@ function cmpParM3For(vf: any): number {
     return s + (qtyKg / 1000) * prixTonne;
   }, 0);
 }
-
 const caTotal = computed(() => {
   return formules.value.reduce((s: number, vf: any) => {
     const vol = clamp(getFormDraft(vf.id).volumeM3);
@@ -155,16 +152,14 @@ const caTotal = computed(() => {
 ========================= */
 type Draft = {
   genieCivil: number;
-  installationCab: number; // (retiré de l'UI, gardé compat)
+  installationCab: number; // compat
   demontage: number;
   remisePointCentrale: number;
   transport: number;
   silots: number;
   localAdjuvant: number;
   bungalows: number;
-
-  // legacy compat (✅ utilisé comme Installation CAB côté UI)
-  installation: number;
+  installation: number; // legacy = Installation CAB
 };
 
 const draft = reactive<Draft>({
@@ -179,6 +174,25 @@ const draft = reactive<Draft>({
   installation: 0,
 });
 
+function enforceLocks() {
+  if (lockInstallation.value) draft.installation = 0;
+  if (lockGenieCivil.value) draft.genieCivil = 0;
+  if (lockTransport.value) draft.transport = 0;
+}
+
+function anyNonZeroDraft() {
+  return (
+    clamp(draft.genieCivil) > 0 ||
+    clamp(draft.demontage) > 0 ||
+    clamp(draft.remisePointCentrale) > 0 ||
+    clamp(draft.transport) > 0 ||
+    clamp(draft.silots) > 0 ||
+    clamp(draft.localAdjuvant) > 0 ||
+    clamp(draft.bungalows) > 0 ||
+    clamp(draft.installation) > 0
+  );
+}
+
 function loadFromVariant() {
   const s: any = (variant.value as any)?.coutOccasionnel ?? {};
   draft.genieCivil = clamp(s.genieCivil);
@@ -189,15 +203,17 @@ function loadFromVariant() {
   draft.silots = clamp(s.silots);
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
-  draft.installation = clamp(s.installation); // legacy
+  draft.installation = clamp(s.installation);
   enforceLocks();
+
+  if (!hideZerosUserToggled.value) hideZeros.value = anyNonZeroDraft();
 }
 
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 watch(() => contract.value, () => enforceLocks(), { immediate: true });
 
 /* =========================
-   KPI
+   KPI (global)
 ========================= */
 const total = computed(() => {
   const inst = lockInstallation.value ? 0 : clamp(draft.installation);
@@ -217,33 +233,78 @@ const total = computed(() => {
 });
 const monthly = computed(() => {
   const d = dureeMois.value;
-  if (d <= 0) return 0;
-  return total.value / d;
+  return d > 0 ? total.value / d : 0;
 });
 const perM3 = computed(() => {
   const vol = volumeTotal.value;
-  if (vol <= 0) return 0;
-  return total.value / vol;
+  return vol > 0 ? total.value / vol : 0;
 });
 const pct = computed(() => {
   const ca = caTotal.value;
-  if (ca <= 0) return 0;
-  return (total.value / ca) * 100;
+  return ca > 0 ? (total.value / ca) * 100 : 0;
 });
 
 /* =========================
-   ✅ MASQUER 0 (UI uniquement)
+   LINES + per line metrics
 ========================= */
-const hideZeros = ref(false);
+const LINES = [
+  { key: "genieCivil", label: "Génie civil" },
+  { key: "demontage", label: "Démontage" },
+  { key: "remisePointCentrale", label: "Remise point centrale" },
+  { key: "transport", label: "Transport" },
+  { key: "silots", label: "Silots" },
+  { key: "localAdjuvant", label: "Local adjuvant" },
+  { key: "bungalows", label: "Bungalows" },
+  { key: "installation", label: "Installation CAB" },
+] as const;
+
+type LineKey = (typeof LINES)[number]["key"];
+
+function isLockedKey(k: LineKey): boolean {
+  if (k === "genieCivil") return lockGenieCivil.value;
+  if (k === "transport") return lockTransport.value;
+  if (k === "installation") return lockInstallation.value;
+  return false;
+}
+
+function getValue(k: LineKey): number {
+  if (isLockedKey(k)) return 0;
+  return clamp((draft as any)[k]);
+}
+function setValue(k: LineKey, raw: any) {
+  if (isLockedKey(k)) return;
+  (draft as any)[k] = clamp(raw);
+}
+
+const visibleLines = computed(() => {
+  const d = dureeMois.value;
+  const vol = volumeTotal.value;
+  const ca = caTotal.value;
+
+  const rows = LINES.map((ln) => {
+    const v = getValue(ln.key);
+    return {
+      ...ln,
+      locked: isLockedKey(ln.key),
+      value: v,
+      perMonth: d > 0 ? v / d : 0,
+      parM3: vol > 0 ? v / vol : 0,
+      pctCa: ca > 0 ? (v / ca) * 100 : 0,
+      totalBold: v, // ✅ “cout total par cout” = value (DH) en gras
+    };
+  });
+
+  return hideZeros.value ? rows.filter((r) => clamp(r.value) !== 0) : rows;
+});
 
 /* =========================
    TOAST
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
-const toastKind = ref<"ok" | "err">("ok");
+const toastKind = ref<"ok" | "err" | "info">("ok");
 
-function showToast(msg: string, kind: "ok" | "err" = "ok") {
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
@@ -266,13 +327,6 @@ function openConfirm(title: string, message: string, onConfirm: () => void | Pro
   modal.message = message;
   modal.mode = "confirm";
   modal.onConfirm = onConfirm;
-}
-function openInfo(title: string, message: string) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "info";
-  modal.onConfirm = null;
 }
 function closeModal() {
   modal.open = false;
@@ -299,7 +353,7 @@ function buildPayload() {
     silots: Number(clamp(draft.silots)),
     localAdjuvant: Number(clamp(draft.localAdjuvant)),
     bungalows: Number(clamp(draft.bungalows)),
-    installation: Number(lockInstallation.value ? 0 : clamp(draft.installation)), // legacy = Installation CAB
+    installation: Number(lockInstallation.value ? 0 : clamp(draft.installation)),
   };
 }
 
@@ -334,7 +388,7 @@ function askReset() {
 }
 
 /* =========================
-   ✅ IMPORTER (depuis autre variante / UI only)
+   ✅ IMPORTER (UI only)
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -354,7 +408,7 @@ function findVariantById(variantId: string): any | null {
   return null;
 }
 
-function applyCoutOccasionnelFromVariant(srcVariant: any) {
+function applyFromVariant(srcVariant: any) {
   const s: any = srcVariant?.coutOccasionnel ?? {};
   draft.genieCivil = clamp(s.genieCivil);
   draft.installationCab = clamp(s.installationCab);
@@ -364,8 +418,10 @@ function applyCoutOccasionnelFromVariant(srcVariant: any) {
   draft.silots = clamp(s.silots);
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
-  draft.installation = clamp(s.installation); // legacy
+  draft.installation = clamp(s.installation);
   enforceLocks();
+
+  if (!hideZerosUserToggled.value) hideZeros.value = anyNonZeroDraft();
 }
 
 async function onApplyImport(payload: { sourceVariantId: string }) {
@@ -375,7 +431,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   if (!sourceId) return;
 
   if (String(variant.value?.id ?? "") === sourceId) {
-    showToast("La source est déjà la variante active.", "ok");
+    showToast("La source est déjà la variante active.", "info");
     impOpen.value = false;
     return;
   }
@@ -383,19 +439,16 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   impErr.value = null;
   impBusy.value = true;
   try {
-    const src = findVariantById(sourceId);
+    let src = findVariantById(sourceId);
+    if (!src) await (store as any).loadPnls?.();
 
+    src = src ?? findVariantById(sourceId);
     if (!src) {
-      await (store as any).loadPnls?.();
-    }
-
-    const src2 = src ?? findVariantById(sourceId);
-    if (!src2) {
       showToast("Variante source introuvable (données non chargées).", "err");
       return;
     }
 
-    applyCoutOccasionnelFromVariant(src2);
+    applyFromVariant(src);
     showToast("Coûts occasionnels importés. Pense à enregistrer.", "ok");
     impOpen.value = false;
   } catch (e: any) {
@@ -407,7 +460,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 }
 
 /* =========================
-   ✅ GENERALISER + message "variantes impactées → 0"
+   ✅ GENERALISER + variantes impactées → 0
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
@@ -427,9 +480,6 @@ function findContractByVariantId(variantId: string): any | null {
   return null;
 }
 
-/** Sur chaque cible, le contrat peut forcer certains champs à 0.
- *  On affiche uniquement si le payload n'est pas déjà 0 (sinon pas "impact").
- */
 function impactedByContractOnTargets(targetIds: string[], payload: any) {
   const impacted: Array<{ id: string; label: string; fields: string[] }> = [];
 
@@ -438,17 +488,9 @@ function impactedByContractOnTargets(targetIds: string[], payload: any) {
     if (!c) continue;
 
     const fields: string[] = [];
-
-    if (isChargeClient(c?.genieCivil)) {
-      if (toNum(payload?.genieCivil) !== 0) fields.push("Génie civil");
-    }
-    if (isChargeClient(c?.transport)) {
-      if (toNum(payload?.transport) !== 0) fields.push("Transport");
-    }
-    // ⚠️ Installation CAB est stockée dans legacy `installation`
-    if (isChargeClient(c?.installation)) {
-      if (toNum(payload?.installation) !== 0) fields.push("Installation CAB");
-    }
+    if (isChargeClient(c?.genieCivil) && toNum(payload?.genieCivil) !== 0) fields.push("Génie civil");
+    if (isChargeClient(c?.transport) && toNum(payload?.transport) !== 0) fields.push("Transport");
+    if (isChargeClient(c?.installation) && toNum(payload?.installation) !== 0) fields.push("Installation CAB");
 
     if (fields.length) {
       const v = findVariantById(tid);
@@ -513,28 +555,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     if (!genErr.value) genOpen.value = false;
   });
 }
-
-/* =========================
-   UI (liste champs)
-========================= */
-const COSTS = [
-  { key: "genieCivil", label: "Génie civil" },
-  // ✅ SUPPRIMÉ: installationCab
-  { key: "demontage", label: "Démontage" },
-  { key: "remisePointCentrale", label: "Remise point centrale" },
-  { key: "transport", label: "Transport" },
-  { key: "silots", label: "Silots" },
-  { key: "localAdjuvant", label: "Local adjuvant" },
-  { key: "bungalows", label: "Bungalows" },
-] as const;
-
-type CostKey = (typeof COSTS)[number]["key"];
-
-function isLockedKey(k: CostKey): boolean {
-  if (k === "genieCivil") return lockGenieCivil.value;
-  if (k === "transport") return lockTransport.value;
-  return false;
-}
 </script>
 
 <template>
@@ -557,8 +577,7 @@ function isLockedKey(k: CostKey): boolean {
         </div>
 
         <div class="actions" v-if="variant">
-          <!-- ✅ bouton Masquer 0 -->
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="hideZeros = !hideZeros">
+          <button class="btn" :disabled="saving || genBusy || impBusy" @click="toggleHideZeros()">
             {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
           </button>
 
@@ -567,7 +586,6 @@ function isLockedKey(k: CostKey): boolean {
             Reset
           </button>
 
-          <!-- ✅ Importer -->
           <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
@@ -585,26 +603,29 @@ function isLockedKey(k: CostKey): boolean {
         </div>
       </div>
 
-      <!-- ✅ KPIs en haut -->
+      <!-- ✅ KPIs en haut (✅ BG sur TOTAL) -->
       <div class="kpis" v-if="variant">
-        <div class="kpi kpiMain">
+        <div class="kpi">
+          <div class="kLbl">/ mois</div>
+          <div class="kVal mono">
+            {{ money(monthly, 2) }}
+            <span class="unit">DH/mois</span>
+          </div>
+        </div>
+
+        <div class="kpi main">
           <div class="kLbl">Total</div>
           <div class="kVal mono">{{ money(total, 2) }}</div>
         </div>
 
         <div class="kpi">
-          <div class="kLbl">Prix / m³</div>
-          <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
-        </div>
-
-        <div class="kpi kpiMonth">
-          <div class="kLbl">/ mois</div>
-          <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
+          <div class="kLbl">/ m³</div>
+          <div class="kVal mono">{{ n(perM3, 2) }} <span class="unit">DH/m³</span></div>
         </div>
 
         <div class="kpi">
-          <div class="kLbl">%</div>
-          <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
+          <div class="kLbl">% CA</div>
+          <div class="kVal mono">{{ n(pct, 2) }}<span class="unit">%</span></div>
         </div>
       </div>
 
@@ -639,54 +660,78 @@ function isLockedKey(k: CostKey): boolean {
 
     <template v-else>
       <div class="card">
-        <!-- ✅ ultra compact grid -->
-        <div class="cards">
-          <template v-for="c in COSTS" :key="c.key">
-            <div class="costCard" v-if="!hideZeros || !isZero((draft as any)[c.key])">
-              <div class="hdr">
-                <div class="t" :title="c.label">{{ c.label }}</div>
-                <div class="h">DH</div>
-              </div>
+        <!-- ✅ Table: champs proches de la désignation (focus) -->
+        <div class="tableWrap">
+          <table class="table">
+            <colgroup>
+              <col class="colPoste" />
+              <col class="colInput" />
+              <col class="colTot" />
+              <col class="colMensuel" />
+              <col class="colM3" />
+              <col class="colPct" />
+            </colgroup>
 
-              <div class="line">
-                <input
-                  class="inCout mono"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  :disabled="isLockedKey(c.key)"
-                  :value="(draft as any)[c.key]"
-                  @input="(draft as any)[c.key] = clamp(($event.target as HTMLInputElement).value)"
-                />
-              </div>
+            <thead>
+              <tr>
+                <th class="th">Poste</th>
+                <th class="th r">Saisie (DH)</th>
+                <th class="th r">Total (DH)</th>
+                <th class="th r">DH/mois</th>
+                <th class="th r">DH/m³</th>
+                <th class="th r">% CA</th>
+              </tr>
+            </thead>
 
-              <div v-if="isLockedKey(c.key)" class="lockHint">À la charge du client → valeur forcée à 0</div>
-            </div>
-          </template>
+            <tbody>
+              <tr v-for="ln in visibleLines" :key="String(ln.key)">
+                <!-- Poste -->
+                <td class="poste">
+                  <div class="posteWrap">
+                    <b class="posteLbl">{{ ln.label }}</b>
+                    <span v-if="ln.locked" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+                  </div>
+                </td>
 
-          <!-- legacy (✅ renommé Installation CAB) -->
-          <div class="costCard legacy" v-if="!hideZeros || !isZero(draft.installation)">
-            <div class="hdr">
-              <div class="t" title="DB legacy">Installation CAB</div>
-              <div class="h">DH</div>
-            </div>
-            <div class="line">
-              <input
-                class="inCout mono"
-                type="number"
-                step="0.01"
-                min="0"
-                :disabled="lockInstallation"
-                :value="draft.installation"
-                @input="draft.installation = clamp(($event.target as HTMLInputElement).value)"
-              />
-            </div>
-            <div v-if="lockInstallation" class="lockHint">À la charge du client → valeur forcée à 0</div>
-          </div>
+                <!-- input (proche du poste) -->
+                <td class="r">
+                  <div class="inCell">
+                    <input
+                      class="inputSm r mono"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :disabled="ln.locked"
+                      :value="ln.value"
+                      @input="setValue(ln.key as any, ($event.target as HTMLInputElement).value)"
+                    />
+                    <span class="unitDh">DH</span>
+                  </div>
+                </td>
+
+                <!-- Total (par cout) en gras -->
+                <td class="r mono"><b>{{ money(ln.totalBold, 2) }}</b></td>
+
+                <td class="r mono">{{ money(ln.perMonth, 2) }}</td>
+                <td class="r mono">{{ n(ln.parM3, 2) }}</td>
+                <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
+              </tr>
+
+              <tr class="sumRow">
+                <td><b>Total</b></td>
+                <td></td>
+                <td class="r"><b>{{ money(total, 2) }}</b></td>
+                <td class="r"><b>{{ money(monthly, 2) }}</b></td>
+                <td class="r"><b>{{ n(perM3, 2) }}</b></td>
+                <td class="r"><b>{{ n(pct, 2) }}%</b></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        <div class="note muted">
-          Saisie en <b>DH</b>. Le <b>Total</b> inclut aussi <span class="mono">Installation CAB</span>.
+        <div class="foot">
+          Durée : <b>{{ n(dureeMois, 0) }}</b> mois • Volume total : <b>{{ n(volumeTotal, 2) }}</b> m³ • CA estimé :
+          <b>{{ money(caTotal, 2) }}</b>
         </div>
       </div>
     </template>
@@ -717,8 +762,7 @@ function isLockedKey(k: CostKey): boolean {
           </div>
 
           <div class="dlgBody">
-            <!-- ✅ important: pour afficher les listes \n -->
-            <div class="dlgMsg">{{ modal.message }}</div>
+            <div class="dlgMsg" style="white-space: pre-line">{{ modal.message }}</div>
           </div>
 
           <div class="dlgFtr">
@@ -733,7 +777,7 @@ function isLockedKey(k: CostKey): boolean {
 
     <!-- ✅ Toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -743,6 +787,7 @@ function isLockedKey(k: CostKey): boolean {
 </template>
 
 <style scoped>
+/* ✅ base sizes like CoutMensuelPage */
 .page {
   padding: 10px;
   display: flex;
@@ -752,9 +797,6 @@ function isLockedKey(k: CostKey): boolean {
 .mono {
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-.muted {
-  color: rgba(15, 23, 42, 0.55);
 }
 
 /* sticky subheader */
@@ -880,6 +922,10 @@ function isLockedKey(k: CostKey): boolean {
   gap: 4px;
   min-width: 0;
 }
+.kpi.main {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(236, 253, 245, 0.9);
+}
 .kLbl {
   font-size: 10px;
   font-weight: 950;
@@ -895,19 +941,11 @@ function isLockedKey(k: CostKey): boolean {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.kVal span {
-  font-weight: 800;
+.unit {
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.55);
-  margin-left: 6px;
-  font-size: 11px;
-}
-.kpiMonth {
-  border-color: rgba(2, 132, 199, 0.28);
-  background: rgba(2, 132, 199, 0.06);
-}
-.kpiMain {
-  border-color: rgba(16, 185, 129, 0.42);
-  background: rgba(236, 253, 245, 0.9);
 }
 
 /* alerts */
@@ -945,97 +983,136 @@ function isLockedKey(k: CostKey): boolean {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* ✅ ultra compact grid */
-.cards {
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+/* table */
+.tableWrap {
+  overflow: auto;
 }
-@media (max-width: 520px) {
-  .cards {
-    grid-template-columns: 1fr;
-  }
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
 }
 
-.costCard {
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 12px;
-  padding: 6px;
-  background: #fff;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* ✅ input proche du libellé => col input plus étroite + col poste plus large */
+.colPoste {
+  width: 34%;
 }
-.costCard.legacy {
-  background: rgba(15, 23, 42, 0.02);
+.colInput {
+  width: 18%;
+}
+.colTot {
+  width: 16%;
+}
+.colMensuel {
+  width: 12%;
+}
+.colM3 {
+  width: 10%;
+}
+.colPct {
+  width: 10%;
 }
 
-.hdr {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-}
-.t {
+.th {
+  text-align: left;
   font-weight: 950;
-  font-size: 11px;
-  color: #0f172a;
+  padding: 10px 10px;
+  color: rgba(15, 23, 42, 0.7);
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(248, 250, 252, 0.7);
+}
+.r {
+  text-align: right;
+}
+tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.06);
+  vertical-align: middle;
+}
+
+/* poste cell */
+.posteWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+}
+.posteLbl {
+  font-weight: 950;
+  color: #0f172a;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.h {
-  font-size: 10px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.5);
-  white-space: nowrap;
+  max-width: 360px;
 }
 
-.line {
-  display: grid;
-  grid-template-columns: 1fr;
+.lockTag {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(2, 132, 199, 0.95);
+  background: rgba(2, 132, 199, 0.08);
+  border: 1px solid rgba(2, 132, 199, 0.2);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
-.inCout {
-  height: 28px;
-  border-radius: 10px;
-  border: 1px solid rgba(2, 132, 199, 0.26);
+.lk {
+  width: 12px;
+  height: 12px;
+}
+
+/* input cell */
+.inCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start; /* ✅ proche poste */
+  width: 100%;
+}
+.inputSm {
+  width: 130px;
+  max-width: 100%;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(2, 132, 199, 0.28);
   background: rgba(2, 132, 199, 0.06);
-  padding: 0 8px;
+  padding: 0 10px;
   font-weight: 950;
   color: #0f172a;
   outline: none;
-  text-align: right;
-  min-width: 0;
-  font-size: 12px;
 }
-.inCout:focus {
+.inputSm:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
-.inCout:disabled {
+.inputSm:disabled {
   opacity: 0.65;
   cursor: not-allowed;
   border-color: rgba(16, 24, 40, 0.14);
   background: rgba(15, 23, 42, 0.03);
 }
-
-.lockHint {
-  font-size: 10.5px;
-  font-weight: 850;
+.unitDh {
+  font-size: 11px;
+  font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
-  padding: 2px 2px 0;
+  white-space: nowrap;
 }
 
-.note {
-  padding: 8px 10px;
+/* sum */
+.sumRow td {
+  background: rgba(248, 250, 252, 0.7);
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+  border-bottom: 0;
+}
+.foot {
+  padding: 10px 12px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
   font-size: 11.5px;
   font-weight: 800;
+  color: rgba(15, 23, 42, 0.65);
 }
 
 /* modal */
@@ -1047,7 +1124,7 @@ function isLockedKey(k: CostKey): boolean {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 99999;
+  z-index: 120000;
 }
 .dlg {
   width: min(520px, 100%);
@@ -1082,7 +1159,6 @@ function isLockedKey(k: CostKey): boolean {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.8);
   line-height: 1.45;
-  white-space: pre-line; /* ✅ affiche les \n du message */
 }
 .dlgFtr {
   padding: 10px;
@@ -1124,6 +1200,9 @@ function isLockedKey(k: CostKey): boolean {
 .toast.err {
   border-color: rgba(239, 68, 68, 0.22);
 }
+.toast.info {
+  border-color: rgba(59, 130, 246, 0.22);
+}
 .tic {
   width: 18px;
   height: 18px;
@@ -1133,8 +1212,8 @@ function isLockedKey(k: CostKey): boolean {
   color: rgba(15, 23, 42, 0.85);
 }
 
-/* ✅ Safe: si SectionImportModal/GeneralizeModal utilisent une overlay interne */
+/* ✅ Safe overlays */
 :deep(.modalOverlay) {
-  z-index: 99999 !important;
+  z-index: 100000 !important;
 }
 </style>

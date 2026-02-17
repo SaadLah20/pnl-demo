@@ -11,7 +11,6 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   Squares2X2Icon,
-  CurrencyDollarIcon,
   ArrowDownTrayIcon,
 } from "@heroicons/vue/24/outline";
 
@@ -511,15 +510,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <template v-else>
       <div class="card">
-        <div class="cardHdr">
-          <div class="cardTtl">
-            <CurrencyDollarIcon class="ic3" />
-            <div>
-              <div class="h">Saisie + impacts</div>
-              <div class="p">Saisie en <b>DH/m³</b> + impact <b>Total</b>, <b>/mois</b> et <b>% CA</b>.</div>
-            </div>
-          </div>
-        </div>
+        <!-- ✅ cardHdr supprimé car il était devenu vide (logo + paragraphe supprimés) -->
 
         <div class="tableWrap">
           <table class="table">
@@ -624,6 +615,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
+/* (STYLE inchangé) */
 .page {
   padding: 10px;
   display: flex;
@@ -747,11 +739,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .ic {
   width: 18px;
   height: 18px;
-}
-.ic3 {
-  width: 18px;
-  height: 18px;
-  color: rgba(15, 23, 42, 0.75);
 }
 
 .mono {
@@ -946,10 +933,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   align-items: center;
   justify-content: center;
   padding: 14px;
-  z-index: 100000;
+  z-index: 120000;
   backdrop-filter: none;
 }
-
 
 .dlg {
   width: min(520px, 100%);

@@ -14,7 +14,6 @@ import { usePnlStore } from "@/stores/pnl.store";
 import { contractUiTitle } from "@/services/contractTitle";
 import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
 
-
 import VariantCreateModal, {
   type VariantCreateNextPayload,
   type VariantCreateZeroPayload,
@@ -24,7 +23,6 @@ import VariantWizardModal, {
   type InitieePayload,
   type VariantCreateMode,
 } from "@/components/VariantWizardModal.vue";
-
 
 const API = "http://localhost:3001";
 
@@ -69,7 +67,6 @@ function persistActive(pnlId: string | null, variantId: string | null) {
 function isCabFixePnl(p: any) {
   return String(p?.model ?? "").toLowerCase().includes("cab fixe");
 }
-
 
 function setActiveIds(
   pnlId: string | null,
@@ -221,7 +218,6 @@ onMounted(() => {
 
 /** ✅ IMPORTANT: si route en keep-alive, onMounted ne se rejoue pas => onActivated */
 onActivated(() => {
-  // ferme les popovers / menus au retour (évite anomalies sidebar visuelles)
   filterOpen.value = false;
   closeMenu();
   if (!pnls.value?.length) ensureInitialActive("activated");
@@ -345,7 +341,6 @@ function reqNumGt(v: any, min: number, msg: string) {
   if (!Number.isFinite(n) || n <= min) throw new Error(msg);
 }
 
-
 /* =========================================================
    Data
 ========================================================= */
@@ -361,26 +356,6 @@ const activeContractId = computed(() => {
     if ((c.variants ?? []).some((v: any) => String(v.id) === String(vId))) return c.id;
   }
   return null;
-});
-
-/* ✅ objects for breadcrumb */
-const activePnlObj = computed<any | null>(() => {
-  const id = activePnlId.value;
-  return id ? pnls.value.find((p) => String(p.id) === String(id)) ?? null : null;
-});
-
-const activeContractObj = computed<any | null>(() => {
-  const pnl = activePnlObj.value;
-  const cid = activeContractId.value;
-  if (!pnl || !cid) return null;
-  return (pnl.contracts ?? []).find((c: any) => String(c.id) === String(cid)) ?? null;
-});
-
-const activeVariantObj = computed<any | null>(() => {
-  const c = activeContractObj.value;
-  const vid = activeVariantId.value;
-  if (!c || !vid) return null;
-  return (c.variants ?? []).find((v: any) => String(v.id) === String(vid)) ?? null;
 });
 
 /* =========================================================
@@ -475,6 +450,28 @@ function resetPnlFilters() {
   sortPnlDir.value = "asc";
 }
 
+/* =========================================================
+   ✅ Pagination (10 P&L max par page)
+========================================================= */
+const perPage = 10;
+const page = ref(1);
+
+function clampPage(v: number, max: number) {
+  const x = Math.floor(Number(v));
+  if (!Number.isFinite(x) || x < 1) return 1;
+  if (x > max) return max || 1;
+  return x;
+}
+function goPage(p: number) {
+  page.value = p;
+  // (optionnel) scroll doux vers le haut de la liste
+  try {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+}
+
 const filteredPnls = computed<any[]>(() => {
   let rows = pnls.value;
 
@@ -509,6 +506,7 @@ const filteredPnls = computed<any[]>(() => {
     return av.localeCompare(bv, "fr") * dir;
   });
 
+  // ✅ garder le P&L actif en premier (utile avec pagination)
   const ap = activePnlId.value;
   if (ap) {
     const idx = rows.findIndex((x) => String(x.id) === String(ap));
@@ -520,6 +518,47 @@ const filteredPnls = computed<any[]>(() => {
 
   return rows;
 });
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredPnls.value.length / perPage)));
+
+const pagedPnls = computed(() => {
+  const max = totalPages.value;
+  const p = clampPage(page.value, max);
+  if (p !== page.value) page.value = p;
+  const start = (p - 1) * perPage;
+  return filteredPnls.value.slice(start, start + perPage);
+});
+
+const pageWindow = computed(() => {
+  // fenêtre courte (max 7 pages affichées)
+  const max = totalPages.value;
+  const cur = clampPage(page.value, max);
+  const span = 7;
+  const half = Math.floor(span / 2);
+  let a = Math.max(1, cur - half);
+  let b = Math.min(max, a + span - 1);
+  a = Math.max(1, b - span + 1);
+  const out: number[] = [];
+  for (let i = a; i <= b; i++) out.push(i);
+  return out;
+});
+
+// reset page quand filtres/recherche changent
+watch(
+  () => [
+    q.value,
+    pnlStatusFilter.value,
+    pnlCityFilter.value,
+    pnlClientFilter.value,
+    pnlModelFilter.value,
+    sortPnlKey.value,
+    sortPnlDir.value,
+    (pnls.value?.length ?? 0),
+  ],
+  () => {
+    page.value = 1;
+  }
+);
 
 /* =========================================================
    Menus (kebab)
@@ -802,7 +841,7 @@ function openCreatePnl() {
 }
 
 function openCreateContract(pnlId: string) {
-  const pnl = pnls.value.find((x:any) => String(x.id) === String(pnlId));
+  const pnl = pnls.value.find((x: any) => String(x.id) === String(pnlId));
   if (pnl && isCabFixePnl(pnl)) return; // CAB FIXE => contrat auto backend
   resetDraft();
   editMode.value = "contract";
@@ -838,7 +877,6 @@ async function saveEdit() {
        PNL
     ========================= */
     if (editMode.value === "pnl") {
-      // ✅ validations communes
       req(draft.title, "Titre P&L obligatoire.");
       req(draft.city, "Ville obligatoire.");
       req(draft.status, "Statut obligatoire.");
@@ -847,11 +885,9 @@ async function saveEdit() {
 
       const cabFixe = isCabFixePnl({ model: draft.model });
 
-      // ✅ client obligatoire uniquement pour CAB Mobile
       if (!cabFixe) {
         req(draft.client, "Client obligatoire.");
       } else {
-        // optionnel: neutraliser côté UI (évite persistance)
         draft.client = "";
       }
 
@@ -874,13 +910,13 @@ async function saveEdit() {
         if (newPnlId) {
           openPnl[newPnlId] = true;
           setActiveIds(newPnlId, null, null);
+          page.value = 1;
         }
 
         closeEdit();
         return;
       }
 
-      // ✅ update PnL (CAB FIXE => client null)
       await apiJson(`/pnls/${draft.id}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -897,7 +933,6 @@ async function saveEdit() {
        CONTRACT
     ========================= */
     if (editMode.value === "contract") {
-      // ✅ validations originales
       reqNumGt(draft.dureeMois, 0, "Durée (mois) doit être > 0.");
       req(draft.cab, "Cab obligatoire.");
       req(draft.installation, "Installation obligatoire.");
@@ -956,7 +991,6 @@ async function saveEdit() {
     if (editMode.value === "variant") {
       req(draft.title, "Titre de la variante obligatoire.");
       req(draft.status, "Statut de la variante obligatoire.");
-      // description seule peut être vide ✅
 
       await apiJson(`/variants/${draft.id}`, {
         method: "PUT",
@@ -968,9 +1002,6 @@ async function saveEdit() {
       });
     }
 
-    /* =========================
-       Reload + restore selection (ton flow)
-    ========================= */
     const keepPnl = activePnlId.value;
     const keepVar = activeVariantId.value;
 
@@ -986,7 +1017,6 @@ async function saveEdit() {
     editBusy.value = false;
   }
 }
-
 
 /* =========================================================
    VARIANT CREATION (2-step modals)
@@ -1028,7 +1058,7 @@ const createBase = reactive<{
   contractId: string;
   title: string;
   description: string | null;
-  status: VariantStatusUi; // ✅ unifié
+  status: VariantStatusUi;
   createMode: "ZERO" | "INITIEE" | "COMPOSEE";
 }>({
   contractId: "",
@@ -1037,7 +1067,6 @@ const createBase = reactive<{
   status: "ENCOURS",
   createMode: "ZERO",
 });
-
 
 function openCreateVariant(contractId: string) {
   createContractId.value = contractId;
@@ -1063,6 +1092,9 @@ async function afterVariantCreated(contractId: string, newVariantId: string) {
   setActiveIds(keepAfter?.pnlId ?? null, keepAfter?.contractId ?? null, keepAfter?.variantId ?? null);
 
   if (keepAfter?.pnlId) openPnl[String(keepAfter.pnlId)] = true;
+
+  // ✅ ramener sur la 1ère page (P&L actif remonte en haut)
+  page.value = 1;
 }
 
 async function handleCreateSave(payload: VariantCreateZeroPayload) {
@@ -1198,40 +1230,18 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- breadcrumb active hierarchy -->
-    <div class="crumbCard" v-if="activePnlObj">
-      <div class="crumbRow">
-        <div class="crumbItem">
-          <span class="lvl lvl--pnl">P&amp;L</span>
-          <b class="crumbTxt">{{ activePnlObj?.title ?? "-" }}</b>
-          <span class="crumbMeta">• {{ activePnlObj?.client ?? "-" }}</span>
-        </div>
-
-        <span class="crumbArrow">›</span>
-
-        <div class="crumbItem" :class="{ dim: !activeContractObj }">
-          <span class="lvl lvl--contract">Contrat</span>
-          <b class="crumbTxt">{{ contractUiTitle(activeContractObj) }}</b>
-          <span class="crumbMeta">• {{ activeContractObj?.dureeMois ?? 0 }} mois</span>
-        </div>
-
-        <span class="crumbArrow">›</span>
-
-        <div class="crumbItem" :class="{ dim: !activeVariantObj }">
-          <span class="lvl lvl--variant">Variante</span>
-          <b class="crumbTxt">{{ activeVariantObj?.title ?? "—" }}</b>
-          <span class="crumbMeta">• {{ activeVariantObj?.status ?? "—" }}</span>
-        </div>
-      </div>
-    </div>
-
     <div v-if="store.loading" class="card">Chargement…</div>
     <div v-else-if="store.error" class="card card--error"><b>Erreur :</b> {{ store.error }}</div>
 
     <div v-else class="list">
-      <div v-if="filteredPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
+      <div v-if="pagedPnls.length === 0" class="card empty">Aucun P&amp;L trouvé.</div>
 
-      <div v-for="p in filteredPnls" :key="p.id" class="card pnl" :class="{ activePnl: String(p.id) === String(activePnlId ?? '') }">
+      <div
+        v-for="p in pagedPnls"
+        :key="p.id"
+        class="card pnl"
+        :class="{ activePnl: String(p.id) === String(activePnlId ?? '') }"
+      >
         <div class="row pnlRow">
           <button class="disc" @click="togglePnl(p.id)" :aria-expanded="isOpenPnl(p.id)">
             {{ isOpenPnl(p.id) ? "▾" : "▸" }}
@@ -1240,7 +1250,7 @@ onBeforeUnmount(() => {
           <div class="main">
             <div class="line1">
               <span class="lvl lvl--pnl">P&amp;L</span>
-              <div class="name">{{ p.title }}</div>
+              <div class="name name--pnl">{{ p.title }}</div>
               <span :class="tagClass(p.status)">{{ p.status ?? "—" }}</span>
               <span v-if="p.id === activePnlId" class="pill">ACTIF</span>
             </div>
@@ -1257,15 +1267,14 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="actions">
-<button
-  v-if="!isCabFixePnl(p)"
-  class="chipBtn chipBtn--contract"
-  @click="openCreateContract(p.id)"
-  title="Créer un contrat"
->
-  + Contrat
-</button>
-
+            <button
+              v-if="!isCabFixePnl(p)"
+              class="chipBtn chipBtn--contract"
+              @click="openCreateContract(p.id)"
+              title="Créer un contrat"
+            >
+              + Contrat
+            </button>
 
             <div class="menu" data-menu>
               <button class="chipIcon" @click="openMenu(`pnl:${p.id}`)" title="Actions">⋯</button>
@@ -1291,7 +1300,7 @@ onBeforeUnmount(() => {
             v-for="c in (p.contracts ?? [])"
             :key="c.id"
             class="contract"
-          :class="{ activeContract: String(c.id) === String(activeContractId ?? '') }"
+            :class="{ activeContract: String(c.id) === String(activeContractId ?? '') }"
           >
             <div class="row contractRow">
               <div class="tree"><div class="branch"></div><div class="node"></div></div>
@@ -1376,6 +1385,36 @@ onBeforeUnmount(() => {
               <div v-if="(c.variants ?? []).length === 0" class="muted indent2">Aucune variante.</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ✅ Pagination footer -->
+      <div v-if="filteredPnls.length > 0" class="pagerCard">
+        <div class="pagerLeft">
+          <span class="pagerInfo">
+            {{ Math.min((page - 1) * 10 + 1, filteredPnls.length) }}–{{
+              Math.min(page * 10, filteredPnls.length)
+            }}
+            / {{ filteredPnls.length }}
+          </span>
+        </div>
+
+        <div class="pagerBtns">
+          <button class="pgBtn" :disabled="page <= 1" @click="goPage(1)" title="Première">«</button>
+          <button class="pgBtn" :disabled="page <= 1" @click="goPage(page - 1)" title="Précédente">‹</button>
+
+          <button
+            v-for="p in pageWindow"
+            :key="p"
+            class="pgBtn"
+            :class="{ on: p === page }"
+            @click="goPage(p)"
+          >
+            {{ p }}
+          </button>
+
+          <button class="pgBtn" :disabled="page >= totalPages" @click="goPage(page + 1)" title="Suivante">›</button>
+          <button class="pgBtn" :disabled="page >= totalPages" @click="goPage(totalPages)" title="Dernière">»</button>
         </div>
       </div>
     </div>
@@ -1596,12 +1635,11 @@ onBeforeUnmount(() => {
 
               <div class="f">
                 <div class="k">Statut</div>
-<select class="in" v-model="draft.status">
-  <option v-for="s in VARIANT_STATUS_OPTS" :key="s.value" :value="s.value">
-    {{ s.label }}
-  </option>
-</select>
-
+                <select class="in" v-model="draft.status">
+                  <option v-for="s in VARIANT_STATUS_OPTS" :key="s.value" :value="s.value">
+                    {{ s.label }}
+                  </option>
+                </select>
               </div>
 
               <div class="f f--full">
@@ -1751,13 +1789,14 @@ onBeforeUnmount(() => {
   cursor: pointer;
   line-height: 1;
   white-space: nowrap;
+  color: rgba(15, 23, 42, 0.9);
 }
 .chipBtn:hover {
   background: rgba(32, 184, 232, 0.08);
   border-color: rgba(32, 184, 232, 0.22);
 }
 
-/* primary */
+/* primary (✅ fix visibilité “Créer”) */
 .chipBtn--primary {
   background: var(--holcim-navy) !important;
   border-color: var(--holcim-navy) !important;
@@ -1768,11 +1807,12 @@ onBeforeUnmount(() => {
   background: #14345c !important;
   border-color: #14345c !important;
 }
-.modalFoot .chipBtn--primary:disabled {
+.chipBtn--primary:disabled {
   opacity: 0.65;
   cursor: not-allowed;
   background: var(--holcim-navy) !important;
   border-color: var(--holcim-navy) !important;
+  color: #fff !important;
 }
 
 /* +P&L */
@@ -1937,6 +1977,11 @@ onBeforeUnmount(() => {
   font-weight: 950;
   font-size: 13px;
   color: rgba(15, 23, 42, 0.92);
+}
+.name--pnl {
+  font-size: 14px; /* ✅ titre P&L plus visible */
+  font-weight: 1000;
+  letter-spacing: 0.15px;
 }
 .name--sm {
   font-size: 12.5px;
@@ -2108,16 +2153,13 @@ onBeforeUnmount(() => {
   background: #ffffff;
   position: relative;
 }
+
+/* ✅ Active variante = vrai BG vert “ouvert” (plus lisible que ton actuel) */
 .variantRow.activeVariant {
-  background: rgba(101, 129, 77, 0.14) !important; /* ✅ plus clair */
-  border-color: rgba(101, 129, 77, 0.78) !important;
-  box-shadow: 0 0 0 4px rgba(101, 129, 77, 0.14), 0 12px 30px rgba(101, 129, 77, 0.10);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.16) 0%, rgba(34, 197, 94, 0.10) 100%) !important;
+  border-color: rgba(34, 197, 94, 0.55) !important;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.16), 0 12px 30px rgba(34, 197, 94, 0.10);
 }
-
-.variantRow.activeVariant::before {
-  background: rgba(101, 129, 77, 1) !important;
-}
-
 .variantRow.activeVariant::before {
   content: "";
   position: absolute;
@@ -2126,7 +2168,7 @@ onBeforeUnmount(() => {
   bottom: 8px;
   width: 5px;
   border-radius: 10px;
-  background: var(--active-variant);
+  background: rgba(34, 197, 94, 1) !important;
 }
 
 .desc {
@@ -2172,7 +2214,7 @@ onBeforeUnmount(() => {
 .menuPop {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 8px); /* ✅ vers le haut */
+  bottom: calc(100% + 8px);
   top: auto;
   min-width: 170px;
   background: #fff;
@@ -2180,7 +2222,7 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
   padding: 6px;
-  z-index: 200; /* un peu plus */
+  z-index: 200;
 }
 
 .menuItem {
@@ -2479,71 +2521,53 @@ onBeforeUnmount(() => {
   border-color: #14345c !important;
 }
 
-/* Breadcrumb */
-.crumbCard {
+/* ✅ Pagination */
+.pagerCard {
+  margin-top: 2px;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 8px 10px;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
-}
-.crumbRow {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  flex-wrap: wrap;
 }
-.crumbItem {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.crumbItem.dim {
-  opacity: 0.55;
-}
-.crumbTxt {
-  font-size: 12.5px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.92);
-  max-width: 340px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.crumbMeta {
+.pagerInfo {
   font-size: 12px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.6);
-}
-.crumbArrow {
-  color: rgba(15, 23, 42, 0.25);
-  font-weight: 950;
-}
-
-/* Level badges */
-.lvl {
-  font-size: 10px;
-  font-weight: 950;
-  letter-spacing: 0.35px;
-  text-transform: uppercase;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.02);
+  font-weight: 900;
   color: rgba(15, 23, 42, 0.72);
 }
-.lvl--pnl {
-  border-color: rgba(32, 184, 232, 0.3);
-  background: rgba(32, 184, 232, 0.1);
+.pagerBtns {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
-.lvl--contract {
+.pgBtn {
+  height: 34px;
+  min-width: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-weight: 950;
+  cursor: pointer;
+  color: rgba(15, 23, 42, 0.82);
+}
+.pgBtn:hover {
+  background: rgba(32, 184, 232, 0.08);
+  border-color: rgba(32, 184, 232, 0.22);
+}
+.pgBtn.on {
+  background: rgba(24, 64, 112, 0.12);
   border-color: rgba(24, 64, 112, 0.28);
-  background: rgba(24, 64, 112, 0.08);
+  color: rgba(24, 64, 112, 1);
 }
-.lvl--variant {
-  border-color: rgba(123, 191, 58, 0.28);
-  background: rgba(123, 191, 58, 0.1);
+.pgBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Responsive */
@@ -2570,6 +2594,10 @@ onBeforeUnmount(() => {
   }
   .indent2 {
     margin-left: 0;
+  }
+  .pagerCard {
+    flex-wrap: wrap;
+    justify-content: center;
   }
 }
 </style>

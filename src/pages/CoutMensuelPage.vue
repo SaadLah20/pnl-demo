@@ -776,15 +776,7 @@ function setDraft(key: LineKey, value: any) {
 
     <template v-else>
       <div class="card">
-        <div class="cardHdr">
-          <div class="cardTtl">
-            <CalendarDaysIcon class="ic3" />
-            <div>
-              <div class="h">Saisie des coûts mensuels</div>
-              <div class="p">Montants en DH/mois. Colonnes calculées sur Durée, Volume total et CA estimé.</div>
-            </div>
-          </div>
-        </div>
+        <!-- ✅ cardHdr supprimé (logo + paragraphes supprimés) -->
 
         <!-- ✅ Table style Maintenance (1 ligne = 1 poste) -->
         <div class="tableWrap">
@@ -1287,7 +1279,7 @@ function setDraft(key: LineKey, value: any) {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 99999;
+  z-index: 120000;
 }
 .dlg {
   width: min(520px, 100%);

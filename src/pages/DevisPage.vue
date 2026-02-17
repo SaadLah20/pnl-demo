@@ -1,13 +1,9 @@
-<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte + pas de dégradation logique)
-     Demandes prises en compte :
-     ✅ Supprime navigation horizontale en haut (tabs bar)
-     ✅ Onglet actif (Surcharges/Contenu) intégré dans la ligne header à droite (compact)
-     ✅ Supprime les gros blocs KPIs du header (CA devis / surcharges actives)
-     ✅ Indication majorations + options dashboard compactes (une seule ligne + tooltip)
-     ✅ Tableau Surcharges inspiré du style FormulesPage (list/card items)
-     ✅ Contenu : labels parfaitement alignés + plus de débordement / superposition
-     ✅ Navigation rapide VERTICALE conservée mais largeur réduite (≈ moitié)
-     ✅ Navigation rapide BAS conservée
+<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte + ajustements demandés)
+     Ajustements demandés :
+     ✅ Améliorer style + taille du "Total" par formule (aligné style app)
+     ✅ Champ "Surcharge" plus petit + BG bleu (comme autres pages)
+     ✅ Supprimer la ligne sous le titre (Variante • Vol • PMV)
+     ✅ Libellés colonnes EXACTEMENT au-dessus des champs (grid alignée)
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
@@ -1025,7 +1021,6 @@ function onContentScrollSpy() {
   if (!best) return;
   activeSectionId.value = best.id;
 }
-
 </script>
 
 <template>
@@ -1041,20 +1036,13 @@ function onContentScrollSpy() {
           </div>
         </div>
 
-        <div class="subline">
-          <span class="muted">Variante</span>
-          <b class="ell">{{ variant?.title ?? "—" }}</b>
-          <span class="sep">•</span>
-          <span class="muted">Vol</span>
-          <b class="mono">{{ int(volumeTotalFromFormules) }}</b><span class="muted">m³</span>
-          <span class="sep">•</span>
-          <span class="muted">PMV</span>
-          <b class="mono">{{ money2(prixMoyenDefinitif) }}</b><span class="muted">DH/m³</span>
-        </div>
+        <!-- ✅ SUPPRIMÉ (comme demandé)
+        <div class="subline"> ... </div>
+        -->
       </div>
 
       <div class="tright">
-        <!-- ✅ Toggle onglet compact (remplace la barre tabs horizontale) -->
+        <!-- ✅ Toggle onglet compact -->
         <div class="seg" role="tablist" aria-label="Onglets devis">
           <button
             class="segBtn"
@@ -1077,7 +1065,6 @@ function onContentScrollSpy() {
           </button>
         </div>
 
-        <!-- ✅ Infos compactes au même niveau (plus de gros blocs) -->
         <div class="miniKpis">
           <span class="miniK">
             CA
@@ -1110,7 +1097,6 @@ function onContentScrollSpy() {
       </div>
     </div>
 
-    <!-- Dirty info compact -->
     <div v-if="isDirty" class="dirtyBar">
       <ExclamationTriangleIcon class="warnIc" />
       <div class="dirtyTxt">
@@ -1130,7 +1116,6 @@ function onContentScrollSpy() {
 
     <!-- TAB 1 : SURCHARGES -->
     <template v-if="activeTab === 'SURCHARGES'">
-      <!-- ✅ Controls compact (remplace le bloc “Information …” énorme) -->
       <div class="card controls">
         <div class="controlsLeft">
           <span class="hintLine">
@@ -1164,21 +1149,21 @@ function onContentScrollSpy() {
         </div>
       </div>
 
-      <!-- ✅ List style inspiré FormulesPage -->
+      <!-- ✅ List style -->
       <div class="card listCard">
         <div class="listHead">
           <div class="lh">Formules</div>
-          <div class="rh">
-            <span class="muted">Surcharge</span>
-            <span class="muted">PV déf.</span>
-            <span class="muted">Total</span>
+
+          <!-- ✅ Libellés EXACTEMENT alignés au-dessus des champs -->
+          <div class="rhGrid" aria-hidden="true">
+            <div class="rhCol">Surcharge</div>
+            <div class="rhCol">PV déf.</div>
+            <div class="rhCol">Total</div>
           </div>
         </div>
 
         <div class="list">
-          <div v-if="rows.length === 0" class="empty">
-            Aucune formule dans cette variante.
-          </div>
+          <div v-if="rows.length === 0" class="empty">Aucune formule dans cette variante.</div>
 
           <div v-for="r in rows" :key="rowKey(r)" class="item" :class="{ touched: isRowTouched(r) }">
             <div class="ileft">
@@ -1208,10 +1193,11 @@ function onContentScrollSpy() {
               </div>
             </div>
 
+            <!-- ✅ Grid identique à la header (labels au-dessus) -->
             <div class="iright">
               <div class="cellMini" data-label="Surcharge">
                 <input
-                  class="input num compact"
+                  class="inputSurcharge mono"
                   type="number"
                   step="1"
                   :value="getSurcharge(r)"
@@ -1224,7 +1210,8 @@ function onContentScrollSpy() {
               </div>
 
               <div class="cellMini" data-label="Total">
-                <b class="mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</b>
+                <!-- ✅ Total plus "app-like" (pill), taille cohérente -->
+                <span class="pillTotal mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</span>
               </div>
             </div>
           </div>
@@ -1256,7 +1243,6 @@ function onContentScrollSpy() {
     <!-- TAB 2 : CONTENU -->
     <template v-else>
       <div class="contentLayout">
-        <!-- ✅ Nav verticale (plus étroite = ~ moitié) -->
         <aside class="sideNav">
           <div class="sideTitle">Navigation</div>
           <button
@@ -1270,9 +1256,7 @@ function onContentScrollSpy() {
             {{ s.label }}
           </button>
 
-          <div class="sideHint muted">
-            Astuce : la navigation rapide en bas reste disponible.
-          </div>
+          <div class="sideHint muted">Astuce : la navigation rapide en bas reste disponible.</div>
         </aside>
 
         <main class="contentMain" @scroll.passive="onContentScrollSpy">
@@ -1459,7 +1443,6 @@ function onContentScrollSpy() {
             </div>
           </div>
 
-          <!-- ✅ Navigation rapide BAS (conservée) -->
           <div class="bottomNav">
             <button class="bnavBtn" type="button" @click="scrollToId('c-head')">Haut</button>
             <button class="bnavBtn" type="button" @click="scrollToId('c-charges')">Charges</button>
@@ -1600,10 +1583,9 @@ function onContentScrollSpy() {
   font-size:11px;
 }
 .dot{ width:7px; height:7px; border-radius:999px; background: rgba(245,158,11,1); display:inline-block; }
-.subline{ display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:11.5px; }
 .tright{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 
-/* ✅ Segmented tabs in header */
+/* Segmented tabs in header */
 .seg{
   display:inline-flex;
   border: 1px solid var(--b);
@@ -1693,7 +1675,7 @@ function onContentScrollSpy() {
 }
 .hintDot{ color: rgba(148,163,184,1); font-weight: 950; }
 
-/* Tooltip (reuse) */
+/* Tooltip */
 .tipWrap { position: relative; display:inline-flex; align-items:center; z-index: 5; flex: 0 0 auto; }
 .tipBtn{
   width: 20px; height: 20px;
@@ -1727,11 +1709,11 @@ function onContentScrollSpy() {
 .tipWrap:hover .tip{ opacity: 1; transform: translateY(-50%) translateX(0px); }
 .mutedLine{ display:block; margin-top: 5px; opacity: .85; }
 
-/* ✅ List style (inspiré FormulesPage) */
+/* List style */
 .listCard{ padding: 0; overflow:hidden; }
 .listHead{
   display:flex;
-  align-items:center;
+  align-items:flex-end;
   justify-content:space-between;
   gap:10px;
   padding: 10px 12px;
@@ -1739,7 +1721,22 @@ function onContentScrollSpy() {
   background: rgba(15,23,42,0.02);
 }
 .lh{ font-weight: 950; color: var(--text); font-size: 12px; }
-.rh{ display:flex; gap:18px; font-size: 11px; font-weight: 900; }
+
+/* ✅ Header columns aligned with fields */
+.rhGrid{
+  display:grid;
+  grid-template-columns: 92px 132px 160px; /* must match .iright */
+  gap: 10px;
+  align-items:end;
+}
+.rhCol{
+  text-align:right;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(15,23,42,0.55);
+  white-space: nowrap;
+}
+
 .list{ display:flex; flex-direction:column; gap:8px; padding: 10px 12px; }
 .empty{ padding: 12px 0; color: var(--muted); font-size: 12px; }
 
@@ -1760,7 +1757,7 @@ function onContentScrollSpy() {
 }
 .ileft{ display:flex; flex-direction:column; gap:6px; min-width:0; flex:1; }
 .ititle{ display:flex; align-items:center; gap:8px; min-width:0; }
-.iname{ font-weight: 950; font-size: 12.5px; color: var(--text); }
+.iname{ font-weight: 950; font-size: 13.5px; color: var(--text); }
 
 .chips{ display:flex; flex-wrap:wrap; gap:6px; }
 .chip{
@@ -1777,27 +1774,62 @@ function onContentScrollSpy() {
   max-width:100%;
 }
 
+/* ✅ Right side as grid (exactly aligned with header labels) */
 .iright{
-  display:flex;
+  display:grid;
+  grid-template-columns: 92px 132px 160px; /* must match .rhGrid */
+  gap: 10px;
   align-items:center;
-  gap:10px;
   flex:0 0 auto;
 }
-.cellMini{ min-width: 110px; text-align:right; }
-.input.num{ text-align:right; font-variant-numeric: tabular-nums; }
-.input.compact{ padding: 7px 9px; border-radius: 10px; font-size: 12px; }
+.cellMini{ text-align:right; min-width:0; }
 
+/* ✅ Surcharge input: smaller + blue bg (like other pages) */
+.inputSurcharge{
+  width: 92px;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(2,132,199,0.26);
+  background: rgba(2,132,199,0.06);
+  padding: 0 9px;
+  font-weight: 950;
+  color: #0f172a;
+  outline: none;
+  text-align: right;
+}
+.inputSurcharge:focus{
+  border-color: rgba(2,132,199,0.55);
+  box-shadow: 0 0 0 3px rgba(2,132,199,0.12);
+}
+
+/* PV */
 .pillFinal{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  height: 26px;
+  height: 28px;
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(15,23,42,0.18);
   background: rgba(15,23,42,0.06);
   font-weight: 950;
   color: rgba(15,23,42,1);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* ✅ Total pill: smaller, consistent with app */
+.pillTotal{
+  display:inline-flex;
+  align-items:center;
+  justify-content:flex-end;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(2,132,199,0.18);
+  background: rgba(2,132,199,0.06);
+  font-weight: 950;
+  color: rgba(15,23,42,0.92);
   white-space: nowrap;
   font-size: 12px;
 }
@@ -1843,7 +1875,7 @@ function onContentScrollSpy() {
 /* Content layout */
 .contentLayout{
   display:grid;
-  grid-template-columns: 180px minmax(0, 1fr); /* ✅ nav verticale réduite */
+  grid-template-columns: 180px minmax(0, 1fr);
   gap: 12px;
   align-items:start;
 }
@@ -1893,13 +1925,12 @@ function onContentScrollSpy() {
   min-width:0;
 }
 
-/* Content sections */
 .section{ display:flex; flex-direction:column; gap:10px; }
 .sectionHead{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
 .lbl{ font-weight:950; font-size:13px; color: var(--text); }
 .subLbl{ font-weight:950; font-size:12px; color: rgba(15,23,42,.78); }
 
-.field .k{ margin-bottom: 4px; } /* ✅ labels parfaitement au-dessus */
+.field .k{ margin-bottom: 4px; }
 .k{ font-size: 11px; font-weight:950; color: rgba(15,23,42,.55); }
 .v{ margin-top: 4px; }
 
@@ -1992,8 +2023,14 @@ function onContentScrollSpy() {
   .grid3{ grid-template-columns: 1fr; }
   .grid2kv{ grid-template-columns: 1fr; }
   .exRow{ grid-template-columns: 1fr; }
-  .iright{ width:100%; justify-content:space-between; gap:10px; }
-  .cellMini{ min-width: 0; width: 33%; text-align:left; }
+
+  /* mobile: right side becomes flex-like with labels above */
+  .rhGrid{ display:none; } /* header cols hidden */
+  .iright{
+    width:100%;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .cellMini{ text-align:left; }
   .cellMini::before{
     content: attr(data-label);
     display:block;
@@ -2002,6 +2039,8 @@ function onContentScrollSpy() {
     color: rgba(15,23,42,.55);
     margin-bottom: 4px;
   }
+  .inputSurcharge{ width: 100%; }
+  .pillFinal, .pillTotal{ width: 100%; justify-content: flex-start; }
 }
 
 /* Modal */

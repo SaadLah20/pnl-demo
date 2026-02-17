@@ -1094,7 +1094,7 @@ const amortPctCa = computed<number>(() => {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 99999;
+  z-index: 120000;
 }
 .ovl.underDash {
   align-items: flex-start;

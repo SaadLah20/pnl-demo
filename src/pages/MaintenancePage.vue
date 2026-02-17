@@ -997,7 +997,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 100100;
+  z-index: 120000;
 }
 .dlg {
   width: min(520px, 100%);

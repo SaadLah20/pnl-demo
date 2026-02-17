@@ -1,20 +1,15 @@
-<!-- ✅ src/pages/ComparateurVariantesPage.vue (FICHIER COMPLET — MAJ)
-     Changements demandés:
-     - ❌ Suppression barre de recherche + blocs à droite (Max EBIT / Min PMV / Compromis)
-     - ✅ Contrats: affichage sans chevauchement (layout + styles)
-     - ✅ Variantes avec EBIT=0 et/ou PMV=0: EXCLUES du comparatif (table + graphes + stats)
-         -> Bandeau info indiquant combien ont été exclues (sans afficher leurs chiffres)
-     - ✅ Scatter: points plus petits + jitter léger (évite superposition)
-     - ✅ Tableau: suppression colonne Contrat + optimisation pour éviter scroll horizontal
-     - ✅ Cible EBIT: saisie en Total (DH) OU en % (EBIT%)
-     - ✅ Design: plus compact / lisible
+<!-- ✅ src/pages/ComparateurVariantesPage.vue (FICHIER COMPLET — CORRIGÉ SELON TES REMARQUES)
+     - ✅ En haut: PLUS AUCUNE notion contrat/périmètre (pas de select contrat, pas de scope)
+     - ✅ Graphes: PNL complet par défaut, filtre UNIQUEMENT via cartes contrats (cliquables)
+     - ✅ Tableau: ajout filtre contrat SEULEMENT (UI compact, sans déformation)
+     - ✅ Exclure EBIT=0 et/ou PMV=0 + bandeau compteur
+     - ✅ Scatter: points petits + jitter léger
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 import { contractUiTitle } from "@/services/contractTitle";
-
 
 import {
   ArrowPathIcon,
@@ -61,7 +56,7 @@ type Row = {
   ebit: number;
   ebitPct: number;
   feasible: boolean;
-  valid: boolean; // ✅ valid = pmv & ebit non-nuls
+  valid: boolean;
 };
 
 type ContractSummary = {
@@ -82,21 +77,26 @@ type ContractSummary = {
    UI STATE
 ========================= */
 const ui = reactive({
-  scope: "contract" as "contract" | "pnl",
-  contractId: "" as string,
-
+  // cible faisabilité
   ebitTargetMode: "total" as "total" | "pct",
   ebitTargetTotal: 0 as number,
   ebitTargetPct: 0 as number,
-
   onlyFeasible: false,
 
-  globalOpen: true,
-  sortKey: "ebit" as keyof Row | "variantTitle" | "dureeMois" | "pmv" | "ebitPct" | "feasible",
-  sortDir: "desc" as "asc" | "desc",
-
+  // affichage
   showGraphs: true,
   contractsOpen: true,
+  globalOpen: true,
+
+  // ✅ filtre des graphes par cartes ("" = PNL complet)
+  graphsContractId: "" as string,
+
+  // ✅ filtre tableau (SEULEMENT contrat)
+  tableContractId: "" as string,
+
+  // tri
+  sortKey: "ebit" as keyof Row | "variantTitle" | "dureeMois" | "pmv" | "ebitPct" | "feasible",
+  sortDir: "desc" as "asc" | "desc",
 });
 
 /* =========================
@@ -107,11 +107,16 @@ const activeContract = computed(() => (store as any).activeContract ?? null);
 const activeVariantId = computed(() => (store as any).activeVariantId ?? null);
 
 function initDefaults() {
-  const pnl = activePnl.value;
-  const c = activeContract.value ?? pnl?.contracts?.[0] ?? null;
-  ui.contractId = c?.id ? String(c.id) : "";
-  ui.scope = ui.contractId ? "contract" : "pnl";
+  // Graphes = PNL complet par défaut
+  ui.graphsContractId = "";
+  // Tableau = tous par défaut
+  ui.tableContractId = "";
 }
+
+watch(
+  () => String(activePnl.value?.id ?? ""),
+  () => initDefaults()
+);
 
 /* =========================
    HELPERS
@@ -143,7 +148,6 @@ function vTitle(v: any) {
 function cTitle(c: any) {
   return contractUiTitle(c);
 }
-
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
@@ -157,25 +161,22 @@ function safeMax(nums: number[]) {
 }
 function bestBy(list: Row[], better: (a: Row, b: Row) => boolean): Row | null {
   let best: Row | null = null;
-  for (const r of list) {
-    if (!best || better(r, best)) best = r;
-  }
+  for (const r of list) if (!best || better(r, best)) best = r;
   return best;
 }
 
-/** petit hash déterministe pour jitter (évite superposition dans scatter) */
+/** jitter déterministe (évite superposition dans scatter) */
 function hash01(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  // 0..1
   return ((h >>> 0) % 10000) / 10000;
 }
 
 /* =========================
-   SOURCE PACKS
+   SOURCE PACKS (PNL complet)
 ========================= */
 const allPacks = computed<VariantPack[]>(() => {
   const pnl = activePnl.value;
@@ -186,28 +187,6 @@ const allPacks = computed<VariantPack[]>(() => {
   }
   return out;
 });
-
-const contractOptions = computed(() => {
-  const pnl = activePnl.value;
-  if (!pnl) return [];
-  return (pnl.contracts ?? []).map((c: any) => ({
-    id: String(c.id),
-    label: cTitle(c),
-    dureeMois: toNum(c?.dureeMois ?? 0),
-  }));
-});
-
-const packsInScope = computed<VariantPack[]>(() => {
-  if (ui.scope === "pnl") return allPacks.value;
-  const cid = String(ui.contractId || activeContract.value?.id || "");
-  if (!cid) return allPacks.value;
-  return allPacks.value.filter((p) => String(p.contract?.id ?? "") === cid);
-});
-
-watch(
-  () => [activePnl.value?.id, activeContract.value?.id].join("::"),
-  () => initDefaults()
-);
 
 /* =========================
    KPI CACHE (ALL PNL)
@@ -232,20 +211,16 @@ const ebitMinTotal = computed(() => Math.max(0, toNum(ui.ebitTargetTotal)));
 const ebitMinPct = computed(() => Math.max(0, toNum(ui.ebitTargetPct)));
 
 function isFeasible(ebitTotal: number, ebitPct: number): boolean {
-  // Toujours refuser EBIT négatif
   if (!(ebitTotal >= 0)) return false;
-
-  if (ui.ebitTargetMode === "pct") {
-    return ebitPct >= ebitMinPct.value;
-  }
+  if (ui.ebitTargetMode === "pct") return ebitPct >= ebitMinPct.value;
   return ebitTotal >= ebitMinTotal.value;
 }
 
 /* =========================
-   ROWS (scope) — RAW includes invalid flag
+   ROWS (PNL complet)
 ========================= */
-const rowsScopeRawAll = computed<Row[]>(() => {
-  return packsInScope.value.map((pack) => {
+const rowsAllRawAll = computed<Row[]>(() => {
+  return allPacks.value.map((pack) => {
     const vid = String(pack.variant.id);
     const k = getKpi(vid);
 
@@ -271,23 +246,36 @@ const rowsScopeRawAll = computed<Row[]>(() => {
   });
 });
 
-/* ✅ Comparatif = uniquement les variantes valides */
-const rowsScopeRaw = computed<Row[]>(() => rowsScopeRawAll.value.filter((r) => r.valid));
-
-/* ✅ Compteur exclues */
-const invalidCount = computed(() => rowsScopeRawAll.value.filter((r) => !r.valid).length);
+/* ✅ Comparatif = uniquement valides */
+const rowsAllRaw = computed<Row[]>(() => rowsAllRawAll.value.filter((r) => r.valid));
+const invalidCount = computed(() => rowsAllRawAll.value.filter((r) => !r.valid).length);
+const feasibleCount = computed(() => rowsAllRaw.value.filter((r) => r.feasible).length);
 
 /* =========================
-   FILTER / SORT
+   FILTERS (GLOBAL)
 ========================= */
-const rowsScopeFiltered = computed<Row[]>(() => {
+const rowsFiltered = computed<Row[]>(() => {
   const only = !!ui.onlyFeasible;
-  return rowsScopeRaw.value.filter((r) => {
+  return rowsAllRaw.value.filter((r) => {
     if (only && !r.feasible) return false;
     return true;
   });
 });
 
+/* =========================
+   TABLE FILTER (ONLY contract)
+========================= */
+const rowsTableFiltered = computed<Row[]>(() => {
+  const cid = String(ui.tableContractId || "");
+  return rowsFiltered.value.filter((r) => {
+    if (cid && r.contractId !== cid) return false;
+    return true;
+  });
+});
+
+/* =========================
+   SORT
+========================= */
 function sortValue(r: Row, k: typeof ui.sortKey) {
   switch (k) {
     case "variantTitle":
@@ -296,11 +284,10 @@ function sortValue(r: Row, k: typeof ui.sortKey) {
       return (r as any)[k];
   }
 }
-
-const rowsScope = computed<Row[]>(() => {
+const rowsTable = computed<Row[]>(() => {
   const key = ui.sortKey;
   const dir = ui.sortDir;
-  const arr = [...rowsScopeFiltered.value];
+  const arr = [...rowsTableFiltered.value];
   arr.sort((a, b) => {
     const av = sortValue(a, key);
     const bv = sortValue(b, key);
@@ -310,7 +297,6 @@ const rowsScope = computed<Row[]>(() => {
   });
   return arr;
 });
-
 function setSort(k: typeof ui.sortKey) {
   if (ui.sortKey === k) ui.sortDir = ui.sortDir === "asc" ? "desc" : "asc";
   else {
@@ -320,13 +306,13 @@ function setSort(k: typeof ui.sortKey) {
 }
 
 /* =========================
-   MAX/MIN/BEST (sur valides seulement)
+   MAX/MIN/BEST (valide)
 ========================= */
-const maxEbitRow = computed<Row | null>(() => bestBy(rowsScopeRaw.value, (a, b) => a.ebit > b.ebit));
-const minPmvRow = computed<Row | null>(() => bestBy(rowsScopeRaw.value, (a, b) => a.pmv < b.pmv));
+const maxEbitRow = computed<Row | null>(() => bestBy(rowsFiltered.value, (a, b) => a.ebit > b.ebit));
+const minPmvRow = computed<Row | null>(() => bestBy(rowsFiltered.value, (a, b) => a.pmv < b.pmv));
 
 const bestCompromise = computed<null | { row: Row; ok: boolean; reason: string }>(() => {
-  const feas = rowsScopeRaw.value.filter((r) => r.feasible);
+  const feas = rowsFiltered.value.filter((r) => r.feasible);
   const bestFeasible = bestBy(feas, (a, b) => a.pmv < b.pmv);
   if (bestFeasible) return { row: bestFeasible, ok: true, reason: "PMV minimal parmi variantes faisables" };
 
@@ -336,10 +322,8 @@ const bestCompromise = computed<null | { row: Row; ok: boolean; reason: string }
   return null;
 });
 
-const feasibleCount = computed(() => rowsScopeRaw.value.filter((r) => r.feasible).length);
-
 /* =========================
-   CONTRACTS VIEW (PNL) — sans chevauchement, stats valides
+   CONTRACTS SUMMARY (cards)
 ========================= */
 const contractSummaries = computed<ContractSummary[]>(() => {
   const pnl = activePnl.value;
@@ -393,18 +377,48 @@ const contractSummaries = computed<ContractSummary[]>(() => {
     });
   }
 
-  // tri “meilleur contrat” = max EBIT (valide)
-  out.sort((a, b) => (toNum(b.maxEbit) - toNum(a.maxEbit)));
+  out.sort((a, b) => toNum(b.maxEbit) - toNum(a.maxEbit));
   return out;
 });
 
 const bestContract = computed(() => (contractSummaries.value.length ? contractSummaries.value[0] : null));
 
-function pickContract(cid: string) {
-  ui.scope = "contract";
-  ui.contractId = String(cid);
-  ui.globalOpen = true;
-}
+/* =========================
+   GRAPHS FILTER (via cards)
+========================= */
+const packsForGraphs = computed<VariantPack[]>(() => {
+  const cid = String(ui.graphsContractId || "");
+  if (!cid) return allPacks.value; // ✅ PNL complet
+  return allPacks.value.filter((p) => String(p.contract?.id ?? "") === cid);
+});
+
+const rowsGraphsRawAll = computed<Row[]>(() => {
+  return packsForGraphs.value.map((pack) => {
+    const vid = String(pack.variant.id);
+    const k = getKpi(vid);
+
+    const pmv = toNum(k?.prixMoyenM3);
+    const ebit = toNum(k?.ebitTotal);
+    const ebitPct = toNum(k?.ebitPct);
+
+    const valid = pmv !== 0 && ebit !== 0;
+    const feasible = valid ? isFeasible(ebit, ebitPct) : false;
+
+    return {
+      id: vid,
+      variantTitle: vTitle(pack.variant),
+      contractTitle: cTitle(pack.contract),
+      contractId: String(pack.contract?.id ?? ""),
+      dureeMois: toNum(pack.contract?.dureeMois ?? 0),
+      pmv,
+      ebit,
+      ebitPct,
+      feasible,
+      valid,
+    };
+  });
+});
+const rowsGraphs = computed<Row[]>(() => rowsGraphsRawAll.value.filter((r) => r.valid));
 
 /* =========================
    ACTIONS
@@ -429,11 +443,16 @@ function reload() {
   })();
 }
 
+/* ✅ sélection cartes contrats pour filtrer graphes */
+function setGraphsFilter(cid: string) {
+  ui.graphsContractId = String(cid || "");
+}
+
 /* =========================
-   GRAPHS (SVG) — sur valides seulement
+   GRAPHS (SVG)
 ========================= */
 const graphData = computed(() => {
-  const rows = rowsScopeRaw.value;
+  const rows = rowsGraphs.value;
   const maxE = safeMax(rows.map((r) => r.ebit));
   const minE = safeMin(rows.map((r) => r.ebit));
   const minP = safeMin(rows.map((r) => r.pmv));
@@ -455,7 +474,7 @@ const graphData = computed(() => {
 });
 
 const scatter = computed(() => {
-  const rows = rowsScopeRaw.value;
+  const rows = rowsGraphs.value;
   const minE = graphData.value.minE;
   const maxE = graphData.value.maxE;
   const minP = graphData.value.minP;
@@ -465,15 +484,13 @@ const scatter = computed(() => {
   const spanP = maxP - minP || 1;
 
   const targetTotal = ebitMinTotal.value;
-  const targetPct = ebitMinPct.value;
 
   const pts = rows.map((r) => {
     const x0 = clamp((r.pmv - minP) / spanP, 0, 1);
     const y0 = clamp((r.ebit - minE) / spanE, 0, 1);
 
-    // ✅ jitter léger (déterministe) pour éviter “pile” les mêmes points
     const h = hash01(r.id);
-    const jx = (h - 0.5) * 0.010; // ±0.005
+    const jx = (h - 0.5) * 0.010;
     const jy = (hash01(r.id + "y") - 0.5) * 0.010;
 
     const x = clamp(x0 + jx, 0, 1);
@@ -490,7 +507,7 @@ const scatter = computed(() => {
       ? null
       : clamp((targetTotal - minE) / spanE, 0, 1);
 
-  return { pts, yTarget, targetPct };
+  return { pts, yTarget };
 });
 </script>
 
@@ -500,18 +517,14 @@ const scatter = computed(() => {
     <div class="head">
       <div class="hLeft">
         <div class="hTitle">Comparateur de variantes</div>
-        <div
-          class="hSub ellipsis"
-          v-if="activePnl"
-        :title="String(activePnl?.title ?? activePnl?.name ?? '—')"
-        >
+        <div class="hSub ellipsis" v-if="activePnl" :title="String(activePnl?.title ?? activePnl?.name ?? '—')">
           PNL: <b>{{ activePnl?.title ?? activePnl?.name ?? "—" }}</b>
           <span class="sep">•</span>
-          Variantes (valides): <b>{{ rowsScopeRaw.length }}</b>
+          Variantes (valides): <b>{{ rowsAllRaw.length }}</b>
           <span class="sep">•</span>
           Faisables: <b>{{ feasibleCount }}</b>
-          <span v-if="ui.scope === 'contract' && ui.contractId" class="sep">•</span>
-          <span v-if="ui.scope === 'contract' && ui.contractId" class="mutedSmall">Filtre: contrat</span>
+          <span class="sep">•</span>
+          Tableau: <b>{{ rowsTable.length }}</b>
         </div>
       </div>
 
@@ -528,7 +541,7 @@ const scatter = computed(() => {
     </div>
     <div v-if="loading" class="alert info">Chargement…</div>
 
-    <!-- ✅ INFO exclusions -->
+    <!-- INFO exclusions -->
     <div v-if="invalidCount > 0" class="alert warn">
       <ExclamationTriangleIcon class="aic" />
       <div class="min0">
@@ -537,30 +550,9 @@ const scatter = computed(() => {
       </div>
     </div>
 
-    <!-- CONTROLS -->
+    <!-- CONTROLS (AUCUN contrat ici) -->
     <div class="controls">
       <div class="ctlRow">
-        <div class="ctlGroup">
-          <div class="ctlLabel">Périmètre</div>
-          <div class="ctlInline">
-            <button class="pill" :class="{ on: ui.scope === 'contract' }" @click="ui.scope = 'contract'" type="button">
-              Contrat
-            </button>
-            <button class="pill" :class="{ on: ui.scope === 'pnl' }" @click="ui.scope = 'pnl'" type="button">
-              PNL
-            </button>
-          </div>
-        </div>
-
-        <div class="ctlGroup" v-if="ui.scope === 'contract'">
-          <div class="ctlLabel">Contrat</div>
-          <select v-model="ui.contractId" class="sel">
-            <option v-for="c in contractOptions" :key="c.id" :value="c.id">
-              {{ c.label }} ({{ c.dureeMois }} mois)
-            </option>
-          </select>
-        </div>
-
         <div class="ctlGroup">
           <div class="ctlLabel">Cible EBIT</div>
 
@@ -600,7 +592,7 @@ const scatter = computed(() => {
         </div>
 
         <div class="ctlGroup">
-          <div class="ctlLabel">Filtres</div>
+          <div class="ctlLabel">Options</div>
           <label class="check">
             <input type="checkbox" v-model="ui.onlyFeasible" />
             <span>Afficher seulement faisables</span>
@@ -613,29 +605,48 @@ const scatter = computed(() => {
       </div>
     </div>
 
-    <!-- CONTRACTS OVERVIEW -->
+    <!-- CONTRACTS CARDS (filtre graphes via clic) -->
     <div class="box" v-if="contractSummaries.length">
       <button class="boxHead" type="button" @click="ui.contractsOpen = !ui.contractsOpen">
         <div class="bhLeft">
           <component :is="ui.contractsOpen ? ChevronDownIcon : ChevronRightIcon" class="chev" />
           <Squares2X2Icon class="bhIc" />
-          <div class="bhTitle">Contrats (vue PNL)</div>
+          <div class="bhTitle">Contrats</div>
           <span class="pillTiny">{{ contractSummaries.length }}</span>
           <span class="mutedSmall" v-if="bestContract">
             • meilleur (EBIT): <b>{{ bestContract.contractTitle }}</b>
           </span>
+          <span class="mutedSmall">
+            • filtre graphes: <b>{{ ui.graphsContractId ? "contrat" : "PNL complet" }}</b>
+          </span>
         </div>
-        <div class="bhRight"><span class="mutedSmall">Clique un contrat pour filtrer</span></div>
+        <div class="bhRight"><span class="mutedSmall">Clique un bloc pour filtrer les graphes</span></div>
       </button>
 
       <div v-show="ui.contractsOpen" class="boxBody">
         <div class="contracts">
+          <!-- ✅ reset graphs filter -->
+          <button
+            class="cCard reset"
+            type="button"
+            :class="{ on: !ui.graphsContractId }"
+            @click="setGraphsFilter('')"
+          >
+            <div class="cTop">
+              <div class="cName">PNL complet</div>
+              <div class="cMeta">Toutes variantes valides</div>
+            </div>
+            <div class="cHint">→ Afficher tous les contrats</div>
+          </button>
+
+          <!-- ✅ contract cards clickable -->
           <button
             v-for="c in contractSummaries"
             :key="c.contractId"
             class="cCard"
             type="button"
-            @click="pickContract(c.contractId)"
+            :class="{ on: ui.graphsContractId === c.contractId }"
+            @click="setGraphsFilter(c.contractId)"
           >
             <div class="cTop">
               <div class="cName ellipsis" :title="c.contractTitle">{{ c.contractTitle }}</div>
@@ -663,7 +674,7 @@ const scatter = computed(() => {
               </div>
             </div>
 
-            <div class="cHint">→ Filtrer sur ce contrat</div>
+            <div class="cHint">→ Filtrer les graphes sur ce contrat</div>
           </button>
         </div>
       </div>
@@ -674,7 +685,11 @@ const scatter = computed(() => {
       <div class="gCard">
         <div class="gHead">
           <div class="gTitle"><ChartBarIcon class="gIc" /> Top EBIT (8)</div>
-          <div class="gSub">Barres (EBIT) + indicateur PMV</div>
+          <div class="gSub">
+            <span v-if="!ui.graphsContractId">PNL complet</span>
+            <span v-else>Contrat filtré</span>
+            • Barres (EBIT) + indicateur PMV
+          </div>
         </div>
 
         <div class="bars" v-if="graphData.bars.length">
@@ -697,6 +712,8 @@ const scatter = computed(() => {
             Scatter: X=PMV, Y=EBIT •
             <span v-if="ui.ebitTargetMode === 'total'">ligne = cible EBIT (DH)</span>
             <span v-else>cible = EBIT % (filtre)</span>
+            <span class="sep">•</span>
+            points: <b>{{ rowsGraphs.length }}</b>
           </div>
         </div>
 
@@ -717,7 +734,7 @@ const scatter = computed(() => {
               <circle
                 :cx="10 + p.x * 80"
                 :cy="90 - p.y * 80"
-                r="1.35"
+                r="1.25"
                 class="pt"
                 :class="{ ok: p.isTargetOk, bad: !p.isTargetOk, active: p.isActive }"
               >
@@ -746,12 +763,31 @@ const scatter = computed(() => {
           <component :is="ui.globalOpen ? ChevronDownIcon : ChevronRightIcon" class="chev" />
           <ChartBarIcon class="bhIc" />
           <div class="bhTitle">Tableau global des variantes</div>
-          <span class="pillTiny">{{ rowsScope.length }}</span>
+          <span class="pillTiny">{{ rowsTable.length }}</span>
           <span class="mutedSmall">• tri • sans valeurs nulles</span>
         </div>
       </button>
 
       <div v-show="ui.globalOpen" class="boxBody">
+        <!-- ✅ TABLE FILTER (ONLY contract) -->
+        <div class="tableFilter">
+          <div class="tfLeft">
+            <div class="tfLabel">Filtre (tableau)</div>
+            <select v-model="ui.tableContractId" class="sel">
+              <option value="">Tous les contrats</option>
+              <option v-for="c in contractSummaries" :key="c.contractId" :value="c.contractId">
+                {{ c.contractTitle }}
+              </option>
+            </select>
+          </div>
+
+          <div class="tfRight">
+            <button class="btn small" type="button" @click="ui.tableContractId = ''" :disabled="!ui.tableContractId">
+              Réinitialiser
+            </button>
+          </div>
+        </div>
+
         <div class="tableWrap">
           <table class="tbl">
             <thead>
@@ -792,7 +828,7 @@ const scatter = computed(() => {
 
             <tbody>
               <tr
-                v-for="r in rowsScope"
+                v-for="r in rowsTable"
                 :key="r.id"
                 :class="{
                   best: bestCompromise?.row && r.id === bestCompromise.row.id,
@@ -882,7 +918,7 @@ const scatter = computed(() => {
 .aic { width: 18px; height: 18px; margin-top: 1px; }
 
 /* =========================
-   CONTROLS
+   CONTROLS (NO contract here)
 ========================= */
 .controls {
   background: rgba(255, 255, 255, 0.92);
@@ -892,29 +928,18 @@ const scatter = computed(() => {
 }
 .ctlRow {
   display: grid;
-  grid-template-columns: 180px 1.3fr 260px 220px;
+  grid-template-columns: 1.2fr 260px;
   gap: 10px;
   align-items: start;
 }
-@media (max-width: 1100px) { .ctlRow { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .ctlRow { grid-template-columns: 1fr; } }
 .ctlGroup { min-width: 0; }
 .ctlLabel { font-size: 11px; font-weight: 800; color: rgba(0, 0, 0, 0.72); margin-bottom: 6px; }
 .ctlHint { margin-top: 6px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
-.ctlInline { display: flex; gap: 8px; flex-wrap: wrap; }
-.pill {
-  padding: 7px 10px; border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: #fff; font-size: 12px; cursor: pointer;
-}
-.pill.on { border-color: rgba(37, 99, 235, 0.55); background: rgba(37, 99, 235, 0.08); font-weight: 800; }
-.sel, .num {
-  width: 100%; padding: 8px 10px; border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.12); background: #fff; font-size: 12px;
-}
 .check { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 
-.targetWrap { display: flex; flex-direction: column; gap: 6px; }
-.targetMode { display: flex; gap: 8px; }
+.targetWrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.targetMode { display: flex; gap: 8px; flex-wrap: wrap; }
 .pillTinyBtn {
   padding: 5px 10px; border-radius: 999px;
   border: 1px solid rgba(0,0,0,0.12);
@@ -923,21 +948,32 @@ const scatter = computed(() => {
 }
 .pillTinyBtn.on { border-color: rgba(37, 99, 235, 0.55); background: rgba(37, 99, 235, 0.10); }
 
+.sel, .num {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  font-size: 12px;
+  min-width: 0;
+}
+
 /* =========================
    BOXES
 ========================= */
 .box { border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px; overflow: hidden; background: #fff; }
 .boxHead { width: 100%; border: none; background: rgba(0, 0, 0, 0.02); padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
-.bhLeft { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.bhLeft { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .bhRight { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
 .chev { width: 18px; height: 18px; opacity: 0.8; }
 .bhIc { width: 18px; height: 18px; opacity: 0.85; }
 .bhTitle { font-size: 13px; font-weight: 950; }
 .pillTiny { padding: 2px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.06); font-size: 11px; font-weight: 900; }
 .boxBody { padding: 10px 12px; }
+.mutedSmall { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
 
 /* =========================
-   CONTRACTS — no overlap
+   CONTRACTS CARDS (clickable)
 ========================= */
 .contracts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 1200px) { .contracts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -953,11 +989,14 @@ const scatter = computed(() => {
   min-width: 0;
 }
 .cCard:hover { border-color: rgba(37, 99, 235, 0.35); background: rgba(37, 99, 235, 0.04); }
+.cCard.on { border-color: rgba(37, 99, 235, 0.55); background: rgba(37, 99, 235, 0.08); }
+.cCard.reset { border-style: dashed; }
+.cCard.reset.on { border-style: solid; }
+
 .cTop { min-width: 0; }
 .cName { font-size: 12px; font-weight: 950; }
 .cMeta { margin-top: 2px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
 .cInv { color: rgba(245, 158, 11, 0.95); font-weight: 800; }
-
 .cLines { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .cLine { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .cLine .k { font-size: 11px; font-weight: 850; color: rgba(0,0,0,0.60); }
@@ -971,7 +1010,7 @@ const scatter = computed(() => {
 @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr; } }
 
 .gCard { border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px; background: #fff; padding: 10px; }
-.gHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.gHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; min-width:0; }
 .gTitle { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 950; }
 .gSub { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
 .gIc { width: 18px; height: 18px; opacity: 0.85; }
@@ -989,26 +1028,43 @@ const scatter = computed(() => {
 .svg { width: 100%; height: 180px; }
 .axis { stroke: rgba(0, 0, 0, 0.25); stroke-width: 0.6; }
 .target { stroke: rgba(239, 68, 68, 0.75); stroke-width: 0.8; stroke-dasharray: 2 2; }
-
 .pt { fill: rgba(148, 163, 184, 0.70); }
 .pt.ok { fill: rgba(16, 185, 129, 0.80); }
 .pt.bad { fill: rgba(239, 68, 68, 0.80); }
 .pt.active { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.7; }
-
 .legend { margin-top: 8px; font-size: 11px; color: rgba(0, 0, 0, 0.6); }
 .lg.ok { color: rgba(16, 185, 129, 0.95); }
 .lg.bad { color: rgba(239, 68, 68, 0.95); }
 .lg.active { color: rgba(0, 0, 0, 0.7); }
 
 /* =========================
-   TABLE (no contract column, reduced width)
+   TABLE FILTER (compact)
+========================= */
+.tableFilter{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  min-width:0;
+}
+.tfLeft{ min-width:0; flex: 1; }
+.tfRight{ flex: 0 0 auto; }
+.tfLabel{ font-size: 11px; font-weight: 800; color: rgba(0,0,0,0.72); margin-bottom: 6px; }
+@media (max-width: 700px){
+  .tableFilter{ flex-direction: column; align-items: stretch; }
+  .tfRight .btn{ width: 100%; }
+}
+
+/* =========================
+   TABLE (no scroll horizontal)
 ========================= */
 .tableWrap { overflow: hidden; border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.08); }
 .tbl {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  table-layout: fixed; /* ✅ reduces horizontal needs */
+  table-layout: fixed;
 }
 .tbl th, .tbl td {
   padding: 9px 8px;
@@ -1029,12 +1085,12 @@ const scatter = computed(() => {
 .sticky { position: sticky; top: 0; z-index: 2; }
 .srt { margin-left: 6px; font-size: 10px; opacity: 0.7; }
 
-.tTitle { width: 48%; } /* ✅ main column */
-.tbl th:nth-child(2), .tbl td:nth-child(2) { width: 8%; }   /* Durée */
-.tbl th:nth-child(3), .tbl td:nth-child(3) { width: 13%; }  /* PMV */
-.tbl th:nth-child(4), .tbl td:nth-child(4) { width: 13%; }  /* EBIT */
-.tbl th:nth-child(5), .tbl td:nth-child(5) { width: 10%; }  /* EBIT% */
-.tbl th:nth-child(6), .tbl td:nth-child(6) { width: 8%; }   /* Faisable */
+.tTitle { width: 48%; }
+.tbl th:nth-child(2), .tbl td:nth-child(2) { width: 8%; }
+.tbl th:nth-child(3), .tbl td:nth-child(3) { width: 13%; }
+.tbl th:nth-child(4), .tbl td:nth-child(4) { width: 13%; }
+.tbl th:nth-child(5), .tbl td:nth-child(5) { width: 10%; }
+.tbl th:nth-child(6), .tbl td:nth-child(6) { width: 8%; }
 
 .tMain { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tSub { margin-top: 2px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
@@ -1066,7 +1122,5 @@ tr.bad { opacity: 0.88; }
 
 .note { margin-top: 8px; }
 .muted { color: rgba(0, 0, 0, 0.55); }
-.mutedSmall { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
-
 .ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / header désign restauré + CA non tronqué + no scroll horizontal) -->
+<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / header désign restauré + CA non tronqué + no scroll horizontal + ✅ sans recherche + ✅ désignation un peu plus grande) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -10,7 +10,6 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   Squares2X2Icon,
-  MagnifyingGlassIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -191,13 +190,9 @@ const caTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.ca), 0));
 const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
 
 /* =========================
-   UI (search only)
+   UI
 ========================= */
-const q = ref("");
-const rowsUi = computed(() => {
-  const query = String(q.value ?? "").trim().toLowerCase();
-  return rows.value.filter((r) => !query || String(r.designation ?? "").toLowerCase().includes(query));
-});
+const rowsUi = rows;
 
 /* =========================
    TOAST
@@ -385,14 +380,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   const ids = payload?.variantIds ?? [];
   const copy = payload?.copy ?? "QTY_MOMD";
   if (!ids.length) return;
-
-  const ok = window.confirm(
-    payload.mode === "ALL"
-      ? `Généraliser “Qté & MOMD” sur TOUTES les variantes ?\nMode: ${labelForCopy(copy)}`
-      : `Généraliser “Qté & MOMD” sur ${ids.length} variante(s) ?\nMode: ${labelForCopy(copy)}`
-  );
-  if (!ok) return;
-
   await generalizeTo(ids, copy);
   if (!genErr.value) genOpen.value = false;
 }
@@ -478,13 +465,6 @@ onMounted(async () => {
 
     <template v-else>
       <div class="card pad0">
-        <div class="toolbar">
-          <div class="search">
-            <MagnifyingGlassIcon class="sic" />
-            <input v-model="q" class="sin" type="text" placeholder="Rechercher une formule…" />
-          </div>
-        </div>
-
         <div class="tableWrap">
           <table class="table">
             <colgroup>
@@ -556,7 +536,7 @@ onMounted(async () => {
               </tr>
 
               <tr v-if="rowsUi.length === 0">
-                <td class="emptyRow" colspan="6">Aucun résultat (recherche).</td>
+                <td class="emptyRow" colspan="6">Aucun résultat.</td>
               </tr>
             </tbody>
           </table>
@@ -788,42 +768,6 @@ onMounted(async () => {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* toolbar */
-.toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.06);
-}
-.search {
-  flex: 1 1 auto;
-  min-width: 240px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.02);
-  border-radius: 12px;
-  padding: 0 10px;
-  height: 34px;
-}
-.sic {
-  width: 18px;
-  height: 18px;
-  color: rgba(15, 23, 42, 0.55);
-}
-.sin {
-  border: none;
-  outline: none;
-  background: transparent;
-  width: 100%;
-  font-weight: 900;
-  color: #0f172a;
-  font-size: 12px;
-}
-
 /* ✅ no horizontal scroll */
 .tableWrap {
   overflow: hidden;
@@ -889,7 +833,7 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #0f172a;
-  font-size: 12.5px;
+  font-size: 13.5px; /* ✅ un peu plus grand */
   font-weight: 950;
 }
 
@@ -1049,7 +993,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  z-index: 80;
+  z-index: 120000;
 }
 .dlg {
   width: min(520px, 100%);
