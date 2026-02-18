@@ -1,14 +1,20 @@
-<!-- src/pages/Variante/Sections/Formules/FormulesPage.vue
-     (FICHIER COMPLET / UI alignée style TransportPage)
-     ✅ Enlève toutes les infos du haut (P&L / Contrat / Variante / hints)
-     ✅ Garde فقط: titre page + boutons + lignes formules
-     ✅ Message "Aucune formule…" quand vide
-     ✅ Style cohérent (variables, head sticky, boutons, cards)
+<!-- src/pages/FormulesPage.vue
+     (FICHIER COMPLET)
+     ✅ UI alignée style TransportPage (header minimal + actions + cards)
+     ✅ Import = garde EXACTEMENT ta logique preview/save (importDraft + doImportPrepare + saveImportedDraft)
+     ✅ Remplace فقط l'UI “import inline” par le composant SectionImportModal (sans impacter logique)
+     ✅ Généraliser = ✅ utilise SectionTargetsGeneralizeModal pour choisir les variantes
+        + mini modal local pour choisir le preset copy + confirmer (logique inchangée)
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
-import SectionGeneralizeModal, { type CopyPreset } from "@/components/SectionGeneralizeModal.vue";
+
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
+import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
+
+// (garde ton type CopyPreset identique à l’ancien modal)
+export type CopyPreset = "ZERO" | "QTY_ONLY" | "MOMD_ONLY" | "QTY_MOMD";
 
 // Heroicons
 import { ArrowDownTrayIcon } from "@heroicons/vue/24/outline";
@@ -118,13 +124,15 @@ function getItemsRaw(r: FormuleRow): any[] {
 ========================= */
 type SnapshotItem = { formuleId: string; volumeM3: number; momd: number; cmpOverride: number | null };
 
-const importDraft = reactive<{
+type ImportDraft = {
   ready: boolean;
   sourceVariantId: string;
-  copy: CopyPreset;
+  copy: ImportCopyPreset;
   previewRawItems: any[];
   items: SnapshotItem[];
-}>({
+};
+
+const importDraft = reactive<ImportDraft>({
   ready: false,
   sourceVariantId: "",
   copy: "QTY_MOMD",
@@ -431,211 +439,32 @@ function openAll() {
 function closeAll() {
   for (const r of rowsShown.value) open[r.id] = false;
 }
-function isOpen(r: FormuleRow) {
+function isOpenRow(r: FormuleRow) {
   return !!open[r.id];
 }
 
 /* =========================
-   ✅ IMPORT MODAL (prepare preview)
+   ✅ IMPORT (UI via SectionImportModal, logique inchangée)
 ========================= */
-type ImportRow = {
-  pnlId: string;
-  pnlTitle: string;
-  contractId: string;
-  contractLabel: string;
-  variantId: string;
-  variantTitle: string;
-  variantStatus: string;
-  hasFormules: boolean;
-};
-
-type TreeContract = {
-  contractId: string;
-  contractLabel: string;
-  variants: ImportRow[];
-};
-type TreePnl = {
-  pnlId: string;
-  pnlTitle: string;
-  contracts: TreeContract[];
-};
-
-const importUi = reactive({
+const importUi = reactive<{
+  open: boolean;
+  sourceVariantId: string;
+  copy: ImportCopyPreset;
+}>({
   open: false,
-  q: "",
   sourceVariantId: "",
-  onlyActivePnl: false,
-  copy: "QTY_MOMD" as CopyPreset,
+  copy: "QTY_MOMD",
 });
-
-const openPnl = reactive<Record<string, boolean>>({});
-const openContract = reactive<Record<string, boolean>>({});
 
 const importBusy = ref(false);
 const importErr = ref<string | null>(null);
 
-function pnlTitleOf(p: any) {
-  return String(p?.title ?? p?.name ?? `PNL #${String(p?.id ?? "").slice(0, 6)}`);
-}
-function contractLabelOf(c: any) {
-  const d = (c as any)?.dureeMois ?? null;
-  const id = String((c as any)?.id ?? "");
-  return d != null ? `Contrat #${id.slice(0, 6)} — ${d} mois` : `Contrat #${id.slice(0, 6)}`;
-}
-function hasFormules(v: any) {
-  const items = (v?.formules?.items ?? v?.variantFormules ?? []) as any[];
-  return Array.isArray(items) && items.length > 0;
-}
-
-function getPnlsForImport(): any[] {
-  const all = (store as any).pnls ?? [];
-  if (!Array.isArray(all)) return [];
-  if (!importUi.onlyActivePnl) return all;
-
-  const activeId = String((store as any).activePnl?.id ?? "");
-  if (!activeId) return all;
-  return all.filter((p: any) => String(p?.id ?? "") === activeId);
-}
-
-const importRows = computed<ImportRow[]>(() => {
-  const pnls = getPnlsForImport();
-  const out: ImportRow[] = [];
-
-  for (const p of pnls) {
-    const pid = String(p?.id ?? "");
-    const pTitle = pnlTitleOf(p);
-
-    const contracts = p?.contracts ?? [];
-    for (const c of contracts) {
-      const cid = String(c?.id ?? "");
-      if (!cid) continue;
-
-      const cLabel = contractLabelOf(c);
-
-      const vars = c?.variants ?? [];
-      for (const v of vars) {
-        const vid = String(v?.id ?? "");
-        if (!vid) continue;
-
-        if (variant.value?.id && vid === String(variant.value.id)) continue;
-
-        out.push({
-          pnlId: pid,
-          pnlTitle: pTitle,
-          contractId: cid,
-          contractLabel: cLabel,
-          variantId: vid,
-          variantTitle: String(v?.title ?? "—"),
-          variantStatus: String(v?.status ?? "—"),
-          hasFormules: hasFormules(v),
-        });
-      }
-    }
-  }
-
-  return out;
-});
-
-const importTree = computed<TreePnl[]>(() => {
-  const needle = String(importUi.q ?? "").trim().toLowerCase();
-
-  const byPnl: Record<
-    string,
-    {
-      pnlId: string;
-      pnlTitle: string;
-      contracts: Record<string, { contractId: string; contractLabel: string; variants: ImportRow[] }>;
-    }
-  > = {};
-
-  for (const r of importRows.value) {
-    const hay = `${r.pnlTitle} ${r.contractLabel} ${r.variantTitle} ${r.variantStatus} ${r.variantId}`.toLowerCase();
-    if (needle && !hay.includes(needle)) continue;
-
-    const p =
-      (byPnl[r.pnlId] ??= {
-        pnlId: r.pnlId,
-        pnlTitle: r.pnlTitle,
-        contracts: {},
-      });
-
-    const c =
-      (p.contracts[r.contractId] ??= {
-        contractId: r.contractId,
-        contractLabel: r.contractLabel,
-        variants: [],
-      });
-
-    c.variants.push(r);
-  }
-
-  return Object.values(byPnl)
-    .sort((a, b) => a.pnlTitle.localeCompare(b.pnlTitle))
-    .map((p) => ({
-      pnlId: p.pnlId,
-      pnlTitle: p.pnlTitle,
-      contracts: Object.values(p.contracts)
-        .map((c) => ({
-          contractId: c.contractId,
-          contractLabel: c.contractLabel,
-          variants: (c.variants ?? []).slice().sort((a, b) => a.variantTitle.localeCompare(b.variantTitle)),
-        }))
-        .sort((a, b) => a.contractLabel.localeCompare(b.contractLabel)),
-    }));
-});
-
-function togglePnl(pnlId: string) {
-  openPnl[pnlId] = !openPnl[pnlId];
-}
-function toggleContract(pnlId: string, contractId: string) {
-  const k = `${pnlId}::${contractId}`;
-  openContract[k] = !openContract[k];
-}
-function contractIsOpen(pnlId: string, contractId: string) {
-  const k = `${pnlId}::${contractId}`;
-  return Boolean(openContract[k]);
-}
-
-function openAllImport() {
-  for (const p of importTree.value) {
-    openPnl[p.pnlId] = true;
-    for (const c of p.contracts) openContract[`${p.pnlId}::${c.contractId}`] = true;
-  }
-}
-function closeAllImport() {
-  for (const p of importTree.value) {
-    openPnl[p.pnlId] = false;
-    for (const c of p.contracts) openContract[`${p.pnlId}::${c.contractId}`] = false;
-  }
-}
-
 function openImport() {
   importErr.value = null;
-  importUi.q = "";
-  importUi.sourceVariantId = "";
-  importUi.copy = "QTY_MOMD";
   importUi.open = true;
-
-  const pnls = getPnlsForImport();
-  for (const p of pnls) {
-    const pid = String(p?.id ?? "");
-    if (pid) openPnl[pid] = true;
-
-    for (const c of p?.contracts ?? []) {
-      const cid = String(c?.id ?? "");
-      if (!cid) continue;
-      openContract[`${pid}::${cid}`] = false;
-    }
-  }
-
-  const first = importTree.value?.[0]?.contracts?.[0]?.variants?.[0];
-  if (first?.variantId) importUi.sourceVariantId = first.variantId;
-}
-function closeImport() {
-  importUi.open = false;
 }
 
-function copyLabel(copy: CopyPreset) {
+function copyLabel(copy: ImportCopyPreset) {
   if (copy === "ZERO") return "Formules seulement (tout à 0)";
   if (copy === "QTY_ONLY") return "Formules + Quantités (MOMD=0)";
   if (copy === "MOMD_ONLY") return "Formules + MOMD (m³=0)";
@@ -667,7 +496,7 @@ function extractSourceSnapshot(srcVariant: any) {
   return out;
 }
 
-function makePatchFor(copy: CopyPreset, s: SnapshotItem) {
+function makePatchFor(copy: ImportCopyPreset, s: SnapshotItem) {
   if (copy === "ZERO") return { volumeM3: 0, momd: 0, cmpOverride: 0 };
   if (copy === "QTY_ONLY") return { volumeM3: Number(s.volumeM3 ?? 0), momd: 0, cmpOverride: 0 };
   if (copy === "MOMD_ONLY") return { volumeM3: 0, momd: Number(s.momd ?? 0), cmpOverride: 0 };
@@ -679,7 +508,7 @@ function makePatchFor(copy: CopyPreset, s: SnapshotItem) {
 }
 
 /* =========================
-   ✅ CONFIRM IMPORT PREPARE
+   ✅ CONFIRM IMPORT (inchangé)
 ========================= */
 const importConfirm = reactive({
   open: false,
@@ -714,10 +543,13 @@ async function doImportPrepare() {
 
   try {
     let srcVariant: any = null;
+
+    // ✅ logique existante: on charge la source via loadVariantDeep()
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(srcId);
       srcVariant = store.activeVariant as any;
     }
+
     if (!srcVariant || String(srcVariant?.id ?? "") !== srcId) {
       throw new Error("Impossible de charger la variante source (deep).");
     }
@@ -725,6 +557,7 @@ async function doImportPrepare() {
     const rawItems = (srcVariant?.formules?.items ?? srcVariant?.variantFormules ?? []) as any[];
     const snap = extractSourceSnapshot(srcVariant);
 
+    // recharger la cible ensuite (comme avant)
     if ((store as any).loadVariantDeep) {
       await (store as any).loadVariantDeep(targetId);
     }
@@ -736,8 +569,6 @@ async function doImportPrepare() {
     importDraft.items = snap;
 
     closeImportConfirm();
-    closeImport();
-
     for (const k of Object.keys(open)) delete open[k];
   } catch (e: any) {
     importErr.value = e?.message ?? String(e);
@@ -767,6 +598,7 @@ async function saveImportedDraft() {
     const targetVariant = store.activeVariant as any;
     const targetItems = (targetVariant?.formules?.items ?? targetVariant?.variantFormules ?? []) as any[];
 
+    // purge
     if (Array.isArray(targetItems) && targetItems.length) {
       for (const it of targetItems) {
         const vfId = String(it?.id ?? "").trim();
@@ -775,6 +607,7 @@ async function saveImportedDraft() {
       }
     }
 
+    // recreate links
     for (const s of src) {
       await (store as any).addFormuleToVariant(targetId, s.formuleId);
     }
@@ -786,6 +619,7 @@ async function saveImportedDraft() {
     const refreshed = store.activeVariant as any;
     const its = (refreshed?.formules?.items ?? refreshed?.variantFormules ?? []) as any[];
 
+    // patch values
     for (const s of src) {
       const created = Array.isArray(its)
         ? its.find((x: any) => String(x?.formuleId ?? x?.formule?.id ?? "") === String(s.formuleId))
@@ -810,13 +644,72 @@ async function saveImportedDraft() {
   }
 }
 
+/* ✅ handler: ce que le modal d'import moderne renvoie */
+function onPickImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
+  importUi.sourceVariantId = String(payload?.sourceVariantId ?? "").trim();
+  importUi.copy = (payload?.copy ?? "QTY_MOMD") as ImportCopyPreset;
+
+  // fermer le modal de sélection
+  importUi.open = false;
+
+  // garder ton confirm + preview inchangé
+  openImportConfirm();
+}
+
 /* =========================
-   ✅ GENERALISER SECTION (Formules)
+   ✅ GENERALISER SECTION (Formules) — logique inchangée
+   ✅ UI: utilise SectionTargetsGeneralizeModal + mini confirm copy
 ========================= */
-const genOpen = ref(false);
+const genPickOpen = ref(false);
 const genBusy = ref(false);
 const genErr = ref<string | null>(null);
 
+// mini confirm local (copy + confirm)
+const genConfirm = reactive<{
+  open: boolean;
+  mode: "ALL" | "SELECT";
+  variantIds: string[];
+  copy: CopyPreset;
+}>({
+  open: false,
+  mode: "ALL",
+  variantIds: [],
+  copy: "QTY_MOMD",
+});
+
+function copyLabelLocal(c: CopyPreset) {
+  if (c === "ZERO") return "Section seulement (Qté=0, MOMD=0)";
+  if (c === "QTY_ONLY") return "Section + Qté (MOMD=0)";
+  if (c === "MOMD_ONLY") return "Section + MOMD (m³=0)";
+  return "Section + Qté + MOMD (copie complète)";
+}
+
+function openGeneralize() {
+  genErr.value = null;
+  genPickOpen.value = true;
+}
+
+function closeGenConfirm() {
+  genConfirm.open = false;
+  genConfirm.variantIds = [];
+  genConfirm.mode = "ALL";
+  genConfirm.copy = "QTY_MOMD";
+}
+
+/** 1) après sélection des variantes (modal moderne) -> on ouvre confirm preset */
+function onPickGeneralizeTargets(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  genPickOpen.value = false;
+
+  const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  if (!ids.length) return;
+
+  genConfirm.mode = payload.mode ?? "ALL";
+  genConfirm.variantIds = ids;
+  genConfirm.copy = "QTY_MOMD";
+  genConfirm.open = true;
+}
+
+/* logique existante */
 function getAllVariantsOfActivePnl(): Array<{ id: string; raw: any }> {
   const p = store.activePnl;
   if (!p) return [];
@@ -830,12 +723,10 @@ function getAllVariantsOfActivePnl(): Array<{ id: string; raw: any }> {
   }
   return out;
 }
-
 function getVariantById(variantId: string): any | null {
   const list = getAllVariantsOfActivePnl();
   return list.find((x) => x.id === String(variantId))?.raw ?? null;
 }
-
 function makePatchForGeneralize(copy: CopyPreset, s: any) {
   if (copy === "ZERO") return { volumeM3: 0, momd: 0, cmpOverride: 0 };
   if (copy === "QTY_ONLY") return { volumeM3: Number(s.volumeM3 ?? 0), momd: 0, cmpOverride: 0 };
@@ -901,18 +792,19 @@ async function generalizeFormulesTo(variantIds: string[], copy: CopyPreset) {
   }
 }
 
-async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[]; copy: CopyPreset }) {
-  const ids = payload?.variantIds ?? [];
-  const copy = payload?.copy ?? "QTY_MOMD";
+/** 2) confirm preset -> apply */
+async function confirmGeneralize() {
+  const ids = genConfirm.variantIds ?? [];
+  const copy = genConfirm.copy ?? "QTY_MOMD";
   if (!ids.length) return;
   await generalizeFormulesTo(ids, copy);
-  if (!genErr.value) genOpen.value = false;
+  if (!genErr.value) closeGenConfirm();
 }
 </script>
 
 <template>
   <div class="page">
-    <!-- ✅ Header minimal (style TransportPage) -->
+    <!-- ✅ Header minimal -->
     <div class="head">
       <div class="hleft">
         <div class="h1">Formules</div>
@@ -924,7 +816,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           + Ajouter
         </button>
 
-        <button class="btn" type="button" @click="openImport()" :disabled="!variant || importBusy">
+        <button class="btn" type="button" @click="openImport()" :disabled="!variant || importBusy || importDraft.ready">
           <ArrowDownTrayIcon class="ic" />
           Importer
         </button>
@@ -951,7 +843,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           Annuler
         </button>
 
-        <button class="btn" type="button" @click="genOpen = true" :disabled="!variant || genBusy || importBusy || importDraft.ready">
+        <button class="btn" type="button" @click="openGeneralize()" :disabled="!variant || genBusy || importBusy || importDraft.ready">
           Généraliser
         </button>
 
@@ -964,7 +856,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     <!-- Alerts -->
     <div v-if="importDraft.ready" class="alert info">
       <b>Preview import (non enregistré)</b>
-      <span class="muted"> — Source #{{ String(importDraft.sourceVariantId).slice(0, 8) }} • Mode: {{ copyLabel(importDraft.copy) }}</span>
+      <span class="muted">
+        — Source #{{ String(importDraft.sourceVariantId).slice(0, 8) }} • Mode: {{ copyLabel(importDraft.copy) }}
+      </span>
     </div>
 
     <div v-if="delErr" class="alert err"><b>Erreur :</b> {{ delErr }}</div>
@@ -978,9 +872,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     <div v-else-if="store.error" class="alert err"><b>Erreur :</b> {{ store.error }}</div>
 
     <template v-else>
-      <div v-if="!variant" class="card mutedCard">
-        Sélectionne une variante (via Mes P&L) puis reviens ici.
-      </div>
+      <div v-if="!variant" class="card mutedCard">Sélectionne une variante (via Mes P&L) puis reviens ici.</div>
 
       <template v-else>
         <div v-if="rowsShown.length === 0" class="card empty">
@@ -992,7 +884,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           <div v-for="r in rowsShown" :key="r.id" class="card">
             <button class="rowHead" type="button" @click="toggle(r)">
               <div class="left">
-                <span class="chev">{{ isOpen(r) ? "▾" : "▸" }}</span>
+                <span class="chev">{{ isOpenRow(r) ? "▾" : "▸" }}</span>
                 <span class="name">{{ r.label || "—" }}</span>
                 <span class="chip">{{ r.resistance || "—" }}</span>
                 <span class="dot">•</span>
@@ -1030,7 +922,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
               </div>
             </button>
 
-            <div v-if="isOpen(r)" class="rowBody">
+            <div v-if="isOpenRow(r)" class="rowBody">
               <div class="grid">
                 <div class="box">
                   <div class="boxTitle">Composition (kg/m³)</div>
@@ -1097,9 +989,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                     </div>
                   </div>
 
-                  <div class="muted small" style="margin-top:8px">
-                    Contrôle indicatif (ρ approx).
-                  </div>
+                  <div class="muted small" style="margin-top:8px">Contrôle indicatif (ρ approx).</div>
                 </div>
               </div>
             </div>
@@ -1155,115 +1045,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <!-- ✅ MODAL IMPORT -->
-        <div v-if="importUi.open" class="overlay underDash" @click.self="closeImport()">
-          <div class="modal">
-            <div class="mhead">
-              <div class="mtitle">Importer — Formules</div>
-              <button class="x" @click="closeImport()">×</button>
-            </div>
+        <!-- ✅ NOUVEAU MODAL IMPORT (composant) -->
+        <SectionImportModal
+          v-model="importUi.open"
+          section-label="Formules"
+          section-key="formules"
+          :target-variant-id="String(store.activeVariantId ?? '') || null"
+          :enable-presets="true"
+          @apply="onPickImport"
+        />
 
-            <div class="mbody">
-              <div class="rowBetween">
-                <label class="check">
-                  <input type="checkbox" v-model="importUi.onlyActivePnl" />
-                  <span><b>P&L active uniquement</b></span>
-                </label>
-
-                <div class="btns">
-                  <button class="btn ghost" type="button" @click="openAllImport()">Tout ouvrir</button>
-                  <button class="btn ghost" type="button" @click="closeAllImport()">Tout fermer</button>
-                </div>
-              </div>
-
-              <input
-                v-model="importUi.q"
-                class="in"
-                placeholder="Rechercher… (PNL / contrat / variante / status / id)"
-                style="margin-top:10px"
-              />
-
-              <div class="section">
-                <div class="sectionTitle">Mode d’import</div>
-                <div class="copyGrid">
-                  <label class="radio">
-                    <input type="radio" v-model="importUi.copy" value="QTY_MOMD" />
-                    <span><b>Formules + Quantités + MOMD</b></span>
-                  </label>
-                  <label class="radio">
-                    <input type="radio" v-model="importUi.copy" value="QTY_ONLY" />
-                    <span><b>Formules + Quantités</b> (MOMD=0)</span>
-                  </label>
-                  <label class="radio">
-                    <input type="radio" v-model="importUi.copy" value="MOMD_ONLY" />
-                    <span><b>Formules + MOMD</b> (m³=0)</span>
-                  </label>
-                  <label class="radio">
-                    <input type="radio" v-model="importUi.copy" value="ZERO" />
-                    <span><b>Formules seulement</b> (tout à 0)</span>
-                  </label>
-                </div>
-              </div>
-
-              <div class="muted small" style="margin-top:10px">
-                Import = affiche un <b>preview</b> (non enregistré). Enregistrer est séparé.
-              </div>
-
-              <div v-if="importTree.length === 0" class="alert info" style="margin-top:10px">
-                Aucune variante trouvée (filtre trop strict ?).
-              </div>
-
-              <div v-else class="tree" style="margin-top:10px">
-                <div v-for="p in importTree" :key="p.pnlId" class="block">
-                  <button class="treeRow" type="button" @click="togglePnl(p.pnlId)">
-                    <span class="caret" :class="{ on: openPnl[p.pnlId] }">▾</span>
-                    <span class="tTitle ell">{{ p.pnlTitle }}</span>
-                    <span class="muted small mono">#{{ String(p.pnlId).slice(0, 8) }}</span>
-                  </button>
-
-                  <div v-if="openPnl[p.pnlId]" class="body">
-                    <div v-for="c in p.contracts" :key="c.contractId" class="block">
-                      <button class="treeRow subRow" type="button" @click="toggleContract(p.pnlId, c.contractId)">
-                        <span class="caret" :class="{ on: contractIsOpen(p.pnlId, c.contractId) }">▾</span>
-                        <span class="tTitle ell">{{ c.contractLabel }}</span>
-                        <span class="muted small mono">#{{ String(c.contractId).slice(0, 8) }}</span>
-                      </button>
-
-                      <div v-if="contractIsOpen(p.pnlId, c.contractId)" class="body">
-                        <button
-                          v-for="v in c.variants"
-                          :key="v.variantId"
-                          class="treeRow varRow"
-                          type="button"
-                          :class="{ active: importUi.sourceVariantId === v.variantId }"
-                          @click="importUi.sourceVariantId = v.variantId"
-                        >
-                          <span class="dotVar" :class="{ ok: v.hasFormules }"></span>
-                          <span class="tTitle ell">{{ v.variantTitle }}</span>
-                          <span class="statusPill">{{ v.variantStatus }}</span>
-                          <span class="muted small mono">#{{ String(v.variantId).slice(0, 8) }}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="muted small" style="margin-top:10px">
-                  Indicateur: <span class="dotLeg ok"></span> a des formules • <span class="dotLeg"></span> vide
-                </div>
-              </div>
-            </div>
-
-            <div class="mact">
-              <button class="btn ghost" @click="closeImport()">Annuler</button>
-              <button class="btn primary" :disabled="!importUi.sourceVariantId || !variant || importBusy" @click="openImportConfirm()">
-                Importer (preview)
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- ✅ MODAL CONFIRM IMPORT -->
+        <!-- ✅ MODAL CONFIRM IMPORT (inchangé) -->
         <div v-if="importConfirm.open" class="overlay underDash" @click.self="closeImportConfirm()">
           <div class="modal confirm">
             <div class="mhead">
@@ -1317,20 +1109,72 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
           </div>
         </div>
 
-        <!-- ✅ MODAL GENERALISATION -->
-        <SectionGeneralizeModal
-          v-model="genOpen"
+        <!-- ✅ MODAL GENERALISATION (sélection) : SectionTargetsGeneralizeModal -->
+        <SectionTargetsGeneralizeModal
+          v-model="genPickOpen"
           section-label="Formules"
           :source-variant-id="String(store.activeVariantId ?? '') || null"
-          @apply="onApplyGeneralize"
+          @apply="onPickGeneralizeTargets"
         />
+
+        <!-- ✅ MINI MODAL CONFIRM GENERALISATION (preset + confirm) -->
+        <div v-if="genConfirm.open" class="overlay underDash" @click.self="closeGenConfirm()">
+          <div class="modal confirm">
+            <div class="mhead">
+              <div class="mtitle">Confirmer la généralisation</div>
+              <button class="x" @click="closeGenConfirm()">×</button>
+            </div>
+
+            <div class="mbody">
+              <div class="confirmText" style="white-space:normal">
+                Généraliser <b>Formules</b> vers <b>{{ genConfirm.variantIds.length }}</b> variante(s) ?
+              </div>
+
+              <div class="copyBox" style="margin-top:10px">
+                <div class="copyTitle">Données à copier</div>
+
+                <label class="radio line">
+                  <input type="radio" value="ZERO" v-model="genConfirm.copy" />
+                  <span><b>Section seulement</b> (Qté = 0, MOMD = 0)</span>
+                </label>
+
+                <label class="radio line">
+                  <input type="radio" value="QTY_ONLY" v-model="genConfirm.copy" />
+                  <span><b>Section + Qté</b> (Qté copiée, MOMD = 0)</span>
+                </label>
+
+                <label class="radio line">
+                  <input type="radio" value="MOMD_ONLY" v-model="genConfirm.copy" />
+                  <span><b>Section + MOMD</b> (Qté = 0, MOMD copié)</span>
+                </label>
+
+                <label class="radio line">
+                  <input type="radio" value="QTY_MOMD" v-model="genConfirm.copy" />
+                  <span><b>Section + Qté + MOMD</b> (copie complète)</span>
+                </label>
+              </div>
+
+              <div class="alert info" style="margin-top:10px">
+                ⚠️ Cette action va <b>remplacer</b> la section “Formules” sur les variantes cibles.
+              </div>
+            </div>
+
+            <div class="mact">
+              <button class="btn ghost" :disabled="genBusy" @click="closeGenConfirm()">Annuler</button>
+              <button class="btn primary" :disabled="genBusy || !genConfirm.variantIds.length" @click="confirmGeneralize()">
+                {{ genBusy ? "..." : "Confirmer" }}
+              </button>
+            </div>
+          </div>
+        </div>
+
       </template>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* ✅ Style calqué sur TransportPage (variables + head sticky + boutons) */
+/* ✅ Style calqué sur TransportPage */
 .page{
   --text:#0f172a;
   --muted: rgba(15,23,42,0.62);
@@ -1414,14 +1258,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: var(--muted);
   font-weight: 900;
 }
-.empty{
-  padding: 16px;
-}
-.emptyTitle{
-  font-weight: 950;
-  color: var(--text);
-  margin-bottom: 4px;
-}
+.empty{ padding: 16px; }
+.emptyTitle{ font-weight: 950; color: var(--text); margin-bottom: 4px; }
 .cards{ display:flex; flex-direction:column; gap:8px; }
 
 /* Formule row head */
@@ -1553,7 +1391,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .warnTxt{ color:#92400e; font-weight: 950; }
 .badTxt{ color:#7f1d1d; font-weight: 950; }
 
-/* Overlay & Modal (z-index haut + underDash sous HeaderDashboard) */
+/* Overlay & Modal */
 .overlay{
   position:fixed;
   inset:0;
@@ -1650,77 +1488,33 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-weight: 900;
 }
 
-.rowBetween{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
-.btns{ display:flex; gap:8px; }
-.check{ display:flex; align-items:center; gap:8px; user-select:none; }
-.check input{ width: 16px; height: 16px; }
-
-.section{ margin-top: 12px; }
-.sectionTitle{ font-weight: 950; font-size: 12px; color: var(--text); margin-bottom: 8px; }
-.copyGrid{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
-@media (max-width: 820px){ .copyGrid{ grid-template-columns:1fr; } }
-.radio{
-  display:flex;
-  gap:8px;
-  align-items:flex-start;
-  border:1px solid rgba(226,232,240,0.9);
-  background: rgba(15,23,42,0.02);
-  padding: 8px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 900;
-  color: var(--text);
-}
-.radio input{ margin-top:2px; }
-
-.tree{ border:1px solid rgba(226,232,240,0.9); border-radius: 14px; background: rgba(15,23,42,0.02); padding: 10px; }
-.treeRow{
-  width:100%;
-  text-align:left;
-  border:1px solid rgba(226,232,240,0.9);
-  background:#fff;
-  border-radius: 12px;
-  padding: 9px 10px;
-  display:flex;
-  gap:10px;
-  align-items:center;
-  cursor:pointer;
-}
-.treeRow + .treeRow{ margin-top: 8px; }
-.treeRow:hover{ background: rgba(15,23,42,0.02); }
-.subRow{ opacity:.96; font-size: 11.5px; font-weight: 950; }
-.varRow{ font-size: 11.25px; font-weight: 900; opacity:.98; }
-.varRow.active{ border-color: rgba(15,23,42,.22); box-shadow: 0 0 0 3px rgba(15,23,42,.10); }
-
-.caret{
-  width: 18px;
-  display:inline-flex;
-  justify-content:center;
-  color: var(--muted);
-  transform: rotate(-90deg);
-  transition: transform .12s ease;
-  flex: 0 0 auto;
-}
-.caret.on{ transform: rotate(0deg); }
-
-.tTitle{ flex:1; min-width:0; }
-.dotVar{ width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid rgba(226,232,240,0.9); flex:0 0 auto; }
-.dotVar.ok{ background: #22c55e; border-color: #bbf7d0; }
-.dotLeg{ display:inline-block; width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; border: 1px solid rgba(226,232,240,0.9); transform: translateY(1px); }
-.dotLeg.ok{ background: #22c55e; border-color: #bbf7d0; }
-
-.statusPill{
-  border:1px solid rgba(226,232,240,0.9);
-  background: rgba(15,23,42,0.03);
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 10.5px;
-  font-weight: 900;
-  color: var(--muted);
-  white-space:nowrap;
-  flex:0 0 auto;
-}
-
 .confirmText{ white-space: pre-line; font-size: 12px; font-weight: 950; color: var(--text); line-height: 1.35; }
 .ic{ width: 14px; height: 14px; }
+
+/* reuse copyBox styles from old generalize modal */
+.copyBox{
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.02);
+  border-radius: 14px;
+  padding: 10px;
+}
+.copyTitle{ font-weight: 950; font-size: 12px; margin-bottom: 8px; color: var(--text); }
+.radio{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-weight:950;
+  font-size:12px;
+  color: var(--text);
+  user-select:none;
+}
+.radio input{ width:16px; height:16px; }
+.radio.line{
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border:1px solid rgba(226,232,240,0.9);
+  background: rgba(15,23,42,0.02);
+  margin-top: 8px;
+}
 </style>

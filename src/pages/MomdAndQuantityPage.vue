@@ -1,4 +1,4 @@
-<!-- ✅ src/pages/MomdAndQuantityPage.vue (FICHIER COMPLET / header désign restauré + CA non tronqué + no scroll horizontal + ✅ sans recherche + ✅ désignation un peu plus grande) -->
+<!-- ✅ src/pages/MomdAndQuantityPage.vue (COMPLET / police normale comme FormulesCataloguePage / MOMD+PV max 2 décimales) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -21,18 +21,20 @@ function toNum(v: any): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+function clamp(x: any, min: number, max: number) {
+  const v = toNum(x);
+  return Math.max(min, Math.min(max, v));
+}
+function round2(x: any) {
+  const v = toNum(x);
+  return Math.round(v * 100) / 100;
+}
 function n(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
-function clamp(x: any, min: number, max: number) {
-  const v = toNum(x);
-  return Math.max(min, Math.min(max, v));
-}
-
-/** ✅ CA: séparer nombre & devise (évite MAD tronqué) */
 function moneyNum(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: digits,
@@ -44,11 +46,10 @@ function moneyNum(v: number, digits = 2) {
    ACTIVE
 ========================= */
 const variant = computed<any>(() => (store as any).activeVariant ?? null);
-const contract = computed<any>(() => (store as any).activeContract ?? null);
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
 
 /* =========================
-   DRAFTS
+   DRAFTS (persisted fields)
 ========================= */
 type Draft = { volumeM3: number; momd: number };
 const drafts = reactive<Record<string, Draft>>({});
@@ -63,14 +64,14 @@ function loadDraftsFromVariant() {
   for (const vf of formules.value) {
     const d = getDraft(vf.id);
     d.volumeM3 = clamp(vf?.volumeM3, 0, 1e12);
-    d.momd = clamp(vf?.momd, 0, 1e12);
+    d.momd = round2(clamp(vf?.momd, 0, 1e12));
   }
 }
 
 /* =========================
    TRANSPORT
 ========================= */
-const transportPrixMoyen = computed(() => toNum((variant.value as any)?.transport?.prixMoyen));
+const transportPrixMoyen = computed(() => round2(toNum((variant.value as any)?.transport?.prixMoyen)));
 
 /* =========================
    CMP
@@ -83,9 +84,7 @@ function mpPriceUsed(mpId: string): number {
   if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
   return toNum(vmp?.mp?.prix);
 }
-
 type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
-
 function compositionFor(formule: any): CompRow[] {
   const items = (formule?.items ?? []) as any[];
   return items.map((it: any) => {
@@ -95,13 +94,13 @@ function compositionFor(formule: any): CompRow[] {
     return { mpId, qty, prix, coutParM3: (qty / 1000) * prix };
   });
 }
-
 function cmpParM3For(vf: any): number {
-  return compositionFor(vf?.formule).reduce((s: number, x) => s + toNum(x.coutParM3), 0);
+  const v = compositionFor(vf?.formule).reduce((s: number, x) => s + toNum(x.coutParM3), 0);
+  return round2(v);
 }
 
 /* =========================
-   BASE ROWS
+   ROWS
 ========================= */
 type Row = {
   id: string;
@@ -119,8 +118,8 @@ const baseRows = computed<Row[]>(() => {
     const d = getDraft(vf.id);
     const cmp = cmpParM3For(vf);
     const qte = toNum(d.volumeM3);
-    const momd = toNum(d.momd);
-    const pv = cmp + transportPrixMoyen.value + momd;
+    const momd = round2(toNum(d.momd));
+    const pv = round2(cmp + transportPrixMoyen.value + momd);
     const ca = pv * qte;
 
     return {
@@ -153,7 +152,6 @@ function applySortNow() {
 const rows = computed<Row[]>(() => {
   const map = new Map(baseRows.value.map((r) => [r.id, r]));
   const out: Row[] = [];
-
   for (const id of orderIds.value) {
     const r = map.get(id);
     if (r) out.push(r);
@@ -169,7 +167,6 @@ watch(
   () => {
     loadDraftsFromVariant();
     setInitialOrderFromVariant();
-
     if (!didInitialSort.value) {
       applySortNow();
       didInitialSort.value = true;
@@ -179,7 +176,79 @@ watch(
 );
 
 /* =========================
-   KPIs (4)
+   ✅ PV INPUT -> apply on BLUR
+========================= */
+const pvDrafts = reactive<Record<string, number>>({});
+const pvTouched = reactive<Record<string, boolean>>({});
+const pvErr = reactive<Record<string, boolean>>({});
+
+function computedPvFor(id: string) {
+  const r = rows.value.find((x) => String(x.id) === String(id));
+  return r ? round2(toNum(r.pv)) : 0;
+}
+function cmpFor(id: string) {
+  const r = rows.value.find((x) => String(x.id) === String(id));
+  return r ? round2(toNum(r.cmp)) : 0;
+}
+
+watch(
+  () => rows.value.map((r) => ({ id: r.id, pv: r.pv })),
+  (list) => {
+    for (const x of list) {
+      const id = String(x.id);
+      if (!pvTouched[id]) {
+        pvDrafts[id] = round2(toNum(x.pv));
+        pvErr[id] = false;
+      }
+    }
+  },
+  { immediate: true, deep: true }
+);
+
+function onPvInput(id: string, raw: any) {
+  const v = round2(clamp(raw, 0, 1e12));
+  pvTouched[String(id)] = true;
+  pvDrafts[String(id)] = v;
+  pvErr[String(id)] = false;
+}
+
+function onPvBlur(id: string) {
+  const key = String(id);
+  const pv = round2(clamp(pvDrafts[key], 0, 1e12));
+
+  const cmp = cmpFor(key);
+  const tr = transportPrixMoyen.value;
+
+  const momd = round2(pv - cmp - tr);
+
+  if (momd < 0) {
+    pvErr[key] = true;
+    pvDrafts[key] = computedPvFor(key);
+    pvTouched[key] = false;
+    showToast("PV trop bas : la MOMD ne peut pas être négative.", "err");
+    return;
+  }
+
+  pvErr[key] = false;
+  getDraft(key).momd = round2(clamp(momd, 0, 1e12));
+
+  pvTouched[key] = false;
+  pvDrafts[key] = computedPvFor(key);
+}
+
+/* ✅ MOMD warning threshold */
+const MOMD_WARN = 100;
+function momdIsLowPositive(m: number) {
+  const v = toNum(m);
+  return v > 0 && v < MOMD_WARN;
+}
+function onMomdBlur(id: string) {
+  const d = getDraft(String(id));
+  d.momd = round2(clamp(d.momd, 0, 1e12));
+}
+
+/* =========================
+   KPIs
 ========================= */
 const volumeTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.qte), 0));
 const cmpTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.cmp) * toNum(r.qte), 0));
@@ -189,9 +258,6 @@ const momdMoy = computed(() => (volumeTotal.value > 0 ? momdTotal.value / volume
 const caTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.ca), 0));
 const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
 
-/* =========================
-   UI
-========================= */
 const rowsUi = rows;
 
 /* =========================
@@ -208,7 +274,7 @@ function showToast(msg: string, kind: "ok" | "err" = "ok") {
 }
 
 /* =========================
-   MODAL
+   MODAL confirm/info
 ========================= */
 const modal = reactive({
   open: false,
@@ -244,8 +310,18 @@ function closeModal() {
 const saving = ref(false);
 const err = ref<string | null>(null);
 
+function hasPvErrors() {
+  return Object.values(pvErr).some((x) => !!x);
+}
+
 async function save() {
   if (!variant.value) return;
+
+  if (hasPvErrors()) {
+    showToast("Corrige les PV invalides avant d’enregistrer.", "err");
+    openInfo("Validation", "Impossible d’enregistrer : certains PV sont invalides.");
+    return;
+  }
 
   err.value = null;
   saving.value = true;
@@ -255,14 +331,14 @@ async function save() {
       return {
         id: String(vf.id),
         volumeM3: Number(clamp(d.volumeM3, 0, 1e12)),
-        momd: Number(clamp(d.momd, 0, 1e12)),
+        momd: Number(round2(clamp(d.momd, 0, 1e12))),
       };
     });
 
     await (store as any).updateVariant(variant.value.id, { formules: { items } });
 
     applySortNow();
-    showToast("Quantités & MOMD enregistrées.", "ok");
+    showToast("Quantités, PV & MOMD enregistrés.", "ok");
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
@@ -273,7 +349,7 @@ async function save() {
 }
 
 function askSave() {
-  openConfirm("Enregistrer", "Confirmer l’enregistrement des quantités & MOMD ?", async () => {
+  openConfirm("Enregistrer", "Confirmer l’enregistrement des quantités, PV & MOMD ?", async () => {
     closeModal();
     await save();
   });
@@ -282,23 +358,22 @@ function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
     loadDraftsFromVariant();
+    for (const r of rows.value) {
+      const id = String(r.id);
+      pvTouched[id] = false;
+      pvDrafts[id] = round2(toNum(r.pv));
+      pvErr[id] = false;
+    }
     showToast("Valeurs restaurées.", "ok");
   });
 }
 
 /* =========================
-   ✅ GENERALISER
+   GENERALISER (inchangée)
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
 const genErr = ref<string | null>(null);
-
-function labelForCopy(copy: CopyPreset) {
-  if (copy === "ZERO") return "Formules seulement (Qté=0 / MOMD=0)";
-  if (copy === "QTY_ONLY") return "Formules + Qté (MOMD=0)";
-  if (copy === "MOMD_ONLY") return "Formules + MOMD (Qté=0)";
-  return "Formules + Qté + MOMD";
-}
 
 function patchFromCopy(copy: CopyPreset, src: { volumeM3: number; momd: number }) {
   if (copy === "ZERO") return { volumeM3: 0, momd: 0 };
@@ -397,7 +472,6 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <!-- ✅ Header: titre + actions + KPIs + erreurs (restauré) -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
@@ -425,19 +499,19 @@ onMounted(async () => {
       <div class="kpis" v-if="variant">
         <div class="kpi kpiTint">
           <div class="kLbl">PV moyen</div>
-          <div class="kVal mono">{{ n(pvMoy, 2) }} <span>DH/m³</span></div>
+          <div class="kVal num">{{ n(pvMoy, 2) }} <span>DH/m³</span></div>
         </div>
         <div class="kpi">
           <div class="kLbl">CMP moyen</div>
-          <div class="kVal mono">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div>
+          <div class="kVal num">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div>
         </div>
         <div class="kpi">
           <div class="kLbl">MOMD moyenne</div>
-          <div class="kVal mono">{{ n(momdMoy, 2) }} <span>DH/m³</span></div>
+          <div class="kVal num">{{ n(momdMoy, 2) }} <span>DH/m³</span></div>
         </div>
         <div class="kpi">
           <div class="kLbl">Volume</div>
-          <div class="kVal mono">{{ n(volumeTotal, 2) }} <span>m³</span></div>
+          <div class="kVal num">{{ n(volumeTotal, 2) }} <span>m³</span></div>
         </div>
       </div>
 
@@ -472,7 +546,7 @@ onMounted(async () => {
               <col class="colNum" />
               <col class="colIn" />
               <col class="colIn" />
-              <col class="colNum" />
+              <col class="colInPv" />
               <col class="colNumCa" />
             </colgroup>
 
@@ -482,7 +556,7 @@ onMounted(async () => {
                 <th class="th thC">CMP</th>
                 <th class="th thC thEdit">Qté</th>
                 <th class="th thC thEdit">MOMD</th>
-                <th class="th thC">PV</th>
+                <th class="th thC thEdit">PV</th>
                 <th class="th thC">CA</th>
               </tr>
             </thead>
@@ -490,15 +564,15 @@ onMounted(async () => {
             <tbody>
               <tr v-for="r in rowsUi" :key="r.id" class="tr">
                 <td class="designation" :data-label="'Désignation'">
-                  <b class="designationText">{{ r.designation }}</b>
+                  <b class="designationText" :title="r.designation">{{ r.designation }}</b>
                 </td>
 
-                <td class="mono r val" :data-label="'CMP'">{{ n(r.cmp, 2) }}</td>
+                <td class="r val num" :data-label="'CMP'">{{ n(r.cmp, 2) }}</td>
 
                 <td class="cellInput" :data-label="'Qté'">
                   <div class="inCell">
                     <input
-                      class="inputLg mono r val inputEdit"
+                      class="inputLg r val num inputEdit"
                       type="number"
                       step="1"
                       min="0"
@@ -512,23 +586,40 @@ onMounted(async () => {
                 <td class="cellInput" :data-label="'MOMD'">
                   <div class="inCell">
                     <input
-                      class="inputLg mono r val inputEdit"
+                      class="inputLg r val num inputEdit"
+                      :class="{ warn: momdIsLowPositive(getDraft(r.id).momd) }"
+                      :title="momdIsLowPositive(getDraft(r.id).momd) ? `MOMD < ${MOMD_WARN} DH` : ''"
                       type="number"
                       step="0.01"
                       min="0"
                       :value="getDraft(r.id).momd"
                       @input="getDraft(r.id).momd = toNum(($event.target as HTMLInputElement).value)"
+                      @blur="onMomdBlur(r.id)"
                     />
                     <span class="unit unitEdit">DH</span>
                   </div>
                 </td>
 
-                <td class="r cellPv" :data-label="'PV'">
-                  <span class="pvPill mono val">{{ n(r.pv, 2) }}</span>
+                <td class="cellInput" :data-label="'PV'">
+                  <div class="inCell pvCell">
+                    <input
+                      class="inputLg r val num inputEdit"
+                      :class="{ bad: !!pvErr[r.id] }"
+                      :title="pvErr[r.id] ? 'PV trop bas : MOMD négative interdite' : ''"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :value="pvTouched[r.id] ? pvDrafts[r.id] : computedPvFor(r.id)"
+                      @input="onPvInput(r.id, ($event.target as HTMLInputElement).value)"
+                      @blur="onPvBlur(r.id)"
+                    />
+                    <span class="unit unitEdit">DH</span>
+                    <span v-if="pvErr[r.id]" class="dotErr" aria-hidden="true"></span>
+                  </div>
                 </td>
 
                 <td class="tdCa" :data-label="'CA'">
-                  <b class="mono val caWrap">
+                  <b class="val num caWrap">
                     <span class="caNum">{{ moneyNum(r.ca, 2) }}</span>
                     <span class="caCur">MAD</span>
                   </b>
@@ -596,20 +687,24 @@ onMounted(async () => {
 
 <style scoped>
 .page {
-  padding: 10px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .muted {
   color: rgba(15, 23, 42, 0.55);
 }
 .tiny {
   font-size: 10.5px;
+}
+* {
+  box-sizing: border-box;
+}
+
+/* ✅ chiffres en police NORMALE (pas monospace), mais tabulaires comme FormulesCataloguePage */
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 /* sticky subheader */
@@ -620,24 +715,23 @@ onMounted(async () => {
   background: rgba(248, 250, 252, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 16px;
-  padding: 10px;
+  border-radius: 14px;
+  padding: 8px 10px;
 }
-
 .row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
   align-items: center;
-  min-width: 180px;
+  min-width: 220px;
 }
 .ttl {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 950;
   color: #0f172a;
 }
@@ -646,17 +740,18 @@ onMounted(async () => {
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .btn {
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
   padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a;
   font-weight: 950;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -678,13 +773,13 @@ onMounted(async () => {
   background: rgba(2, 132, 199, 0.18);
 }
 .ic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
-/* KPIs (4) */
+/* KPIs */
 .kpis {
-  margin-top: 10px;
+  margin-top: 8px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
@@ -697,11 +792,11 @@ onMounted(async () => {
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 14px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 .kpiTint {
@@ -709,14 +804,14 @@ onMounted(async () => {
   background: rgba(2, 132, 199, 0.06);
 }
 .kLbl {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .kVal {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
@@ -727,34 +822,36 @@ onMounted(async () => {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
   margin-left: 6px;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 /* alerts */
 .alert {
   margin-top: 8px;
-  border-radius: 14px;
-  padding: 9px 10px;
+  border-radius: 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  font-size: 12px;
+  font-weight: 800;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.22);
 }
 .aic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   margin-top: 1px;
 }
 
 /* card */
 .card {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   overflow: hidden;
@@ -768,28 +865,27 @@ onMounted(async () => {
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* ✅ no horizontal scroll */
+/* table */
 .tableWrap {
   overflow: hidden;
 }
-
-/* table desktop */
 .table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
   table-layout: fixed;
 }
-
-/* ✅ Largeurs: designation ↓, CA ↑ (évite troncature) */
 .colDesignation {
-  width: 28%;
+  width: 24%;
 }
 .colNum {
-  width: 11%;
+  width: 10%;
 }
 .colIn {
-  width: 16%;
+  width: 15%;
+}
+.colInPv {
+  width: 18%;
 }
 .colNumCa {
   width: 18%;
@@ -797,7 +893,6 @@ onMounted(async () => {
 
 .th,
 .table td {
-  box-sizing: border-box;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
   padding: 10px 10px;
   vertical-align: middle;
@@ -824,20 +919,17 @@ onMounted(async () => {
   text-align: right;
 }
 
-.designation {
-  overflow: hidden;
+.val {
+  font-size: 12px;
+  font-weight: 950;
 }
+
 .designationText {
   display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: #0f172a;
-  font-size: 13.5px; /* ✅ un peu plus grand */
-  font-weight: 950;
-}
-
-.val {
   font-size: 12.5px;
   font-weight: 950;
 }
@@ -857,10 +949,10 @@ onMounted(async () => {
 .inputLg {
   border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 12px;
-  font-size: 13.5px;
+  font-size: 12.5px;
   padding: 8px 10px;
   width: 100%;
-  max-width: 140px;
+  max-width: 150px;
   background: rgba(2, 132, 199, 0.08);
   font-weight: 950;
   outline: none;
@@ -882,22 +974,42 @@ onMounted(async () => {
   color: rgba(2, 132, 199, 0.95);
 }
 
-/* PV */
-.cellPv {
-  background: transparent !important;
+/* MOMD low */
+.inputLg.warn {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.07);
 }
-.pvPill {
-  display: inline-block;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.16);
-  background: rgba(15, 23, 42, 0.03);
-  color: #0f172a !important;
-  font-weight: 950;
-  white-space: nowrap;
+.inputLg.warn:focus {
+  border-color: rgba(239, 68, 68, 0.55);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.11);
 }
 
-/* ✅ CA: jamais tronqué */
+/* PV invalid */
+.inputLg.bad {
+  border-color: rgba(239, 68, 68, 0.42);
+  background: rgba(239, 68, 68, 0.08);
+}
+.inputLg.bad:focus {
+  border-color: rgba(239, 68, 68, 0.65);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+.pvCell {
+  position: relative;
+}
+.dotErr {
+  position: absolute;
+  right: 38px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.9);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+  pointer-events: none;
+}
+
+/* CA */
 .tdCa {
   text-align: right;
   padding-right: 14px;
@@ -929,13 +1041,12 @@ onMounted(async () => {
   font-weight: 900;
   text-align: center;
 }
-
 .foot {
   padding: 8px 10px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
-/* Mobile: cards */
+/* Mobile */
 @media (max-width: 920px) {
   .table {
     table-layout: auto;
@@ -977,6 +1088,9 @@ onMounted(async () => {
   }
   .inputLg {
     max-width: 100%;
+  }
+  .dotErr {
+    right: 44px;
   }
   .tdCa {
     text-align: left;
