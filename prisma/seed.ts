@@ -65,7 +65,7 @@ type VariantConfig = {
     taxeProfessionnelle: number;
     securite: number;
     locationVehicule: number;
-    locationAmbulance: number;
+    locationChargeur: number;
     locationBungalows: number;
     epi: number;
   };
@@ -459,7 +459,7 @@ function z0() {
       taxeProfessionnelle: 0,
       securite: 0,
       locationVehicule: 0,
-      locationAmbulance: 0,
+      locationChargeur: 0,
       locationBungalows: 0,
       epi: 0,
     },
@@ -827,7 +827,7 @@ async function seed() {
       troisG: 400,
       taxeProfessionnelle: 1500,
       locationVehicule: 8000,
-      locationAmbulance: 6500,
+      locationChargeur: 6500,
       locationBungalows: 4500,
       epi: 1200,
     },

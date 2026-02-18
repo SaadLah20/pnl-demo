@@ -1,4 +1,8 @@
-<!-- src/components/SectionTargetsGeneralizeModal.vue (FICHIER COMPLET / UI+UX aligné ImportModal + filtres ALL_PNLS) -->
+<!-- src/components/SectionTargetsGeneralizeModal.vue
+     (FICHIER COMPLET)
+     ✅ UI+UX aligné ImportModal (topbar compacte, list scroll, header sticky)
+     ✅ ✅ LOGIQUE CORRIGÉE: généralisation UNIQUEMENT sur les variantes du MÊME P&L (store.activePnl)
+-->
 <script setup lang="ts">
 import { computed, reactive, ref, watch, onBeforeUnmount } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -23,14 +27,9 @@ const isOpen = computed(() => !!props.modelValue);
 /* =========================
    State
 ========================= */
-type Scope = "SAME_PNL" | "ALL_PNLS";
-const scope = ref<Scope>("SAME_PNL");
-
 const mode = ref<"ALL" | "SELECT">("ALL");
 const picked = reactive<Record<string, boolean>>({});
 const q = ref("");
-
-const pnlFilter = ref<string>("ALL");
 const contractFilter = ref<string>("ALL");
 
 /* =========================
@@ -82,15 +81,12 @@ function fmt0(x: number) {
 }
 
 /* =========================
-   Rows
+   Rows (✅ same P&L only)
 ========================= */
 type VariantRow = {
   id: string;
   title: string;
   status: string;
-
-  pnlId: string;
-  pnlLabel: string;
 
   contractId: string;
   contractLabel: string;
@@ -98,112 +94,78 @@ type VariantRow = {
   ebit: number;
 };
 
-function pnlLabelOf(p: any) {
-  return String(p?.title ?? p?.label ?? p?.name ?? `P&L ${String(p?.id ?? "").slice(0, 6)}`);
-}
+const activePnl = computed<any | null>(() => (store as any)?.activePnl ?? null);
+const activePnlId = computed(() => String((activePnl.value as any)?.id ?? "").trim() || null);
 
+/** Contrats du P&L actif (pour filtre contrat) */
+const contractOptions = computed(() => {
+  const p = activePnl.value;
+  const out: Array<{ id: string; label: string }> = [];
+  if (!p) return out;
+
+  for (const c of p?.contracts ?? []) {
+    const cid = String(c?.id ?? "").trim();
+    if (!cid) continue;
+    out.push({ id: cid, label: contractUiTitle(c) });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label, "fr"));
+});
+
+/** Toutes les variantes du P&L actif */
 const allRows = computed<VariantRow[]>(() => {
   const out: VariantRow[] = [];
-  const pnls = (store as any).pnls ?? [];
-  if (!Array.isArray(pnls)) return out;
+  const p = activePnl.value;
+  if (!p) return out;
 
-  for (const p of pnls) {
-    const pnlId = String(p?.id ?? "");
-    if (!pnlId) continue;
+  for (const c of p?.contracts ?? []) {
+    const contractId = String(c?.id ?? "").trim();
+    if (!contractId) continue;
 
-    const pnlLabel = pnlLabelOf(p);
+    const contractLabel = contractUiTitle(c);
+    const d = (c as any)?.dureeMois ?? 0;
 
-    for (const c of p?.contracts ?? []) {
-      const contractId = String(c?.id ?? "");
-      if (!contractId) continue;
+    for (const v of c?.variants ?? []) {
+      const vid = String(v?.id ?? "").trim();
+      if (!vid) continue;
 
-      const contractLabel = contractUiTitle(c); // ✅ sans durée / titre depuis contractTitle.ts
-      const d = (c as any)?.dureeMois ?? 0;
+      // exclude source
+      if (props.sourceVariantId && vid === String(props.sourceVariantId)) continue;
 
-      for (const v of c?.variants ?? []) {
-        const vid = String(v?.id ?? "");
-        if (!vid) continue;
+      const k = computeKpisFor(v, Number(d ?? 0));
+      const ebit = toNum((k as any)?.ebit?.total ?? (k as any)?.ebitTotal ?? (k as any)?.ebit ?? 0);
 
-        // exclude source
-        if (props.sourceVariantId && vid === String(props.sourceVariantId)) continue;
-
-        const k = computeKpisFor(v, Number(d ?? 0));
-        const ebit = toNum((k as any)?.ebit?.total ?? (k as any)?.ebitTotal ?? (k as any)?.ebit ?? 0);
-
-        out.push({
-          id: vid,
-          title: String(v?.title ?? "—"),
-          status: String(v?.status ?? "—"),
-          pnlId,
-          pnlLabel,
-          contractId,
-          contractLabel,
-          ebit,
-        });
-      }
+      out.push({
+        id: vid,
+        title: String(v?.title ?? "—"),
+        status: String(v?.status ?? "—"),
+        contractId,
+        contractLabel,
+        ebit,
+      });
     }
   }
 
   return out;
 });
 
-const activePnlId = computed(() => String((store as any)?.activePnl?.id ?? "").trim() || null);
-
-const pnlOptions = computed(() => {
-  const pnls = (store as any).pnls ?? [];
-  if (!Array.isArray(pnls)) return [];
-  return pnls.map((p: any) => ({
-    id: String(p?.id ?? ""),
-    label: pnlLabelOf(p),
-  }));
-});
-
-const contractOptions = computed(() => {
-  const list: Array<{ id: string; label: string; pnlId: string }> = [];
-  const pnls = (store as any).pnls ?? [];
-  if (!Array.isArray(pnls)) return [];
-
-  for (const p of pnls) {
-    const pid = String(p?.id ?? "");
-    if (!pid) continue;
-
-    if (scope.value === "ALL_PNLS" && pnlFilter.value !== "ALL" && pid !== pnlFilter.value) continue;
-
-    for (const c of p?.contracts ?? []) {
-      const cid = String(c?.id ?? "");
-      if (!cid) continue;
-      list.push({ id: cid, label: contractUiTitle(c), pnlId: pid });
-    }
-  }
-
-  const map = new Map<string, { id: string; label: string; pnlId: string }>();
-  for (const x of list) if (!map.has(x.id)) map.set(x.id, x);
-
-  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "fr"));
-});
-
+/** Rows filtrées (contrat + search) */
 const rows = computed<VariantRow[]>(() => {
   let out = allRows.value;
 
-  // SAME_PNL: limité au P&L actif
-  if (scope.value === "SAME_PNL" && activePnlId.value) {
-    out = out.filter((r) => r.pnlId === activePnlId.value);
-  }
-
-  // ALL_PNLS + filtres
-  if (scope.value === "ALL_PNLS") {
-    if (pnlFilter.value !== "ALL") out = out.filter((r) => r.pnlId === pnlFilter.value);
-    if (contractFilter.value !== "ALL") out = out.filter((r) => r.contractId === contractFilter.value);
+  // filtre contrat (toujours dans même P&L)
+  if (contractFilter.value !== "ALL") {
+    out = out.filter((r) => r.contractId === contractFilter.value);
   }
 
   const needle = q.value.trim().toLowerCase();
   if (needle) {
     out = out.filter((r) => {
-      const blob = `${r.title} ${r.status} ${r.pnlLabel} ${r.contractLabel}`.toLowerCase();
+      const blob = `${r.title} ${r.status} ${r.contractLabel}`.toLowerCase();
       return blob.includes(needle);
     });
   }
 
+  // tri: EBIT desc (comme avant)
   return out.slice().sort((a, b) => b.ebit - a.ebit);
 });
 
@@ -216,37 +178,19 @@ watch(
   (open) => {
     if (!open) return;
 
-    scope.value = "SAME_PNL";
     mode.value = "ALL";
     q.value = "";
-
-    pnlFilter.value = "ALL";
     contractFilter.value = "ALL";
-
     for (const k of Object.keys(picked)) delete picked[k];
   }
 );
 
 watch(
-  () => scope.value,
+  () => contractFilter.value,
   () => {
-    // reset filtres quand on quitte ALL_PNLS
-    if (scope.value !== "ALL_PNLS") {
-      pnlFilter.value = "ALL";
-      contractFilter.value = "ALL";
-    }
     // purge sélection si éléments sortent du filtre
     const keep = new Set(allIds.value);
     for (const k of Object.keys(picked)) if (!keep.has(k)) delete picked[k];
-  }
-);
-
-watch(
-  () => pnlFilter.value,
-  () => {
-    if (contractFilter.value === "ALL") return;
-    const ok = rows.value.some((r) => r.contractId === contractFilter.value);
-    if (!ok) contractFilter.value = "ALL";
   }
 );
 
@@ -268,7 +212,10 @@ function submit() {
         <div class="head">
           <div class="headLeft">
             <div class="title">Généraliser — {{ sectionLabel }}</div>
-            <div class="subtitle">Copier la section active vers d'autres variantes.</div>
+            <div class="subtitle">
+              Cibles: variantes du <b>même P&amp;L</b>
+              <span v-if="activePnlId" class="mono muted">#{{ String(activePnlId).slice(0, 8) }}</span>
+            </div>
           </div>
           <button class="iconBtn" type="button" @click="close" aria-label="Fermer">✕</button>
         </div>
@@ -276,35 +223,15 @@ function submit() {
         <!-- Body -->
         <div class="body">
           <div class="callout">
-            <div class="calloutTitle">Portée</div>
+            <div class="calloutTitle">Règle</div>
             <div class="calloutText">
-              La section <b>{{ sectionLabel }}</b> de la variante active sera copiée vers les variantes sélectionnées.
+              La section <b>{{ sectionLabel }}</b> de la variante active sera copiée vers les variantes sélectionnées
+              <b>dans le P&amp;L actif uniquement</b>.
             </div>
           </div>
 
-          <!-- ✅ Topbar compact (no wrap) -->
+          <!-- ✅ Topbar compacte -->
           <div class="topbar">
-            <div class="seg" role="tablist" aria-label="Périmètre">
-              <button
-                type="button"
-                class="segBtn"
-                :class="{ on: scope === 'SAME_PNL' }"
-                @click="scope = 'SAME_PNL'"
-                title="Limiter au P&L actif"
-              >
-                Même P&L
-              </button>
-              <button
-                type="button"
-                class="segBtn"
-                :class="{ on: scope === 'ALL_PNLS' }"
-                @click="scope = 'ALL_PNLS'"
-                title="Parcourir tous les P&L"
-              >
-                Tous les P&L
-              </button>
-            </div>
-
             <div class="seg" role="tablist" aria-label="Mode de sélection">
               <button type="button" class="segBtn" :class="{ on: mode === 'ALL' }" @click="mode = 'ALL'">Toutes</button>
               <button type="button" class="segBtn" :class="{ on: mode === 'SELECT' }" @click="mode = 'SELECT'">
@@ -312,19 +239,12 @@ function submit() {
               </button>
             </div>
 
-            <div v-if="scope === 'ALL_PNLS'" class="filtersRow">
-              <select class="select sm" v-model="pnlFilter" title="Filtrer par P&L">
-                <option value="ALL">P&L : Tous</option>
-                <option v-for="p in pnlOptions" :key="p.id" :value="p.id">{{ p.label }}</option>
-              </select>
+            <select class="select sm" v-model="contractFilter" title="Filtrer par contrat">
+              <option value="ALL">Contrat : Tous</option>
+              <option v-for="c in contractOptions" :key="c.id" :value="c.id">{{ c.label }}</option>
+            </select>
 
-              <select class="select sm" v-model="contractFilter" title="Filtrer par contrat">
-                <option value="ALL">Contrat : Tous</option>
-                <option v-for="c in contractOptions" :key="c.id" :value="c.id">{{ c.label }}</option>
-              </select>
-            </div>
-
-            <input class="search smGrow" v-model="q" placeholder="Filtrer (titre, statut, P&L, contrat)…" />
+            <input class="search smGrow" v-model="q" placeholder="Filtrer (titre, statut, contrat)…" />
 
             <div class="topbarRight">
               <span class="pillNoWrap" :title="`${rows.length} variantes`">
@@ -333,14 +253,17 @@ function submit() {
             </div>
           </div>
 
-          <div v-if="rows.length === 0" class="empty">Aucune variante trouvée pour ce périmètre.</div>
+          <div v-if="!activePnl" class="empty">
+            Aucun P&amp;L actif détecté. Reviens à <b>Mes P&amp;L</b>, sélectionne un P&amp;L puis réessaie.
+          </div>
+
+          <div v-else-if="rows.length === 0" class="empty">Aucune variante trouvée dans ce P&amp;L pour ce filtre.</div>
 
           <!-- ✅ Liste scroll interne + header sticky -->
           <div v-else class="listWrap" role="listbox" aria-label="Variantes cibles">
             <div class="listHead">
               <div class="c1"></div>
               <div class="c2">Variante</div>
-              <div class="c3">P&L</div>
               <div class="c4">Contrat</div>
               <div class="c5 right">EBIT</div>
               <div class="c6">Statut</div>
@@ -358,9 +281,9 @@ function submit() {
 
               <div class="c2">
                 <div class="nm" :title="r.title">{{ r.title }}</div>
+                <div class="id muted mono">#{{ r.id.slice(0, 8) }}</div>
               </div>
 
-              <div class="c3 muted" :title="r.pnlLabel">{{ r.pnlLabel }}</div>
               <div class="c4 muted" :title="r.contractLabel">{{ r.contractLabel }}</div>
 
               <div class="c5 right mono strong" :title="fmt0(r.ebit)">{{ fmt0(r.ebit) }}</div>
@@ -384,7 +307,7 @@ function submit() {
             class="btn primary"
             type="button"
             @click="submit"
-            :disabled="!allIds.length || (mode === 'SELECT' && !selectedIds.length)"
+            :disabled="!allIds.length || (mode === 'SELECT' && !selectedIds.length) || !activePnl"
             :title="mode === 'SELECT' && !selectedIds.length ? 'Sélectionne au moins une variante' : ''"
           >
             Généraliser
@@ -446,6 +369,10 @@ function submit() {
   font-size: 12px;
   color: #64748b;
   line-height: 1.25;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
 }
 .iconBtn {
   width: 36px;
@@ -503,12 +430,6 @@ function submit() {
   border-radius: 12px;
   overflow: hidden;
 }
-.filtersRow {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: nowrap;
-}
 .topbarRight {
   margin-left: auto;
   display: inline-flex;
@@ -551,7 +472,7 @@ function submit() {
   font-size: 12px;
   outline: none;
   background: #fff;
-  max-width: 220px;
+  max-width: 260px;
 }
 .select.sm {
   padding: 7px 10px;
@@ -611,7 +532,7 @@ function submit() {
 .listHead,
 .row {
   display: grid;
-  grid-template-columns: 40px 1.25fr 1fr 1fr 0.65fr 0.55fr;
+  grid-template-columns: 40px 1.35fr 1.15fr 0.65fr 0.55fr;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -653,6 +574,10 @@ function submit() {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+.id{
+  font-size: 11px;
+  margin-top: 2px;
 }
 .right {
   text-align: right;

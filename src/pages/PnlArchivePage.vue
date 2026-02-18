@@ -255,7 +255,7 @@ const costEdit = reactive({
     taxeProfessionnelle: 0,
     securite: 0,
     locationVehicule: 0,
-    locationAmbulance: 0,
+    locationChargeur: 0,
     locationBungalows: 0,
     epi: 0,
     location: 0, // compat DB
@@ -324,7 +324,7 @@ watch(
       troisG: toNum(vv?.coutMensuel?.troisG),
       taxeProfessionnelle: toNum(vv?.coutMensuel?.taxeProfessionnelle),
       locationVehicule: toNum(vv?.coutMensuel?.locationVehicule),
-      locationAmbulance: toNum(vv?.coutMensuel?.locationAmbulance),
+      locationChargeur: toNum(vv?.coutMensuel?.locationChargeur),
       locationBungalows: toNum(vv?.coutMensuel?.locationBungalows),
       epi: toNum(vv?.coutMensuel?.epi),
     };
@@ -947,7 +947,7 @@ async function deleteFormuleFromVariant(variantFormuleId: string) {
 
           <div class="field"><div class="label">Sécurité</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.coutMensuel.securite" /></div>
           <div class="field"><div class="label">Loc. véhicule</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationVehicule" /></div>
-          <div class="field"><div class="label">Loc. ambulance</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationAmbulance" /></div>
+          <div class="field"><div class="label">Loc. chargeur</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationChargeur" /></div>
           <div class="field"><div class="label">Loc. bungalows</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.coutMensuel.locationBungalows" /></div>
 
           <div class="field"><div class="label">EPI</div><input class="input r" type="number" step="0.01" v-model.number="costEdit.coutMensuel.epi" /></div>

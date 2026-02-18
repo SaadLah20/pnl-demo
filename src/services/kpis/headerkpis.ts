@@ -314,9 +314,9 @@ export function computeHeaderKpis(
     n(coutMensuel?.locationVehicule),
     getMajorationPct("coutMensuel.locationVehicule", persistedMajorations, previewMajorations)
   );
-  const cmLocAmbulance = applyMajoration(
-    n(coutMensuel?.locationAmbulance),
-    getMajorationPct("coutMensuel.locationAmbulance", persistedMajorations, previewMajorations)
+  const cmLocChargeur = applyMajoration(
+    n(coutMensuel?.locationChargeur),
+    getMajorationPct("coutMensuel.locationChargeur", persistedMajorations, previewMajorations)
   );
   const cmLocBungalows = applyMajoration(
     n(coutMensuel?.locationBungalows),
@@ -338,7 +338,7 @@ export function computeHeaderKpis(
     cmTroisG +
     cmTaxePro +
     cmLocVehicule +
-    cmLocAmbulance +
+    cmLocChargeur +
     cmLocBungalows +
     cmEpi;
 

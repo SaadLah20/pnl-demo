@@ -1,10 +1,9 @@
-<!-- ✅ HeaderDashboard.vue (FICHIER COMPLET / ✅ EBIT hero vraiment “spécial” sans agrandir le bloc + ✅ % EBIT plus visible + ✅ bucket colors OK + ✅ KPIs plus bas + ✅ BG pas blanc pur) -->
+<!-- ✅ HeaderDashboard.vue (FICHIER COMPLET / ✅ Résumé split en 2 blocs (sans titre) + ✅ même taille que KPI + ✅ jamais plus haut que KPI) -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import HeaderActionsModals from "@/components/HeaderActionsModals.vue";
 import { contractUiTitle } from "@/services/contractTitle";
-import { useRoute, useRouter } from "vue-router";
 
 const actionsRef = ref<InstanceType<typeof HeaderActionsModals> | null>(null);
 
@@ -37,8 +36,6 @@ type KpiValues = { total: number; m3: number; month: number; percent: number };
 type Metrics = Record<KpiName, KpiValues>;
 
 const store = usePnlStore();
-const router = useRouter();
-const route = useRoute();
 
 function norm(s: any) {
   return String(s ?? "").trim().toLowerCase();
@@ -55,11 +52,8 @@ let toastTimer: any = null;
 
 function showToast(msg: string) {
   toastMsg.value = msg;
-
   if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toastMsg.value = null;
-  }, 2600);
+  toastTimer = setTimeout(() => (toastMsg.value = null), 2600);
 }
 
 // =========================
@@ -82,7 +76,46 @@ const editContractTooltip = computed(() =>
   canEditContract.value ? "Éditer" : "Contrat verrouillé pour les P&L CAB FIXE."
 );
 
-const hasActiveVariant = computed(() => !!String((store as any)?.activeVariantId ?? "").trim());
+/* =========================
+   ✅ THEME (clair / sombre)
+========================= */
+type HdTheme = "light" | "dark";
+const theme = ref<HdTheme>("light");
+
+function restoreThemePref() {
+  const v = localStorage.getItem("hd_theme");
+  theme.value = v === "dark" ? "dark" : "light";
+}
+watch(theme, (v) => localStorage.setItem("hd_theme", v), { deep: true });
+
+function toggleTheme() {
+  theme.value = theme.value === "dark" ? "light" : "dark";
+}
+
+/* =========================
+   ✅ KPI FOLD (2 étapes)
+   0 = cockpit caché
+   1 = ligne 1 visible (DEFAULT)
+   2 = lignes 1 + 2 visibles
+========================= */
+const foldLevel = ref<0 | 1 | 2>(1);
+
+function restoreFoldPref() {
+  const raw = Number(localStorage.getItem("hd_fold") ?? "1");
+  foldLevel.value = raw === 0 || raw === 2 ? (raw as any) : 1;
+}
+watch(foldLevel, (v) => {
+  localStorage.setItem("hd_fold", String(v));
+  if (v === 0) pnlOpen.value = false;
+});
+
+const showRow1 = computed(() => foldLevel.value >= 1);
+const showRow2 = computed(() => foldLevel.value >= 2);
+const showCockpit = computed(() => foldLevel.value >= 1);
+
+function cycleFold() {
+  foldLevel.value = foldLevel.value === 2 ? 1 : foldLevel.value === 1 ? 0 : 2;
+}
 
 /* =========================
    ✅ TOGGLES
@@ -105,22 +138,9 @@ const withDevisSurcharge = computed<boolean>({
   },
 });
 
-/* =========================
-   HEADER COLLAPSE
-========================= */
-const collapsed = ref(false);
-
-function restoreCollapsedPref() {
-  collapsed.value = localStorage.getItem("hd_collapsed") === "1";
-}
-
-watch(collapsed, (v) => {
-  localStorage.setItem("hd_collapsed", v ? "1" : "0");
-  if (v) pnlOpen.value = false;
-});
-
 onMounted(() => {
-  restoreCollapsedPref();
+  restoreThemePref();
+  restoreFoldPref();
   if (store.pnls.length === 0) store.loadPnls();
 });
 
@@ -222,7 +242,6 @@ const durationMonths = computed(() => activeContract.value?.dureeMois ?? 0);
 const status = computed(() => activeVariant.value?.status ?? "—");
 const volumeTotal = computed(() => headerKpis.value?.volumeTotalM3 ?? 0);
 const client = computed(() => activePnl.value?.client ?? "—");
-
 const contractName = computed(() => contractUiTitle(activeContract.value));
 
 /* =========================
@@ -262,8 +281,9 @@ const metrics = computed<Metrics>(() => {
   };
 });
 
-const kpiLeftRow1: KpiName[] = ["ASP", "CMP", "Transport", "MOMD"];
-const kpiLeftRow2: KpiName[] = ["Production", "EBITDA", "Amortissement", "EBIT"];
+/* ✅ Ordres demandés */
+const kpiRow1: KpiName[] = ["EBIT", "ASP", "CMP", "MOMD"];
+const kpiRow2: KpiName[] = ["EBITDA", "Amortissement", "Production", "Transport"];
 
 /* =========================
    Buttons
@@ -329,7 +349,7 @@ function kpiClass(key: KpiName) {
 }
 
 /* =========================
-   PNL Dropdown Teleport positioning
+   PNL Dropdown positioning
 ========================= */
 function calcDropdownPosition() {
   const btn = pnlBtnRef.value;
@@ -352,7 +372,7 @@ function calcDropdownPosition() {
 }
 
 function openPnlDropdown() {
-  if (collapsed.value) collapsed.value = false;
+  if (foldLevel.value === 0) foldLevel.value = 1;
   pnlOpen.value = !pnlOpen.value;
 }
 function closePnlDropdown() {
@@ -398,8 +418,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <header class="hd" :class="{ collapsed }">
+  <header class="hd" :class="[theme, `fold-${foldLevel}`]">
     <div class="bar">
+      <!-- P&L selector -->
       <div class="pill pnl control">
         <button ref="pnlBtnRef" type="button" class="pill__head" @click="openPnlDropdown">
           <span class="pill__label">P&L</span>
@@ -414,6 +435,18 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <!-- Theme switch -->
+      <button
+        class="themeBtn"
+        type="button"
+        :title="theme === 'dark' ? 'Passer en thème clair' : 'Passer en thème sombre'"
+        @click="toggleTheme"
+      >
+        <span class="themeBtn__dot" :class="{ on: theme === 'dark' }"></span>
+        <span class="themeBtn__txt">{{ theme === "dark" ? "Sombre" : "Clair" }}</span>
+      </button>
+
+      <!-- Toggles -->
       <div class="hdToggles" aria-label="Options header">
         <label class="toggSm">
           <input class="toggSm__cb" type="checkbox" v-model="withMajorations" />
@@ -426,6 +459,7 @@ onBeforeUnmount(() => {
         </label>
       </div>
 
+      <!-- Contrat selector -->
       <div class="pill contract control">
         <div class="pill__head contractHead">
           <span class="pill__label">Contrat</span>
@@ -456,6 +490,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <!-- Variante selector -->
       <div class="pill variant control">
         <div class="pill__head contractHead">
           <Squares2X2Icon class="pill__miniic" />
@@ -488,119 +523,110 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <button class="foldBtn" type="button" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
-        <ChevronDownIcon class="foldIc" :class="{ up: collapsed }" />
+      <!-- Fold button (2-step) -->
+      <button class="foldBtn" type="button" @click="cycleFold" title="Pliage: 0/1/2 lignes">
+        <span class="foldPips">
+          <span class="pip" :class="{ on: foldLevel >= 1 }"></span>
+          <span class="pip" :class="{ on: foldLevel >= 2 }"></span>
+        </span>
+        <ChevronDownIcon class="foldIc" :class="{ up: foldLevel === 0 }" />
       </button>
     </div>
 
+    <!-- KPI + Résumé (2 blocs) -->
     <transition name="hdFold">
-      <div v-show="!collapsed" class="cockpit">
+      <div v-show="showCockpit" class="cockpit">
+        <!-- LEFT: KPI rows -->
         <div class="kpis-left">
-          <div class="kpi-row">
-            <div
-              v-for="key in kpiLeftRow1"
-              :key="key"
-              class="kpi"
-              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '', key === 'EBIT' ? 'hero' : '']"
-            >
-              <div class="kpi__top">
-                <span class="kpi__name">{{ key }}</span>
-                <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">{{ fmtPct(metrics[key].percent) }}%</span>
-              </div>
+          <transition name="rowFold">
+            <div v-show="showRow1" class="kpi-row">
+              <div
+                v-for="key in kpiRow1"
+                :key="key"
+                class="kpi"
+                :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '', key === 'EBIT' ? 'hero' : '']"
+              >
+                <div class="kpi__top">
+                  <span class="kpi__name">{{ key }}</span>
+                  <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">{{ fmtPct(metrics[key].percent) }}%</span>
+                </div>
 
-              <div class="kpi__valRow">
-                <span class="kpi__num" :class="{ big: key === 'EBIT' }">{{ fmtMoney(metrics[key].total, 0) }}</span>
-                <span class="kpi__unit">DH</span>
-              </div>
+                <div class="kpi__valRow">
+                  <span class="kpi__num">{{ fmtMoney(metrics[key].total, 0) }}</span>
+                  <span class="kpi__unit">DH</span>
+                </div>
 
-              <div class="kpi__mini">
-                <span class="mini__left">
-                  <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
-                  <span class="u m3u">DH/m3</span>
-                </span>
-                <span class="dot">•</span>
-                <span class="mini__right">
-                  <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
-                  <span class="u">DH/mo</span>
-                </span>
+                <div class="kpi__mini">
+                  <span class="mini__left">
+                    <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
+                    <span class="u m3u">DH/m3</span>
+                  </span>
+                  <span class="dot">•</span>
+                  <span class="mini__right">
+                    <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
+                    <span class="u">DH/mo</span>
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          </transition>
 
-          <div class="kpi-row">
-            <div
-              v-for="key in kpiLeftRow2"
-              :key="key"
-              class="kpi"
-              :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '', key === 'EBIT' ? 'hero' : '']"
-            >
-              <div class="kpi__top">
-                <span class="kpi__name">{{ key }}</span>
-                <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">{{ fmtPct(metrics[key].percent) }}%</span>
-              </div>
+          <transition name="rowFold">
+            <div v-show="showRow2" class="kpi-row">
+              <div
+                v-for="key in kpiRow2"
+                :key="key"
+                class="kpi"
+                :class="[kpiClass(key), key === 'EBIT' ? ebitClass : '', key === 'EBIT' ? 'hero' : '']"
+              >
+                <div class="kpi__top">
+                  <span class="kpi__name">{{ key }}</span>
+                  <span class="kpi__pct" :class="{ hot: key === 'EBIT' }">{{ fmtPct(metrics[key].percent) }}%</span>
+                </div>
 
-              <div class="kpi__valRow">
-                <span class="kpi__num" :class="{ big: key === 'EBIT' }">{{ fmtMoney(metrics[key].total, 0) }}</span>
-                <span class="kpi__unit">DH</span>
-              </div>
+                <div class="kpi__valRow">
+                  <span class="kpi__num">{{ fmtMoney(metrics[key].total, 0) }}</span>
+                  <span class="kpi__unit">DH</span>
+                </div>
 
-              <div class="kpi__mini">
-                <span class="mini__left">
-                  <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
-                  <span class="u m3u">DH/m3</span>
-                </span>
-                <span class="dot">•</span>
-                <span class="mini__right">
-                  <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
-                  <span class="u">DH/mo</span>
-                </span>
+                <div class="kpi__mini">
+                  <span class="mini__left">
+                    <span class="kmini m3">{{ fmtMoney(metrics[key].m3, 2) }}</span>
+                    <span class="u m3u">DH/m3</span>
+                  </span>
+                  <span class="dot">•</span>
+                  <span class="mini__right">
+                    <span class="kmini">{{ fmtMoney(metrics[key].month, 0) }}</span>
+                    <span class="u">DH/mo</span>
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          </transition>
         </div>
 
-        <aside class="summary">
-          <div class="summary__head">
-            <div class="summary__title">Résumé</div>
-          </div>
-
-          <div class="summary__grid">
-            <div class="sum">
-              <BuildingOffice2Icon class="sum__ic" />
-              <div class="sum__txt">
-                <div class="sum__k">Client</div>
-                <div class="sum__v" :title="client">{{ client }}</div>
-              </div>
+        <!-- RIGHT: Résumé split en 2 blocs => même hauteur que KPI -->
+        <div class="summaryCol">
+          <!-- Bloc Résumé ligne 1 -->
+          <transition name="rowFold">
+            <div v-show="showRow1" class="sumkpi">
+              <span class="schip" :title="client"><BuildingOffice2Icon class="schip__ic" />{{ client }}</span>
+              <span class="schip"><CalendarDaysIcon class="schip__ic" />{{ durationMonths }} mois</span>
             </div>
+          </transition>
 
-            <div class="sum">
-              <CalendarDaysIcon class="sum__ic" />
-              <div class="sum__txt">
-                <div class="sum__k">Durée</div>
-                <div class="sum__v">{{ durationMonths }} mois</div>
-              </div>
+          <!-- Bloc Résumé ligne 2 -->
+          <transition name="rowFold">
+            <div v-show="showRow2" class="sumkpi">
+              <span class="schip"><CubeIcon class="schip__ic" />{{ Number(volumeTotal || 0).toLocaleString("fr-FR") }} m³</span>
+              <span class="schip"><CheckBadgeIcon class="schip__ic" />{{ status }}</span>
             </div>
-
-            <div class="sum">
-              <CubeIcon class="sum__ic" />
-              <div class="sum__txt">
-                <div class="sum__k">Volume</div>
-                <div class="sum__v">{{ Number(volumeTotal || 0).toLocaleString("fr-FR") }} m³</div>
-              </div>
-            </div>
-
-            <div class="sum">
-              <CheckBadgeIcon class="sum__ic" />
-              <div class="sum__txt">
-                <div class="sum__k">Statut</div>
-                <div class="sum__v">{{ status }}</div>
-              </div>
-            </div>
-          </div>
-        </aside>
+          </transition>
+        </div>
       </div>
     </transition>
 
+    <!-- Dropdown P&L -->
     <teleport to="body">
       <div v-if="pnlOpen" id="pnl-dd" class="dd" :style="ddStyle" @click.stop>
         <div class="dd__search">
@@ -629,9 +655,7 @@ onBeforeUnmount(() => {
     </teleport>
 
     <transition name="toast">
-      <div v-if="toastMsg" class="miniToast">
-        {{ toastMsg }}
-      </div>
+      <div v-if="toastMsg" class="miniToast">{{ toastMsg }}</div>
     </transition>
   </header>
 
@@ -639,39 +663,54 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* ===== Header frame ===== */
+/* =========================
+   HEADER FRAME
+========================= */
 .hd {
   --navy: #184070;
-  --cyan: #20b8e8;
 
-  --text: #0f172a;
-  --muted: rgba(15, 23, 42, 0.65);
-  --border: rgba(16, 24, 40, 0.12);
+  --hdBg: #f2f5fa;
+  --hdBorder: rgba(16, 24, 40, 0.12);
+  --hdShadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+
+  --pillBg: #ffffff;
+  --pillBorder: rgba(16, 24, 40, 0.14);
+  --pillHover: #f3f6fb;
+  --pillTxt: rgba(15, 23, 42, 0.86);
+  --pillMut: rgba(15, 23, 42, 0.62);
 
   position: sticky;
   top: 0;
   z-index: 9999;
   isolation: isolate;
 
-  background: #f2f5fa;
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  background: var(--hdBg);
+  border-bottom: 1px solid var(--hdBorder);
+  box-shadow: var(--hdShadow);
 
-  padding: 3px 6px 7px; /* ✅ petit padding bas */
+  padding: 6px 10px 10px;
   display: grid;
-  gap: 3px;
+  gap: 6px;
   overflow-x: hidden;
 }
-.hd.collapsed {
-  gap: 0;
-  padding: 3px 6px 7px;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.07);
+
+/* ✅ DARK THEME: moins sombre */
+.hd.dark {
+  --hdBg: radial-gradient(140% 160% at 10% 0%, #2a3f67, #22365b 55%, #1c2f50);
+  --hdBorder: rgba(255, 255, 255, 0.14);
+  --hdShadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+
+  --pillBg: rgba(255, 255, 255, 0.08);
+  --pillBorder: rgba(255, 255, 255, 0.16);
+  --pillHover: rgba(255, 255, 255, 0.10);
+  --pillTxt: rgba(255, 255, 255, 0.92);
+  --pillMut: rgba(255, 255, 255, 0.72);
 }
 
 /* ===== Top bar ===== */
 .bar {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   align-items: center;
   width: 100%;
@@ -685,122 +724,171 @@ onBeforeUnmount(() => {
 @media (max-width: 900px) {
   .pill.pnl, .pill.contract, .pill.variant { flex: 1 1 100%; max-width: none; min-width: 0; }
   .hdToggles { width: 100%; justify-content: flex-end; }
+  .themeBtn { margin-left: auto; }
 }
 
+/* Pills */
 .pill {
   position: relative;
   min-width: 0;
-  background: #ffffff;
-  border: 1px solid rgba(16, 24, 40, 0.14);
-  border-radius: 12px;
+  overflow: hidden;
 
-  padding: 1px 7px;
+  background: var(--pillBg);
+  border: 1px solid var(--pillBorder);
+  border-radius: 14px;
+
+  padding: 4px 10px;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 26px;
+  min-height: 34px;
 }
+.hd.dark .pill { backdrop-filter: blur(8px); }
 
-.pill.control { border-color: rgba(15, 23, 42, 0.18); }
-.pill.pnl.control { background: #fff7e6; }
-.pill.contract.control { background: #ffffff; }
-.pill.variant.control { background: #eef6ff; }
+.pill.control:hover { background: var(--pillHover); border-color: rgba(59, 130, 246, 0.26); }
 
 .pill__head {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
   background: transparent;
   border: none;
   padding: 0;
-  line-height: 1;
+  color: inherit;
 }
 .pill__head:not(.static) { cursor: pointer; }
 
+.pill__label { font-size: 10px; font-weight: 950; letter-spacing: 0.2px; color: var(--pillMut); white-space: nowrap; }
 .pill__badge {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 950;
-  color: rgba(15, 23, 42, 0.78);
-  background: rgba(32, 184, 232, 0.12);
-  border: 1px solid rgba(32, 184, 232, 0.22);
-  padding: 1px 6px;
+  color: var(--pillTxt);
+  background: rgba(59, 130, 246, 0.18);
+  border: 1px solid rgba(59, 130, 246, 0.30);
+  padding: 2px 8px;
   border-radius: 999px;
   line-height: 1;
   white-space: nowrap;
 }
-
-.pill__miniic { width: 15px; height: 15px; color: rgba(15, 23, 42, 0.7); flex: 0 0 auto; }
-.pill__label { font-size: 9px; font-weight: 950; letter-spacing: 0.2px; color: rgba(15, 23, 42, 0.62); white-space: nowrap; line-height: 1; }
 .pill__value {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 1000;
   letter-spacing: 0.15px;
-  color: var(--navy);
-  line-height: 1.05;
+  color: var(--pillTxt);
+  line-height: 1.1;
   min-width: 0;
   flex: 1 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pill__chev { width: 14px; height: 14px; color: rgba(15, 23, 42, 0.62); flex: 0 0 auto; transition: transform 140ms ease; }
+.pill__miniic { width: 16px; height: 16px; color: rgba(15,23,42,0.7); }
+.hd.dark .pill__miniic { color: rgba(255,255,255,0.78); }
+
+.pill__chev {
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--pillTxt) 70%, transparent);
+  flex: 0 0 auto;
+  transition: transform 140ms ease;
+}
 .pill__chev.rot { transform: rotate(180deg); }
 
-.pill__actions { display: inline-flex; gap: 5px; flex: 0 0 auto; margin-left: auto; justify-content: flex-end; }
+.pill__actions {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  justify-content: flex-end;
+  position: relative;
+  z-index: 2;
+}
+
 .iconbtn {
-  width: 20px;
-  height: 20px;
-  border-radius: 8px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
+  width: 26px;
+  height: 26px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--pillBorder) 60%, rgba(255,255,255,0.10));
   background: rgba(15, 23, 42, 0.04);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  padding: 0;
 }
-.ic { width: 11px; height: 11px; color: rgba(15, 23, 42, 0.75); }
+.hd.dark .iconbtn { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+.iconbtn:hover { background: rgba(59, 130, 246, 0.16); border-color: rgba(59, 130, 246, 0.26); }
+.ic { width: 13px; height: 13px; color: var(--pillTxt); }
+
+/* Theme button */
+.themeBtn {
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid var(--pillBorder);
+  background: var(--pillBg);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 120px;
+}
+.hd.dark .themeBtn { backdrop-filter: blur(8px); }
+.themeBtn:hover { background: var(--pillHover); border-color: rgba(59, 130, 246, 0.26); }
+.themeBtn__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.65);
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.30);
+}
+.themeBtn__dot.on {
+  background: rgba(59, 130, 246, 0.85);
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.18);
+}
+.themeBtn__txt { font-size: 11px; font-weight: 950; letter-spacing: 0.2px; color: var(--pillTxt); }
 
 /* Toggles */
 .hdToggles {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
 
-  background: #ffffff;
-  border: 1px solid rgba(16, 24, 40, 0.14);
-  border-radius: 12px;
-
-  padding: 1px 7px;
-  min-height: 26px;
+  background: var(--pillBg);
+  border: 1px solid var(--pillBorder);
+  border-radius: 14px;
+  padding: 4px 10px;
+  min-height: 34px;
 
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
+.hd.dark .hdToggles { backdrop-filter: blur(8px); }
 .toggSm {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 1px 7px;
+  padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.1);
+  border: 1px solid color-mix(in srgb, var(--pillBorder) 70%, rgba(255,255,255,0.10));
   background: rgba(15, 23, 42, 0.02);
   line-height: 1;
   user-select: none;
 }
-.toggSm__cb { width: 12px; height: 12px; margin: 0; }
-.toggSm__txt { font-size: 9px; font-weight: 950; color: rgba(15, 23, 42, 0.75); line-height: 1; }
+.hd.dark .toggSm { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); }
+.toggSm__cb { width: 13px; height: 13px; margin: 0; }
+.toggSm__txt { font-size: 10px; font-weight: 950; color: var(--pillTxt); opacity: 0.88; }
 
-.contractHead { position: relative; min-height: 16px; }
+/* Select overlay */
+.contractHead { position: relative; min-height: 22px; }
 .pill__selectOverlay {
   position: absolute;
-  inset: -4px;
-  width: calc(100% + 8px);
-  height: calc(100% + 8px);
+  inset: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
   cursor: pointer;
   border: none;
@@ -808,218 +896,212 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
-/* fold button */
+/* Fold button */
 .foldBtn {
-  width: 26px;
-  height: 26px;
-  border-radius: 12px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.92);
+  height: 34px;
+  border-radius: 14px;
+  border: 1px solid var(--pillBorder);
+  background: var(--pillBg);
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
   cursor: pointer;
-  padding: 0;
+  flex: 0 0 auto;
 }
-.foldIc { width: 14px; height: 14px; transition: transform 160ms ease; color: rgba(15, 23, 42, 0.75); }
+.hd.dark .foldBtn { backdrop-filter: blur(8px); }
+.foldBtn:hover { background: var(--pillHover); border-color: rgba(59, 130, 246, 0.22); }
+
+.foldPips { display: inline-flex; gap: 6px; align-items: center; }
+.pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.55);
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.30);
+}
+.pip.on { background: rgba(59, 130, 246, 0.90); box-shadow: 0 0 0 4px rgba(59,130,246,0.14); }
+.foldIc { width: 16px; height: 16px; transition: transform 160ms ease; color: var(--pillTxt); opacity: 0.9; }
 .foldIc.up { transform: rotate(180deg); }
 
-/* ===== Cockpit ===== */
-.cockpit { display: grid; grid-template-columns: 1fr 185px; gap: 8px; align-items: stretch; min-width: 0; }
-@media (max-width: 1100px) { .cockpit { grid-template-columns: 1fr; } }
+/* =========================
+   Cockpit layout
+========================= */
+.cockpit {
+  display: grid;
+  grid-template-columns: 1fr 185px;
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+@media (max-width: 1100px) {
+  .cockpit { grid-template-columns: 1fr; }
+  .summaryCol { grid-template-columns: 1fr; }
+}
+
+.hdFold-enter-active, .hdFold-leave-active { transition: max-height 200ms ease, opacity 160ms ease, transform 160ms ease; overflow: hidden; }
+.hdFold-enter-from, .hdFold-leave-to { max-height: 0; opacity: 0; transform: translateY(-4px); }
+.hdFold-enter-to, .hdFold-leave-from { max-height: 900px; opacity: 1; transform: translateY(0); }
+
+.rowFold-enter-active, .rowFold-leave-active { transition: max-height 180ms ease, opacity 140ms ease, transform 140ms ease; overflow: hidden; }
+.rowFold-enter-from, .rowFold-leave-to { max-height: 0; opacity: 0; transform: translateY(-3px); }
+.rowFold-enter-to, .rowFold-leave-from { max-height: 140px; opacity: 1; transform: translateY(0); }
 
 .kpis-left { display: grid; gap: 6px; min-width: 0; }
 .kpi-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 @media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-/* =========================
-   ✅ KPI: compact + fond non blanc pur
-========================= */
+/* KPI ultra-compact (référence de hauteur) */
 .kpi {
   position: relative;
-
   --accent: rgba(148, 163, 184, 0.9);
-  --bgTint: 248, 250, 252;
 
-  padding: 5px 6px 5px 5px;
-  min-height: 78px; /* ✅ réduit */
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-
+  background: #ffffff;
   border: 1px solid rgba(16, 24, 40, 0.10);
   border-left: 4px solid var(--accent);
   border-radius: 14px;
 
-  background:
-    radial-gradient(120% 120% at 0% 0%, rgba(var(--bgTint), 0.92), rgba(var(--bgTint), 0.72) 55%, rgba(255,255,255,0.55) 100%),
-    linear-gradient(180deg, rgba(255,255,255,0.40), rgba(255,255,255,0.06));
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+  padding: 5px 6px 5px 6px;
+  min-height: 62px;
+
   overflow: hidden;
-  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
 }
-.kpi::after {
+
+.kpi.asp { --accent: rgba(2, 132, 199, 0.9); }
+.kpi.cmp { --accent: rgba(67, 56, 202, 0.88); }
+.kpi.transport { --accent: rgba(234, 88, 12, 0.86); }
+.kpi.momd { --accent: rgba(147, 51, 234, 0.86); }
+.kpi.prod { --accent: rgba(13, 148, 136, 0.86); }
+.kpi.ebitda { --accent: rgba(5, 150, 105, 0.86); }
+.kpi.amort { --accent: rgba(71, 85, 105, 0.78); }
+
+.kpi.ebit.ebit-neg { --accent: rgba(220, 38, 38, 0.88); --ebitTint: 220, 38, 38; }
+.kpi.ebit.ebit-low { --accent: rgba(245, 158, 11, 0.88); --ebitTint: 245, 158, 11; }
+.kpi.ebit.ebit-mid { --accent: rgba(37, 99, 235, 0.88); --ebitTint: 37, 99, 235; }
+.kpi.ebit.ebit-good { --accent: rgba(16, 185, 129, 0.9); --ebitTint: 16, 185, 129; }
+
+/* EBIT hero */
+.kpi.ebit.hero { border-left-width: 6px; box-shadow: 0 0 0 1px rgba(var(--ebitTint, 37,99,235), 0.16) inset; }
+.kpi.ebit.hero::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  border-radius: 14px;
-  background: radial-gradient(90% 70% at 60% 10%, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.00) 60%);
-  opacity: 0.35;
-}
-.kpi > * { position: relative; z-index: 1; }
-
-/* teintes par KPI */
-.kpi.asp { --accent: rgba(2, 132, 199, 0.9); --bgTint: 234, 246, 255; }
-.kpi.cmp { --accent: rgba(67, 56, 202, 0.88); --bgTint: 238, 236, 255; }
-.kpi.transport { --accent: rgba(234, 88, 12, 0.86); --bgTint: 255, 243, 233; }
-.kpi.momd { --accent: rgba(147, 51, 234, 0.86); --bgTint: 249, 240, 255; }
-.kpi.prod { --accent: rgba(13, 148, 136, 0.86); --bgTint: 232, 250, 247; }
-.kpi.ebitda { --accent: rgba(5, 150, 105, 0.86); --bgTint: 233, 252, 244; }
-.kpi.amort { --accent: rgba(71, 85, 105, 0.78); --bgTint: 242, 245, 250; }
-
-/* ✅ EBIT bucket colors (restaurés) + variable tint */
-.kpi.ebit { --ebitTint: 37, 99, 235; --bgTint: 236, 244, 255; }
-.kpi.ebit.ebit-neg { --accent: rgba(220, 38, 38, 0.88); --ebitTint: 220, 38, 38; --bgTint: 255, 238, 238; }
-.kpi.ebit.ebit-low { --accent: rgba(245, 158, 11, 0.88); --ebitTint: 245, 158, 11; --bgTint: 255, 245, 232; }
-.kpi.ebit.ebit-mid { --accent: rgba(37, 99, 235, 0.88); --ebitTint: 37, 99, 235; --bgTint: 236, 244, 255; }
-.kpi.ebit.ebit-good { --accent: rgba(16, 185, 129, 0.9); --ebitTint: 16, 185, 129; --bgTint: 232, 252, 244; }
-
-/* =========================
-   ✅ EBIT HERO: spécial (vraiment) sans agrandir
-   - "cap" lumineux en haut
-   - anneau gradient bucket
-   - sparkline hint via ::before
-========================= */
-.kpi.ebit.hero {
-  border-left-width: 6px;
-
-  box-shadow:
-    0 12px 26px rgba(15, 23, 42, 0.10),
-    0 0 0 1px rgba(var(--ebitTint), 0.22) inset,
-    0 16px 34px rgba(var(--ebitTint), 0.16);
+  background: radial-gradient(95% 65% at 50% 0%, rgba(var(--ebitTint, 37,99,235), 0.18), rgba(255,255,255,0) 62%);
+  opacity: 0.95;
 }
 
-/* halo gradient bucket */
-.kpi.ebit.hero::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: 14px;
-  padding: 1px;
-  background: linear-gradient(
-    135deg,
-    rgba(var(--ebitTint), 0.10),
-    rgba(var(--ebitTint), 0.32),
-    rgba(var(--ebitTint), 0.08)
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  pointer-events: none;
-  opacity: 0.9;
+.kpi__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; position: relative; z-index: 1; }
+.kpi__name { font-size: 9px; font-weight: 950; text-transform: uppercase; letter-spacing: 0.35px; color: rgba(15, 23, 42, 0.74); line-height: 1.1; }
+.kpi__pct {
+  font-size: 9px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.62);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(15, 23, 42, 0.02);
+  line-height: 1.05;
 }
+.kpi__pct.hot { font-size: 16px; padding: 3px 10px; font-weight: 1000; letter-spacing: 0.15px; }
 
-/* "cap" en haut (signature hero) */
-.kpi.ebit.hero .kpi__top {
-  padding: 2px 6px 2px 6px;
-  margin: -2px -2px 0 -2px;
-  border-radius: 12px;
-  background: linear-gradient(
-    90deg,
-    rgba(var(--ebitTint), 0.14),
-    rgba(255, 255, 255, 0.55) 55%,
-    rgba(var(--ebitTint), 0.10)
-  );
-  border: 1px solid rgba(var(--ebitTint), 0.18);
-}
-
-/* % EBIT ultra visible + "badge glow" */
-.kpi__pct.hot {
-  font-size: 16px;           /* ✅ augmenté */
-  padding: 3px 11px;
-  font-weight: 1000;
-  letter-spacing: 0.15px;
-  line-height: 1;
-}
-.kpi.ebit.hero .kpi__pct.hot {
-  box-shadow:
-    0 8px 18px rgba(var(--ebitTint), 0.18),
-    0 0 0 1px rgba(var(--ebitTint), 0.22) inset;
-}
-
-/* num EBIT: pas plus grand, mais "focus" */
-.kpi.ebit.hero .kpi__num {
-  color: rgba(15, 23, 42, 0.94);
-  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
-}
-
-/* mini values: un peu plus lisibles sur hero */
-.kpi.ebit.hero .kpi__mini { color: rgba(15, 23, 42, 0.78); }
-.kpi.ebit.hero .kmini.m3 { color: rgba(var(--ebitTint), 0.90); }
-
-/* ✅ badge % bucket colors */
 .kpi.ebit.ebit-neg .kpi__pct.hot { color: rgba(185, 28, 28, 0.98); border-color: rgba(220, 38, 38, 0.30); background: rgba(220, 38, 38, 0.10); }
 .kpi.ebit.ebit-low .kpi__pct.hot { color: rgba(180, 83, 9, 0.98); border-color: rgba(245, 158, 11, 0.30); background: rgba(245, 158, 11, 0.10); }
 .kpi.ebit.ebit-mid .kpi__pct.hot { color: rgba(29, 78, 216, 0.98); border-color: rgba(37, 99, 235, 0.28); background: rgba(37, 99, 235, 0.10); }
 .kpi.ebit.ebit-good .kpi__pct.hot { color: rgba(5, 150, 105, 0.98); border-color: rgba(16, 185, 129, 0.28); background: rgba(16, 185, 129, 0.10); }
 
-/* ===== Layout internals ===== */
-.kpi__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.kpi__name { font-size: 10px; font-weight: 950; text-transform: uppercase; letter-spacing: 0.35px; color: rgba(15, 23, 42, 0.74); line-height: 1; }
+.kpi__valRow { display: flex; justify-content: center; align-items: baseline; gap: 6px; margin-top: 2px; position: relative; z-index: 1; }
+.kpi__num { font-size: 14px; font-weight: 1000; color: #0f172a; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.kpi__unit { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.50); line-height: 1.05; }
 
-.kpi__pct {
-  font-size: 10px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.62);
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(16, 24, 40, 0.10);
-  background: rgba(255,255,255,0.55);
-  line-height: 1;
+.kpi__mini {
+  margin-top: 3px;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.72);
+  font-variant-numeric: tabular-nums;
+  position: relative;
+  z-index: 1;
+  line-height: 1.05;
 }
-
-.kpi__valRow { display: flex; justify-content: center; align-items: baseline; gap: 6px; margin-top: 2px; line-height: 1; }
-.kpi__num { font-size: 15px; font-weight: 950; color: rgba(15, 23, 42, 0.92); font-variant-numeric: tabular-nums; line-height: 1.05; }
-.kpi__num.big { font-size: 15px; } /* ✅ hero sans agrandir */
-.kpi__unit { font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.50); line-height: 1; }
-
-.kpi__mini { margin-top: 3px; display: flex; align-items: baseline; justify-content: center; gap: 6px; font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.72); font-variant-numeric: tabular-nums; line-height: 1; }
 .mini__left, .mini__right { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
 .mini__right { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dot { color: rgba(15, 23, 42, 0.26); }
-.kmini { font-size: 10px; font-weight: 950; color: rgba(15, 23, 42, 0.86); line-height: 1; }
+.kmini { font-size: 9px; font-weight: 950; color: rgba(15, 23, 42, 0.86); }
 .kmini.m3 { color: rgba(24, 64, 112, 0.92); font-weight: 1000; }
-.u { font-size: 9px; font-weight: 900; color: rgba(15, 23, 42, 0.46); line-height: 1; }
+.u { font-size: 8px; font-weight: 900; color: rgba(15, 23, 42, 0.46); }
 .u.m3u { color: rgba(24, 64, 112, 0.62); font-weight: 950; }
 
-/* Summary */
-.summary { background: rgba(255,255,255,0.75); border: 1px solid rgba(16, 24, 40, 0.12); border-radius: 16px; padding: 7px 8px 6px; overflow: hidden; backdrop-filter: blur(6px); }
-.summary__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-.summary__title { font-size: 11px; font-weight: 950; text-transform: uppercase; letter-spacing: 0.35px; color: rgba(15, 23, 42, 0.68); margin-bottom: 0; }
-.summary__grid { display: grid; gap: 7px; }
-.sum { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: center; }
-.sum__ic { width: 18px; height: 18px; color: rgba(24, 64, 112, 0.7); }
-.sum__k { font-size: 10px; font-weight: 900; color: rgba(15, 23, 42, 0.55); }
-.sum__v { font-size: 12px; font-weight: 950; color: rgba(15, 23, 42, 0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* =========================
+   ✅ Résumé split en 2 blocs = hauteur KPI
+========================= */
+.summaryCol {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-width: 0;
+}
+
+/* ✅ même hauteur que KPI (jamais plus haut) */
+.sumkpi {
+  height: 62px;
+  max-height: 62px;
+  overflow: hidden;
+
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(255, 255, 255, 0.92);
+
+  padding: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+  align-content: flex-start;
+}
+.hd.dark .sumkpi { background: rgba(255,255,255,0.92); } /* ✅ KPI & résumé restent clairs */
+
+.schip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 24, 40, 0.10);
+  background: rgba(15, 23, 42, 0.03);
+  color: rgba(15, 23, 42, 0.88);
+  font-size: 10px;
+  font-weight: 950;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.schip__ic { width: 14px; height: 14px; color: rgba(24, 64, 112, 0.72); flex: 0 0 auto; }
+
+/* Dropdown */
+.dd { background: #fff; border: 1px solid rgba(16, 24, 40, 0.12); border-radius: 16px; box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18); padding: 10px; }
+.dd__search { display: flex; align-items: center; gap: 8px; background: rgba(15, 23, 42, 0.03); border: 1px solid rgba(16, 24, 40, 0.10); border-radius: 12px; padding: 8px 10px; margin-bottom: 8px; }
+.dd__ic { width: 16px; height: 16px; color: rgba(15, 23, 42, 0.55); }
+.dd__in { width: 100%; border: none; outline: none; background: transparent; font-size: 12px; font-weight: 900; color: rgba(15, 23, 42, 0.88); }
+.dd__list { max-height: 300px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.dd__item { border: 1px solid rgba(16, 24, 40, 0.10); background: #fff; border-radius: 12px; padding: 10px; display: flex; justify-content: space-between; gap: 10px; cursor: pointer; text-align: left; }
+.dd__item:hover { background: rgba(59, 130, 246, 0.08); border-color: rgba(59, 130, 246, 0.18); }
+.dd__item.active { background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.18); }
+.dd__title { font-size: 12px; font-weight: 950; color: #0f172a; }
+.dd__sub { font-size: 11px; color: rgba(15, 23, 42, 0.65); margin-top: 2px; }
+.dd__id { font-size: 11px; color: rgba(15, 23, 42, 0.55); }
+.dd__empty { font-size: 12px; color: rgba(15, 23, 42, 0.55); padding: 10px; text-align: center; }
 
 /* Toast */
-.miniToast {
-  position: fixed;
-  top: 84px;
-  right: 22px;
-  background: #184070;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  padding: 10px 16px;
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
-  z-index: 200000;
-  letter-spacing: 0.2px;
-}
+.miniToast { position: fixed; top: 84px; right: 22px; background: #184070; color: #fff; font-size: 12px; font-weight: 900; padding: 10px 16px; border-radius: 12px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18); z-index: 200000; letter-spacing: 0.2px; }
 .toast-enter-active, .toast-leave-active { transition: all 180ms ease; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-6px); }
 .toast-enter-to, .toast-leave-from { opacity: 1; transform: translateY(0); }

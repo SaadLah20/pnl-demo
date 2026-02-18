@@ -1,4 +1,11 @@
-<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET / lignes compactes + KPIs + masquer 0 auto + locks contrat + importer + generalize + confirmation variantes impactées) -->
+<!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET)
+     ✅ Titre seul (aucune meta à côté)
+     ✅ Input collé au poste (dans la même cellule)
+     ✅ Masquer 0 auto + override user
+     ✅ Locks contrat + badge
+     ✅ Import + Generalize + confirmation variantes impactées
+     ✅ Typo comme les autres pages (system-ui) + mono uniquement chiffres
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -31,9 +38,10 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(
-    toNum(v)
-  );
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
 }
 function money(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -55,14 +63,8 @@ const variant = computed<any>(() => (store as any).activeVariant ?? null);
 const contract = computed<any>(() => (store as any).activeContract ?? null);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
 
-const variantLabel = computed(() => {
-  const v = variant.value;
-  if (!v) return "—";
-  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
-});
-
 /* =========================
-   ✅ UI: Masquer 0 (auto)
+   ✅ Masquer 0 (auto + override user)
 ========================= */
 const hideZeros = ref(false);
 const hideZerosUserToggled = ref(false);
@@ -102,7 +104,6 @@ function getFormDraft(id: string): DraftForm {
 }
 
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
-
 watch(
   () => variant.value?.id,
   () => {
@@ -123,10 +124,8 @@ const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transpor
 function mpPriceUsed(mpId: string): number {
   const vmp = (((variant.value as any)?.mp?.items ?? []) as any[]).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-
   if (vmp?.prix != null) return clamp(vmp.prix);
   if (vmp?.prixOverride != null) return clamp(vmp.prixOverride);
-
   return clamp(vmp?.mp?.prix);
 }
 function cmpParM3For(vf: any): number {
@@ -179,7 +178,6 @@ function enforceLocks() {
   if (lockGenieCivil.value) draft.genieCivil = 0;
   if (lockTransport.value) draft.transport = 0;
 }
-
 function anyNonZeroDraft() {
   return (
     clamp(draft.genieCivil) > 0 ||
@@ -192,7 +190,6 @@ function anyNonZeroDraft() {
     clamp(draft.installation) > 0
   );
 }
-
 function loadFromVariant() {
   const s: any = (variant.value as any)?.coutOccasionnel ?? {};
   draft.genieCivil = clamp(s.genieCivil);
@@ -204,11 +201,14 @@ function loadFromVariant() {
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
   draft.installation = clamp(s.installation);
+
   enforceLocks();
 
-  if (!hideZerosUserToggled.value) hideZeros.value = anyNonZeroDraft();
+  if (!hideZerosUserToggled.value) {
+    hideZeros.value = anyNonZeroDraft();
+    if (!anyNonZeroDraft()) hideZeros.value = false;
+  }
 }
-
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 watch(() => contract.value, () => enforceLocks(), { immediate: true });
 
@@ -266,7 +266,6 @@ function isLockedKey(k: LineKey): boolean {
   if (k === "installation") return lockInstallation.value;
   return false;
 }
-
 function getValue(k: LineKey): number {
   if (isLockedKey(k)) return 0;
   return clamp((draft as any)[k]);
@@ -290,7 +289,7 @@ const visibleLines = computed(() => {
       perMonth: d > 0 ? v / d : 0,
       parM3: vol > 0 ? v / vol : 0,
       pctCa: ca > 0 ? (v / ca) * 100 : 0,
-      totalBold: v, // ✅ “cout total par cout” = value (DH) en gras
+      totalBold: v,
     };
   });
 
@@ -372,7 +371,6 @@ async function save() {
     saving.value = false;
   }
 }
-
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts occasionnels ?", async () => {
     closeModal();
@@ -388,7 +386,7 @@ function askReset() {
 }
 
 /* =========================
-   ✅ IMPORTER (UI only)
+   ✅ IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -421,7 +419,10 @@ function applyFromVariant(srcVariant: any) {
   draft.installation = clamp(s.installation);
   enforceLocks();
 
-  if (!hideZerosUserToggled.value) hideZeros.value = anyNonZeroDraft();
+  if (!hideZerosUserToggled.value) {
+    hideZeros.value = anyNonZeroDraft();
+    if (!anyNonZeroDraft()) hideZeros.value = false;
+  }
 }
 
 async function onApplyImport(payload: { sourceVariantId: string }) {
@@ -441,8 +442,8 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   try {
     let src = findVariantById(sourceId);
     if (!src) await (store as any).loadPnls?.();
-
     src = src ?? findVariantById(sourceId);
+
     if (!src) {
       showToast("Variante source introuvable (données non chargées).", "err");
       return;
@@ -498,7 +499,6 @@ function impactedByContractOnTargets(targetIds: string[], payload: any) {
       impacted.push({ id: tid, label, fields });
     }
   }
-
   return impacted;
 }
 
@@ -559,58 +559,44 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader -->
+    <!-- ✅ Sticky subheader : titre SEUL + actions -->
     <div class="subhdr">
       <div class="row">
-        <div class="left">
-          <div class="ttlRow">
-            <div class="ttl">Coûts occasionnels</div>
-            <span v-if="variant" class="badge">Variante active</span>
-          </div>
+        <div class="ttl">Coûts occasionnels</div>
 
-          <div class="meta" v-if="variant">
-            <span class="clip"><b>{{ variantLabel }}</b></span>
-            <span class="sep" v-if="dureeMois">•</span>
-            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
-          </div>
-          <div class="meta" v-else>Aucune variante active.</div>
-        </div>
-
-        <div class="actions" v-if="variant">
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="toggleHideZeros()">
-            {{ hideZeros ? "Afficher 0" : "Masquer 0" }}
+        <div class="actions">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZeros()" :class="{ on: hideZeros }">
+            <span class="dot" aria-hidden="true"></span>
+            {{ hideZeros ? "Afficher" : "Masquer 0" }}
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="askReset()">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="genOpen = true">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="saving || genBusy || impBusy" @click="askSave()">
+          <button class="btn pri" :disabled="!variant || saving || genBusy || impBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
         </div>
       </div>
 
-      <!-- ✅ KPIs en haut (✅ BG sur TOTAL) -->
+      <!-- ✅ KPIs : mono uniquement sur les valeurs -->
       <div class="kpis" v-if="variant">
         <div class="kpi">
           <div class="kLbl">/ mois</div>
-          <div class="kVal mono">
-            {{ money(monthly, 2) }}
-            <span class="unit">DH/mois</span>
-          </div>
+          <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
         </div>
 
         <div class="kpi main">
@@ -620,12 +606,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
         <div class="kpi">
           <div class="kLbl">/ m³</div>
-          <div class="kVal mono">{{ n(perM3, 2) }} <span class="unit">DH/m³</span></div>
+          <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">% CA</div>
-          <div class="kVal mono">{{ n(pct, 2) }}<span class="unit">%</span></div>
+          <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
         </div>
       </div>
 
@@ -643,15 +629,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         <ExclamationTriangleIcon class="aic" />
         <div><b>Généralisation :</b> {{ genErr }}</div>
       </div>
-
-      <div v-if="(store as any).loading" class="alert">
-        <div>Chargement…</div>
-      </div>
-
-      <div v-else-if="(store as any).error" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
-        <div><b>Erreur :</b> {{ (store as any).error }}</div>
-      </div>
     </div>
 
     <div v-if="!variant" class="card">
@@ -660,12 +637,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <template v-else>
       <div class="card">
-        <!-- ✅ Table: champs proches de la désignation (focus) -->
         <div class="tableWrap">
           <table class="table">
             <colgroup>
               <col class="colPoste" />
-              <col class="colInput" />
               <col class="colTot" />
               <col class="colMensuel" />
               <col class="colM3" />
@@ -675,7 +650,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             <thead>
               <tr>
                 <th class="th">Poste</th>
-                <th class="th r">Saisie (DH)</th>
                 <th class="th r">Total (DH)</th>
                 <th class="th r">DH/mois</th>
                 <th class="th r">DH/m³</th>
@@ -685,33 +659,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
             <tbody>
               <tr v-for="ln in visibleLines" :key="String(ln.key)">
-                <!-- Poste -->
+                <!-- ✅ Poste + input collé -->
                 <td class="poste">
-                  <div class="posteWrap">
-                    <b class="posteLbl">{{ ln.label }}</b>
-                    <span v-if="ln.locked" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+                  <div class="posteRow">
+                    <div class="posteLblWrap">
+                      <b class="posteLbl" :title="ln.label">{{ ln.label }}</b>
+                      <span v-if="ln.locked" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+                    </div>
+
+                    <div class="inLine">
+                      <input
+                        class="inputSm r mono"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        :disabled="ln.locked"
+                        :value="ln.value"
+                        @input="setValue(ln.key as any, ($event.target as HTMLInputElement).value)"
+                        aria-label="Saisie DH"
+                      />
+                      <span class="unitDh">DH</span>
+                    </div>
                   </div>
                 </td>
 
-                <!-- input (proche du poste) -->
-                <td class="r">
-                  <div class="inCell">
-                    <input
-                      class="inputSm r mono"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      :disabled="ln.locked"
-                      :value="ln.value"
-                      @input="setValue(ln.key as any, ($event.target as HTMLInputElement).value)"
-                    />
-                    <span class="unitDh">DH</span>
-                  </div>
-                </td>
-
-                <!-- Total (par cout) en gras -->
                 <td class="r mono"><b>{{ money(ln.totalBold, 2) }}</b></td>
-
                 <td class="r mono">{{ money(ln.perMonth, 2) }}</td>
                 <td class="r mono">{{ n(ln.parM3, 2) }}</td>
                 <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
@@ -719,24 +691,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
               <tr class="sumRow">
                 <td><b>Total</b></td>
-                <td></td>
-                <td class="r"><b>{{ money(total, 2) }}</b></td>
-                <td class="r"><b>{{ money(monthly, 2) }}</b></td>
-                <td class="r"><b>{{ n(perM3, 2) }}</b></td>
-                <td class="r"><b>{{ n(pct, 2) }}%</b></td>
+                <td class="r mono"><b>{{ money(total, 2) }}</b></td>
+                <td class="r mono"><b>{{ money(monthly, 2) }}</b></td>
+                <td class="r mono"><b>{{ n(perM3, 2) }}</b></td>
+                <td class="r mono"><b>{{ n(pct, 2) }}%</b></td>
               </tr>
             </tbody>
           </table>
         </div>
-
-        <div class="foot">
-          Durée : <b>{{ n(dureeMois, 0) }}</b> mois • Volume total : <b>{{ n(volumeTotal, 2) }}</b> m³ • CA estimé :
-          <b>{{ money(caTotal, 2) }}</b>
-        </div>
       </div>
     </template>
 
-    <!-- ✅ IMPORT -->
     <SectionImportModal
       v-model="impOpen"
       sectionLabel="Coûts occasionnels"
@@ -744,7 +709,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @apply="onApplyImport"
     />
 
-    <!-- ✅ GENERALISATION -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       sectionLabel="Coûts occasionnels"
@@ -752,7 +716,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @apply="onApplyGeneralize"
     />
 
-    <!-- ✅ Modal confirm/info -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -775,7 +738,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
-    <!-- ✅ Toast -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -787,16 +749,39 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
-/* ✅ base sizes like CoutMensuelPage */
+/* ✅ TYPO par défaut comme tes autres pages */
+.page,
+.subhdr,
+.card,
+.table,
+.th,
+.ttl,
+.actions,
+.btn,
+.kLbl,
+.poste,
+.posteLbl,
+.lockTag,
+.alert,
+.empty,
+.unitDh {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* ✅ Mono uniquement pour chiffres */
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+* {
+  box-sizing: border-box;
+}
+
 .page {
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* sticky subheader */
@@ -812,52 +797,15 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 .row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
 }
-.left {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 240px;
-}
-.ttlRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 .ttl {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 950;
   color: #0f172a;
-}
-.badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-.meta {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-}
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sep {
-  margin: 0 8px;
-  color: rgba(15, 23, 42, 0.35);
 }
 
 /* actions */
@@ -868,13 +816,14 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   flex-wrap: wrap;
 }
 .btn {
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
   padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a;
   font-weight: 950;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -892,12 +841,22 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.28);
 }
-.btn.pri:hover {
-  background: rgba(2, 132, 199, 0.18);
+.btn.on {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.28);
 }
 .ic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.35);
+}
+.btn.on .dot {
+  background: rgba(2, 132, 199, 0.9);
 }
 
 /* KPIs */
@@ -915,11 +874,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 14px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 .kpi.main {
@@ -927,25 +886,25 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(236, 253, 245, 0.9);
 }
 .kLbl {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .kVal {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.unit {
-  margin-left: 8px;
-  font-size: 10.5px;
-  font-weight: 900;
+.kVal span {
+  font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
+  margin-left: 6px;
+  font-size: 10px;
 }
 
 /* alerts */
@@ -958,6 +917,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  font-size: 12px;
+  font-weight: 800;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
@@ -992,27 +953,21 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-collapse: collapse;
   font-size: 12px;
 }
-
-/* ✅ input proche du libellé => col input plus étroite + col poste plus large */
 .colPoste {
-  width: 34%;
-}
-.colInput {
-  width: 18%;
+  width: 44%;
 }
 .colTot {
   width: 16%;
 }
 .colMensuel {
-  width: 12%;
+  width: 14%;
 }
 .colM3 {
-  width: 10%;
+  width: 13%;
 }
 .colPct {
-  width: 10%;
+  width: 13%;
 }
-
 .th {
   text-align: left;
   font-weight: 950;
@@ -1030,12 +985,20 @@ tbody td {
   vertical-align: middle;
 }
 
-/* poste cell */
-.posteWrap {
+/* ✅ poste + input collé */
+.posteRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.posteLblWrap {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .posteLbl {
   font-weight: 950;
@@ -1043,7 +1006,7 @@ tbody td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 360px;
+  max-width: 420px;
 }
 
 .lockTag {
@@ -1064,17 +1027,14 @@ tbody td {
   height: 12px;
 }
 
-/* input cell */
-.inCell {
+.inLine {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  justify-content: flex-start; /* ✅ proche poste */
-  width: 100%;
+  flex: 0 0 auto;
 }
 .inputSm {
-  width: 130px;
-  max-width: 100%;
+  width: 128px;
   height: 30px;
   border-radius: 12px;
   border: 1px solid rgba(2, 132, 199, 0.28);
@@ -1101,18 +1061,11 @@ tbody td {
   white-space: nowrap;
 }
 
-/* sum */
+/* sum row */
 .sumRow td {
   background: rgba(248, 250, 252, 0.7);
   border-top: 1px solid rgba(16, 24, 40, 0.08);
   border-bottom: 0;
-}
-.foot {
-  padding: 10px 12px;
-  border-top: 1px solid rgba(16, 24, 40, 0.06);
-  font-size: 11.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.65);
 }
 
 /* modal */

@@ -1,6 +1,7 @@
-<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET / compact + sticky subheader + toast + generalize + import + hide zeros)
-     ✅ Amélioration UI: cohérence avec autres pages
-     ✅ "Saisie Maintenance + description" déplacés en bas (footer card)
+<!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET)
+     ✅ Header compact = style référence (MomdAndQuantity-like)
+     ✅ Pas d'infos à côté du titre
+     ✅ Chiffres en police NORMALE via .num (tabulaires)
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -14,7 +15,6 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   Squares2X2Icon,
-  WrenchScrewdriverIcon,
   CalendarDaysIcon,
   ArrowDownTrayIcon,
   InformationCircleIcon,
@@ -60,12 +60,6 @@ function clamp(x: any, min: number, max: number) {
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
 const dureeMois = computed(() => Math.max(0, toNum(contract.value?.dureeMois)));
-
-const variantLabel = computed(() => {
-  const v = variant.value;
-  if (!v) return "—";
-  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
-});
 
 /* =========================
    EDIT MODEL (MAINTENANCE)
@@ -201,7 +195,7 @@ const visibleLines = computed(() => {
 });
 
 /* =========================
-   TOAST (non bloquant)
+   TOAST
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
@@ -296,7 +290,7 @@ function askReset() {
 }
 
 /* =========================
-   ✅ IMPORTER (depuis autre variante / save séparé)
+   IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -412,21 +406,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttlRow">
-            <div class="ttl">Maintenance</div>
-            <span v-if="variant" class="badge">Variante active</span>
-          </div>
-
-          <div class="meta" v-if="variant">
-            <span class="clip"><b>{{ variantLabel }}</b></span>
-            <span class="sep" v-if="dureeMois">•</span>
-            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
-          </div>
-          <div class="meta" v-else>Aucune variante active.</div>
+          <div class="ttl">Maintenance</div>
         </div>
 
         <div class="actions">
@@ -457,32 +440,30 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
 
-      <!-- ✅ KPIs compact -->
       <div class="kpis" v-if="variant">
-        <div class="kpi main">
+        <div class="kpi kpiTint">
           <div class="kLbl">
-            <CalendarDaysIcon class="ic2" />
+            <CalendarDaysIcon class="ic" />
             / mois
           </div>
-          <div class="kVal mono">
-            {{ n(mensuelTotal, 2) }}
-            <span class="unit">DH/mois</span>
+          <div class="kVal num">
+            {{ n(mensuelTotal, 2) }} <span>DH/mois</span>
           </div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">Total</div>
-          <div class="kVal mono">{{ money(total, 2) }}</div>
+          <div class="kVal num">{{ money(total, 2) }}</div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">/ m³</div>
-          <div class="kVal mono">{{ n(parM3, 2) }} <span class="unit">DH/m³</span></div>
+          <div class="kVal num">{{ n(parM3, 2) }} <span>DH/m³</span></div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">% CA</div>
-          <div class="kVal mono">{{ n(pctCa, 2) }}<span class="unit">%</span></div>
+          <div class="kVal num">{{ n(pctCa, 2) }} <span>%</span></div>
         </div>
       </div>
 
@@ -516,8 +497,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     </div>
 
     <template v-else>
-      <div class="card">
-        <!-- ✅ On enlève "Saisie Maintenance" du haut -->
+      <div class="card pad0">
         <div class="tableWrap">
           <table class="table">
             <colgroup>
@@ -530,7 +510,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
             <thead>
               <tr>
-                <th class="th">Poste</th>
+                <th class="th thL">Poste</th>
                 <th class="th r">DH/mois</th>
                 <th class="th r">Total</th>
                 <th class="th r">DH/m³</th>
@@ -540,57 +520,47 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
             <tbody>
               <tr v-for="ln in visibleLines" :key="String(ln.key)">
-                <td class="labelCell"><b>{{ ln.label }}</b></td>
+                <td class="labelCell">
+                  <span class="designationText">{{ ln.label }}</span>
+                </td>
 
                 <td class="r">
                   <div class="inCell">
                     <input
-                      class="inputSm r inputMonth mono"
+                      class="inputLg num"
                       type="number"
                       step="0.01"
                       min="0"
                       :value="(edit as any)[ln.key]"
                       @input="(edit as any)[ln.key] = clamp(($event.target as HTMLInputElement).value, 0, 1e12)"
                     />
-                    <span class="unit unitMonth">DH</span>
+                    <span class="unit unitEdit">DH</span>
                   </div>
                 </td>
 
-                <td class="r mono"><b>{{ money(ln.total, 2) }}</b></td>
-                <td class="r mono">{{ n(ln.parM3, 2) }}</td>
-                <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
+                <td class="r val num">{{ money(ln.total, 2) }}</td>
+                <td class="r val num">{{ n(ln.parM3, 2) }}</td>
+                <td class="r val num">{{ n(ln.pctCa, 2) }}%</td>
               </tr>
 
-              <tr class="sumRow">
-                <td><b>Total</b></td>
-                <td class="r"><b>{{ n(mensuelTotal, 2) }}</b> <span class="unit">DH</span></td>
-                <td class="r"><b>{{ money(total, 2) }}</b></td>
-                <td class="r"><b>{{ n(parM3, 2) }}</b></td>
-                <td class="r"><b>{{ n(pctCa, 2) }}%</b></td>
+              <tr>
+                <td class="val">Total</td>
+                <td class="r val num">{{ n(mensuelTotal, 2) }} <span class="unit">DH</span></td>
+                <td class="r val num">{{ money(total, 2) }}</td>
+                <td class="r val num">{{ n(parM3, 2) }}</td>
+                <td class="r val num">{{ n(pctCa, 2) }}%</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <!-- ✅ Indication déplacée en bas, look "hint" cohérent -->
-        <div class="hint">
-          <div class="hintRow">
-            <InformationCircleIcon class="hic" />
-            <div class="hintTxt">
-              <b>Saisie Maintenance</b>
-              <span class="sep2">•</span>
-              Montants en <b>DH/mois</b>. Les métriques sont calculées sur <b>durée</b>, <b>volume</b> et <b>CA</b>.
-            </div>
-          </div>
-
-          <div class="foot">
-            Durée : <b>{{ dureeMois }}</b> mois • % calculé sur CA (CMP + Transport + MOMD).
-          </div>
+        <div class="foot tiny muted">
+          <InformationCircleIcon class="ic" style="vertical-align: -3px; margin-right: 6px" />
+          Montants en <b>DH/mois</b> • Durée : <b>{{ dureeMois }}</b> mois • % calculé sur CA (CMP + Transport + MOMD).
         </div>
       </div>
     </template>
 
-    <!-- ✅ MODAL IMPORT -->
     <SectionImportModal
       v-model="impOpen"
       sectionLabel="Maintenance"
@@ -598,7 +568,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @apply="onApplyImport"
     />
 
-    <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       sectionLabel="Maintenance"
@@ -606,7 +575,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       @apply="onApplyGeneralize"
     />
 
-    <!-- ✅ Modal confirm/info -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -629,9 +597,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
-    <!-- ✅ Toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -642,10 +609,24 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
 <style scoped>
 .page {
-  padding: 10px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.muted {
+  color: rgba(15, 23, 42, 0.55);
+}
+.tiny {
+  font-size: 10.5px;
+}
+* {
+  box-sizing: border-box;
+}
+
+/* ✅ chiffres en police NORMALE (pas monospace), mais tabulaires */
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 /* sticky subheader */
@@ -656,80 +637,43 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(248, 250, 252, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 16px;
-  padding: 10px;
+  border-radius: 14px;
+  padding: 8px 10px;
 }
-
 .row {
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 240px;
-}
-
-.ttlRow {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  min-width: 220px;
 }
 .ttl {
-  font-size: 18px; /* ✅ cohérent avec CAB */
+  font-size: 14px;
   font-weight: 950;
   color: #0f172a;
-  letter-spacing: -0.01em;
-}
-.badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
 }
 
-.meta {
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sep {
-  color: rgba(15, 23, 42, 0.35);
-}
-
+/* actions */
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .btn {
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
   padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a;
   font-weight: 950;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -750,8 +694,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .btn.pri:hover {
   background: rgba(2, 132, 199, 0.18);
 }
+.ic {
+  width: 16px;
+  height: 16px;
+}
 
-/* masquer 0 state */
+/* masque 0 */
 .btn.on {
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.28);
@@ -766,30 +714,14 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(2, 132, 199, 0.9);
 }
 
-.ic {
-  width: 18px;
-  height: 18px;
-}
-.ic2 {
-  width: 16px;
-  height: 16px;
-  opacity: 0.85;
-  margin-right: 6px;
-}
-
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
 /* KPIs */
 .kpis {
-  margin-top: 10px;
+  margin-top: 8px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
-@media (max-width: 900px) {
+@media (max-width: 980px) {
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -797,74 +729,85 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 14px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
-.kpi.main {
+.kpiTint {
   border-color: rgba(2, 132, 199, 0.28);
   background: rgba(2, 132, 199, 0.06);
 }
 .kLbl {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
 }
 .kVal {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.unit {
-  margin-left: 8px;
-  font-size: 10.5px;
-  font-weight: 900;
+.kVal span {
+  font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
+  margin-left: 6px;
+  font-size: 10px;
 }
 
 /* alerts */
 .alert {
   margin-top: 8px;
-  border-radius: 14px;
-  padding: 9px 10px;
+  border-radius: 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  font-size: 12px;
+  font-weight: 800;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.22);
 }
 .aic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   margin-top: 1px;
 }
 
 /* card */
 .card {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   overflow: hidden;
 }
+.card.pad0 {
+  padding: 0;
+}
+.empty {
+  padding: 12px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.6);
+}
 
+/* table */
 .tableWrap {
-  padding: 10px;
-  overflow-x: auto;
+  overflow: hidden;
 }
 .table {
   width: 100%;
@@ -874,43 +817,55 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 .colLabel {
-  width: 280px;
+  width: 34%;
 }
 .colMensuel {
-  width: 160px;
+  width: 20%;
 }
 .colTotal {
-  width: 180px;
+  width: 18%;
 }
 .colM3 {
-  width: 120px;
+  width: 14%;
 }
 .colPct {
-  width: 90px;
+  width: 14%;
 }
 
 .th,
 .table td {
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  padding: 9px 8px;
+  padding: 10px 10px;
   vertical-align: middle;
+  overflow: hidden;
 }
 .th {
-  background: rgba(15, 23, 42, 0.03);
-  color: rgba(15, 23, 42, 0.55);
-  font-size: 11px;
+  background: #fafafa;
+  color: rgba(15, 23, 42, 0.6);
+  font-size: 10px;
   font-weight: 950;
   white-space: nowrap;
+}
+.thL {
+  text-align: left;
 }
 .r {
   text-align: right;
 }
-.labelCell {
+
+.val {
+  font-size: 12px;
+  font-weight: 950;
+}
+.designationText {
+  display: block;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  color: #0f172a;
+  font-size: 12.5px;
+  font-weight: 950;
 }
-
 .inCell {
   display: inline-flex;
   align-items: center;
@@ -918,74 +873,40 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 8px;
   width: 100%;
 }
-.inputSm {
-  width: 120px;
-  height: 32px;
+
+/* Inputs */
+.inputLg {
+  border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 12px;
-  border: 1px solid rgba(2, 132, 199, 0.26);
-  background: rgba(2, 132, 199, 0.06);
-  padding: 0 10px;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  width: 100%;
+  max-width: 150px;
+  background: rgba(2, 132, 199, 0.08);
   font-weight: 950;
-  color: #0f172a;
   outline: none;
+  color: #0f172a;
   text-align: right;
 }
-.inputSm:focus {
-  border-color: rgba(2, 132, 199, 0.55);
-  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+.inputLg:focus {
+  border-color: rgba(2, 132, 199, 0.7);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.14);
   background: #fff;
 }
-.unitMonth {
-  font-size: 10.5px;
-  font-weight: 950;
-  color: rgba(2, 132, 199, 0.9);
-  white-space: nowrap;
-}
-
-.sumRow td {
-  background: rgba(15, 23, 42, 0.02);
+.unit {
+  color: rgba(15, 23, 42, 0.55);
+  font-size: 11px;
+  min-width: 28px;
+  text-align: right;
   font-weight: 950;
 }
+.unitEdit {
+  color: rgba(2, 132, 199, 0.95);
+}
 
-/* ✅ hint bottom block */
-.hint {
-  border-top: 1px solid rgba(16, 24, 40, 0.08);
-  padding: 10px;
-  background: rgba(248, 250, 252, 0.6);
-}
-.hintRow {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-.hic {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  color: rgba(2, 132, 199, 0.9);
-  flex: 0 0 auto;
-}
-.hintTxt {
-  font-size: 11.5px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.75);
-  line-height: 1.35;
-}
-.sep2 {
-  margin: 0 8px;
-  color: rgba(15, 23, 42, 0.35);
-}
 .foot {
-  margin-top: 8px;
-  font-size: 11.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.65);
-}
-
-.empty {
-  padding: 12px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.6);
+  padding: 8px 10px;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
 /* modal */
@@ -1032,6 +953,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-weight: 800;
   color: rgba(15, 23, 42, 0.8);
   line-height: 1.45;
+  white-space: pre-wrap;
 }
 .dlgFtr {
   padding: 10px;
@@ -1072,9 +994,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 .toast.err {
   border-color: rgba(239, 68, 68, 0.22);
-}
-.toast.info {
-  border-color: rgba(59, 130, 246, 0.22);
 }
 .tic {
   width: 18px;

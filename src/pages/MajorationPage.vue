@@ -1,11 +1,7 @@
-<!-- ✅ src/pages/MajorationPage.vue (FICHIER COMPLET / UI/UX harmonisé + infos actions dé-dupliquées)
-     Changements demandés :
-     ✅ Supprimer du header les lignes qui “augmentent” la page :
-        - Appliquer = preview KPIs (Header)
-        - Enregistrer = persisté
-        - Appliquer réellement = écrit DB + remet % à 0
-     ✅ Ces infos existent en double -> on garde UNIQUEMENT la version à côté de “Masquer 0”
-     ✅ Remplacer window.confirm (généralisation) par un vrai modal (comme autres pages)
+<!-- ✅ src/pages/MajorationPage.vue (FICHIER COMPLET / UI harmonisé — logique inchangée)
+     MAJ demandée :
+     ✅ Supprimer la phrase: "Saisie en % sur les postes majorables..."
+     ✅ Mettre les boutons (Réinit ... Enregistrer) en haut à droite DANS le header (comme tes autres pages)
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
@@ -34,7 +30,7 @@ const IMP_ENABLED_KEY = "momdImputation.enabled";
 const IMP_PCT_KEY = "momdImputation.pct";
 
 /* =========================
-   ✅ MODAL CONFIRM/INFO (pour généralisation, cohérent avec autres pages)
+   ✅ MODAL CONFIRM/INFO (généralisation)
 ========================= */
 const uiModal = reactive({
   open: false,
@@ -112,7 +108,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       await generalizeTo(ids);
       closeUiModal();
     } catch (e: any) {
-      // genErr est déjà alimenté dans generalizeTo, mais on garde la sécurité
       genErr.value = genErr.value ?? (e?.message ?? String(e));
       openInfo("Erreur", String(genErr.value));
     } finally {
@@ -122,7 +117,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 /* =========================
-   ✅ IMPORTER (modal habituel)
+   ✅ IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -265,7 +260,7 @@ function setPct(key: string, v: any) {
 }
 
 /* =========================
-   Imputation controls (stored in draft.map)
+   Imputation controls
 ========================= */
 const impEnabled = computed<boolean>({
   get: () => n(draft.map[IMP_ENABLED_KEY]) >= 0.5,
@@ -313,7 +308,7 @@ onBeforeUnmount(() => {
 });
 
 /* =========================
-   PREVIEW (Header KPIs)
+   PREVIEW
 ========================= */
 const previewOn = ref(false);
 
@@ -356,7 +351,7 @@ async function save() {
 }
 
 /* =========================
-   ✅ Refresh active variant (after apply real)
+   refresh active variant
 ========================= */
 async function refreshActiveVariant(variantId: string) {
   try {
@@ -378,7 +373,7 @@ async function refreshActiveVariant(variantId: string) {
 }
 
 /* =========================
-   ✅ Custom confirmation modal for apply real
+   confirm apply real
 ========================= */
 const confirmOpen = ref(false);
 const confirmBusy = ref(false);
@@ -514,7 +509,7 @@ function resetAll() {
 }
 
 /* =========================
-   ✅ BEFORE/AFTER per row (instant)
+   BEFORE/AFTER helpers
 ========================= */
 function applyPct(val: number, pct: number) {
   const v = n(val);
@@ -665,7 +660,7 @@ const groupsAll = computed<Group[]>(() => {
       { key: "coutMensuel.troisG", label: "3G" },
       { key: "coutMensuel.taxeProfessionnelle", label: "Taxe professionnelle" },
       { key: "coutMensuel.locationVehicule", label: "Location véhicule" },
-      { key: "coutMensuel.locationAmbulance", label: "Location ambulance" },
+      { key: "coutMensuel.locationChargeur", label: "Location chargeur" },
       { key: "coutMensuel.locationBungalows", label: "Location bungalows" },
       { key: "coutMensuel.epi", label: "EPI" },
     ],
@@ -851,77 +846,79 @@ const impactsByRow = computed<ImpactRow[]>(() => {
 });
 
 /* =========================
-   ✅ UI helper (unique place for action explanations)
+   UI helpers
 ========================= */
 const helpOpen = ref(false);
+function fmt2(x: any) {
+  return n(x).toFixed(2);
+}
+function fmt1(x: any) {
+  return n(x).toFixed(1);
+}
 </script>
 
 <template>
-  <div class="maj">
-    <!-- Title (compact, sans les lignes doublées) -->
-    <div class="head">
-      <div class="h1">Majorations</div>
-      <div class="sub">Saisie en % sur les postes majorables. Utilise <b>Impacts</b> pour visualiser ΔPV/ΔEBIT.</div>
-    </div>
+  <div class="page">
+    <!-- ✅ Header : titre à gauche, actions à droite (comme autres pages) -->
+    <div class="subhdr">
+      <div class="hdrRow">
+        <div class="ttl">Majorations</div>
 
-    <!-- Sticky actions only -->
-    <div class="bar">
-      <div class="acts">
-        <button class="btn ghost" type="button" @click="resetAll" :disabled="saving || loading || genBusy || impBusy">
-          Réinit
-        </button>
+        <div class="actions">
+          <button class="btn ghost" type="button" @click="resetAll" :disabled="saving || loading || genBusy || impBusy">
+            Réinit
+          </button>
 
-        <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="impOpen = true">
-          {{ impBusy ? "..." : "Importer" }}
-        </button>
+          <button class="btn" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="impOpen = true">
+            {{ impBusy ? "..." : "Importer" }}
+          </button>
 
-        <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="genOpen = true">
-          {{ genBusy ? "..." : "Généraliser" }}
-        </button>
+          <button class="btn" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="genOpen = true">
+            {{ genBusy ? "..." : "Généraliser" }}
+          </button>
 
-        <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="applyPreview">
-          Appliquer
-        </button>
+          <button class="btn pri" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="applyPreview">
+            Appliquer
+          </button>
 
-        <button
-          class="btn warn"
-          type="button"
-          :disabled="!variant?.id || applyingReal || saving || loading || genBusy || impBusy"
-          @click="applyReal"
-          title="Écrit les majorations dans la variante puis remet majorations=0"
-        >
-          {{ applyingReal ? "..." : "Appliquer réellement" }}
-        </button>
+          <button
+            class="btn warn"
+            type="button"
+            :disabled="!variant?.id || applyingReal || saving || loading || genBusy || impBusy"
+            @click="applyReal"
+            title="Écrit les majorations dans la variante puis remet majorations=0"
+          >
+            {{ applyingReal ? "..." : "Appliquer réellement" }}
+          </button>
 
-        <button class="btn ok" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="save">
-          {{ saving ? "..." : "Enregistrer" }}
-        </button>
+          <button class="btn ok" type="button" :disabled="!variant?.id || saving || loading || genBusy || impBusy" @click="save">
+            {{ saving ? "..." : "Enregistrer" }}
+          </button>
+        </div>
+      </div>
+
+      <!-- status -->
+      <div v-if="!variant" class="alert info">Aucune variante active. Sélectionne une variante puis reviens ici.</div>
+      <div v-if="error" class="alert err">{{ error }}</div>
+      <div v-if="impErr" class="alert err">{{ impErr }}</div>
+      <div v-if="genErr" class="alert err">{{ genErr }}</div>
+      <div v-if="loading" class="alert">Chargement…</div>
+
+      <!-- Tabs -->
+      <div v-if="variant && !loading" class="tabs">
+        <button class="tab" :class="{ on: tab === 'SAISIE' }" type="button" @click="tab = 'SAISIE'">Saisie</button>
+        <button class="tab" :class="{ on: tab === 'IMPACTS' }" type="button" @click="tab = 'IMPACTS'">Impacts</button>
+        <button class="tab" :class="{ on: tab === 'PAR' }" type="button" @click="tab = 'PAR'">Par majoration</button>
       </div>
     </div>
 
-    <!-- status -->
-    <div v-if="!variant" class="alert info">Aucune variante active. Sélectionne une variante puis reviens ici.</div>
-    <div v-if="error" class="alert err">{{ error }}</div>
-    <div v-if="impErr" class="alert err">{{ impErr }}</div>
-    <div v-if="genErr" class="alert err">{{ genErr }}</div>
-    <div v-if="loading" class="alert">Chargement…</div>
-
-    <!-- Tabs -->
-    <div v-if="variant && !loading" class="tabs">
-      <button class="tab" :class="{ on: tab === 'SAISIE' }" type="button" @click="tab = 'SAISIE'">Saisie</button>
-      <button class="tab" :class="{ on: tab === 'IMPACTS' }" type="button" @click="tab = 'IMPACTS'">Impacts</button>
-      <button class="tab" :class="{ on: tab === 'PAR' }" type="button" @click="tab = 'PAR'">Par majoration</button>
-    </div>
-
-    <!-- =========================
-         TAB: IMPACTS (compact)
-    ========================== -->
+    <!-- TAB: IMPACTS -->
     <div v-if="variant && !loading && tab === 'IMPACTS'" class="topCards">
       <div class="card">
         <div class="cardT">Imputation sur MOMD</div>
         <div class="cardSub">Compense la baisse EBIT via une hausse MOMD (impacte aussi frais généraux).</div>
 
-        <div class="row">
+        <div class="row2">
           <button class="toggle" type="button" :class="{ on: impEnabled }" @click="impEnabled = !impEnabled">
             <span class="dot" /> Activée
           </button>
@@ -933,8 +930,8 @@ const helpOpen = ref(false);
         </div>
 
         <div class="mini">
-          <div class="kv"><span class="k">MOMD ajoutée</span><span class="v">{{ impactSummary.addMomdM3.toFixed(2) }} DH/m³</span></div>
-          <div class="kv"><span class="k">Volume</span><span class="v">{{ impactSummary.vol.toFixed(2) }} m³</span></div>
+          <div class="kv"><span class="k">MOMD ajoutée</span><span class="v num">{{ fmt2(impactSummary.addMomdM3) }} DH/m³</span></div>
+          <div class="kv"><span class="k">Volume</span><span class="v num">{{ fmt2(impactSummary.vol) }} m³</span></div>
         </div>
       </div>
 
@@ -945,39 +942,36 @@ const helpOpen = ref(false);
         <div class="miniGrid">
           <div class="pill">
             <div class="pT">Δ PV/m³ (sans imputation)</div>
-            <div class="pV">{{ impactSummary.dpvNoImp.toFixed(2) }}</div>
+            <div class="pV num">{{ fmt2(impactSummary.dpvNoImp) }}</div>
           </div>
           <div class="pill">
             <div class="pT">Δ PV/m³ (avec imputation)</div>
-            <div class="pV">{{ impactSummary.dpvImp.toFixed(2) }}</div>
+            <div class="pV num">{{ fmt2(impactSummary.dpvImp) }}</div>
           </div>
           <div class="pill bad">
             <div class="pT">Δ EBIT/m³ (sans imputation)</div>
-            <div class="pV">{{ impactSummary.debitNoImp.toFixed(2) }}</div>
+            <div class="pV num">{{ fmt2(impactSummary.debitNoImp) }}</div>
           </div>
           <div class="pill" :class="impEnabled ? 'ok' : 'mut'">
             <div class="pT">Δ EBIT/m³ (avec imputation)</div>
-            <div class="pV">{{ impactSummary.debitImp.toFixed(2) }}</div>
+            <div class="pV num">{{ fmt2(impactSummary.debitImp) }}</div>
           </div>
 
           <div class="pill">
             <div class="pT">Surcoût/m³ (sans imp.)</div>
-            <div class="pV">{{ impactSummary.surcoutNoImp.toFixed(2) }}</div>
-            <div class="pS">dont FG: {{ impactSummary.fgNoImp.toFixed(2) }}</div>
+            <div class="pV num">{{ fmt2(impactSummary.surcoutNoImp) }}</div>
+            <div class="pS">dont FG: {{ fmt2(impactSummary.fgNoImp) }}</div>
           </div>
           <div class="pill" :class="impEnabled ? 'ok' : 'mut'">
             <div class="pT">Surcoût/m³ (avec imp.)</div>
-            <div class="pV">{{ impactSummary.surcoutImp.toFixed(2) }}</div>
-            <div class="pS">dont FG: {{ impactSummary.fgImp.toFixed(2) }}</div>
+            <div class="pV num">{{ fmt2(impactSummary.surcoutImp) }}</div>
+            <div class="pS">dont FG: {{ fmt2(impactSummary.fgImp) }}</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- =========================
-         TAB: SAISIE (inputs + before/after + filters)
-         ✅ Les infos actions (Appliquer/Enregistrer/Appliquer réellement) ne sont gardées qu'ici.
-    ========================== -->
+    <!-- TAB: SAISIE -->
     <div v-if="variant && !loading && tab === 'SAISIE'" class="filters">
       <div class="search">
         <input v-model="q" class="searchIn" type="text" placeholder="Recherche (libellé)…" />
@@ -988,7 +982,6 @@ const helpOpen = ref(false);
         <span class="dot" /> Masquer 0
       </button>
 
-      <!-- ✅ UNIQUE bloc d'info (plus de duplication dans le header) -->
       <div class="help">
         <button class="helpBtn" type="button" @click="helpOpen = !helpOpen" :class="{ on: helpOpen }" title="Aide actions">
           i
@@ -1014,7 +1007,7 @@ const helpOpen = ref(false);
         <button class="secHead" type="button" @click="toggle(g.title)">
           <div class="secLeft">
             <span class="bullet" />
-            <span class="secTitle">{{ g.title }}</span>
+            <span class="secTitle" :title="g.title">{{ g.title }}</span>
             <span class="count">{{ g.rows.length }}</span>
           </div>
           <span class="chev" :class="{ open: open[g.title] }">▾</span>
@@ -1027,16 +1020,16 @@ const helpOpen = ref(false);
                 <div class="lblTop" :title="r.label">{{ r.label }}</div>
                 <div class="lblSub">
                   <span class="b">Base:</span>
-                  <span class="v mono">{{ baseValueOfKey(r.key).toFixed(2) }}</span>
+                  <span class="v num">{{ fmt2(baseValueOfKey(r.key)) }}</span>
                   <span class="sep2">→</span>
                   <span class="b">Après:</span>
-                  <span class="v mono">{{ afterValueOfKey(r.key).toFixed(2) }}</span>
+                  <span class="v num">{{ fmt2(afterValueOfKey(r.key)) }}</span>
                 </div>
               </div>
 
               <div class="inWrap">
                 <input
-                  class="in mono"
+                  class="in num"
                   type="number"
                   inputmode="decimal"
                   step="0.1"
@@ -1062,9 +1055,7 @@ const helpOpen = ref(false);
       <div class="foot">Quitter la page sans enregistrer annule le preview.</div>
     </div>
 
-    <!-- =========================
-         TAB: PAR MAJORATION
-    ========================== -->
+    <!-- TAB: PAR -->
     <div v-if="variant && !loading && tab === 'PAR'" class="impactBox">
       <div class="impactHead">
         <div class="impactT">Impact par majoration (Δ vs base)</div>
@@ -1079,24 +1070,25 @@ const helpOpen = ref(false);
             <div class="iName">{{ r.label }}</div>
             <div class="iKey">{{ r.key }}</div>
           </div>
-          <div class="iPct">{{ r.pct.toFixed(1) }}%</div>
+
+          <div class="iPct num">{{ fmt1(r.pct) }}%</div>
 
           <div class="iCell">
             <div class="iT">Δ PV/m³</div>
-            <div class="iV">{{ r.dpvNoImp.toFixed(2) }}</div>
-            <div class="iS" v-if="impEnabled">avec imp: {{ r.dpvImp.toFixed(2) }}</div>
+            <div class="iV num">{{ fmt2(r.dpvNoImp) }}</div>
+            <div class="iS" v-if="impEnabled">avec imp: {{ fmt2(r.dpvImp) }}</div>
           </div>
 
           <div class="iCell">
             <div class="iT">Surcoût/m³</div>
-            <div class="iV">{{ r.surcoutNoImp.toFixed(2) }}</div>
-            <div class="iS" v-if="impEnabled">avec imp: {{ r.surcoutImp.toFixed(2) }}</div>
+            <div class="iV num">{{ fmt2(r.surcoutNoImp) }}</div>
+            <div class="iS" v-if="impEnabled">avec imp: {{ fmt2(r.surcoutImp) }}</div>
           </div>
 
           <div class="iCell bad">
             <div class="iT">Δ EBIT/m³</div>
-            <div class="iV">{{ r.debitNoImp.toFixed(2) }}</div>
-            <div class="iS" v-if="impEnabled">avec imp: {{ r.debitImp.toFixed(2) }}</div>
+            <div class="iV num">{{ fmt2(r.debitNoImp) }}</div>
+            <div class="iS" v-if="impEnabled">avec imp: {{ fmt2(r.debitImp) }}</div>
           </div>
         </div>
       </div>
@@ -1106,7 +1098,7 @@ const helpOpen = ref(false);
     <SectionImportModal v-model="impOpen" sectionLabel="Majorations" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
     <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Majorations" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
-    <!-- ✅ Modal confirm/info (pour généralisation) -->
+    <!-- ✅ Modal confirm/info (généralisation) -->
     <teleport to="body">
       <div v-if="uiModal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeUiModal()">
         <div class="dlg">
@@ -1148,7 +1140,7 @@ const helpOpen = ref(false);
           <div class="mTxt">
             <div>Les valeurs seront écrites dans la variante (MP/transport/coûts…).</div>
             <div v-if="confirmAddMomdM3 > 0" class="mHi">
-              MOMD sera augmentée de <b>+{{ confirmAddMomdM3.toFixed(2) }} DH/m³</b> (imputation).
+              MOMD sera augmentée de <b class="num">+{{ fmt2(confirmAddMomdM3) }} DH/m³</b> (imputation).
             </div>
             <div>Ensuite : majorations + imputation seront remises à 0.</div>
           </div>
@@ -1168,65 +1160,64 @@ const helpOpen = ref(false);
 </template>
 
 <style scoped>
-.maj {
-  --navy: #184070;
-  --cyan: #20b8e8;
-  --green: #90c028;
-
-  --panel: #f7f8fb;
-  --border: rgba(16, 24, 40, 0.1);
-  --text: #0f172a;
-  --muted: rgba(15, 23, 42, 0.6);
-
-  padding: 10px;
-  color: var(--text);
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-}
-
-.head {
+.page {
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
+  gap: 10px;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: #0f172a;
+}
+* {
+  box-sizing: border-box;
+}
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
-.bar {
+/* ✅ header sticky */
+.subhdr {
   position: sticky;
   top: var(--hdrdash-h, -15px);
   z-index: 50;
   background: rgba(248, 250, 252, 0.92);
   backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 14px;
   padding: 8px 10px;
 }
 
-.h1 {
-  font-weight: 950;
-  color: var(--navy);
-  font-size: 15px;
-  line-height: 1.05;
-}
-.sub {
-  font-size: 11px;
-  font-weight: 850;
-  color: var(--muted);
+.hdrRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.acts {
+.ttl {
+  font-size: 14px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   align-items: center;
 }
+
 .btn {
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
   padding: 0 10px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   font-weight: 950;
+  font-size: 12px;
   cursor: pointer;
+  color: rgba(15, 23, 42, 0.9);
 }
 .btn:disabled {
   opacity: 0.6;
@@ -1236,14 +1227,14 @@ const helpOpen = ref(false);
   background: #fff;
 }
 .btn.pri {
-  border-color: rgba(24, 64, 112, 0.2);
-  background: rgba(24, 64, 112, 0.1);
-  color: var(--navy);
+  border-color: rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.12);
+  color: rgba(2, 132, 199, 0.95);
 }
 .btn.ok {
-  border-color: rgba(144, 192, 40, 0.25);
-  background: rgba(144, 192, 40, 0.18);
-  color: #2d5a00;
+  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.14);
+  color: #065f46;
 }
 .btn.warn {
   border-color: rgba(245, 158, 11, 0.35);
@@ -1251,14 +1242,15 @@ const helpOpen = ref(false);
   color: #92400e;
 }
 
+/* alerts */
 .alert {
-  border-radius: 14px;
+  margin-top: 8px;
+  border-radius: 12px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   font-weight: 850;
   font-size: 12px;
-  margin-top: 8px;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
@@ -1278,10 +1270,10 @@ const helpOpen = ref(false);
   flex-wrap: wrap;
 }
 .tab {
-  height: 32px;
+  height: 30px;
   border-radius: 999px;
   padding: 0 12px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   background: #fff;
   font-weight: 950;
   font-size: 12px;
@@ -1289,28 +1281,29 @@ const helpOpen = ref(false);
   cursor: pointer;
 }
 .tab.on {
-  border-color: rgba(32, 184, 232, 0.35);
-  background: rgba(32, 184, 232, 0.12);
+  border-color: rgba(2, 132, 199, 0.35);
+  background: rgba(2, 132, 199, 0.12);
   color: rgba(15, 23, 42, 0.95);
 }
 
-/* Impact cards */
+/* Impact cards + filters + stack + modals
+   (identiques à ta version précédente, gardés tels quels)
+*/
 .topCards {
-  margin-top: 10px;
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
 }
 .card {
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 10px;
 }
 .cardT {
   font-weight: 950;
-  color: var(--navy);
   font-size: 12.5px;
+  color: rgba(15, 23, 42, 0.95);
 }
 .cardSub {
   margin-top: 3px;
@@ -1318,7 +1311,7 @@ const helpOpen = ref(false);
   font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
 }
-.row {
+.row2 {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1342,10 +1335,36 @@ const helpOpen = ref(false);
   font-weight: 950;
   color: rgba(15, 23, 42, 0.75);
 }
+.toggle {
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  padding: 0 10px;
+  font-weight: 950;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.toggle.on {
+  border-color: rgba(2, 132, 199, 0.35);
+  background: rgba(2, 132, 199, 0.12);
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.35);
+}
+.toggle.on .dot {
+  border-color: rgba(2, 132, 199, 0.6);
+  background: rgba(2, 132, 199, 0.25);
+}
 .mini {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: 1fr;
   gap: 6px;
 }
 .kv {
@@ -1378,8 +1397,8 @@ const helpOpen = ref(false);
   background: rgba(239, 68, 68, 0.06);
 }
 .pill.ok {
-  border-color: rgba(144, 192, 40, 0.22);
-  background: rgba(144, 192, 40, 0.12);
+  border-color: rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.1);
 }
 .pill.mut {
   opacity: 0.75;
@@ -1394,7 +1413,6 @@ const helpOpen = ref(false);
   font-size: 14px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.95);
-  font-variant-numeric: tabular-nums;
 }
 .pS {
   margin-top: 1px;
@@ -1405,19 +1423,17 @@ const helpOpen = ref(false);
 
 /* Filters */
 .filters {
-  margin-top: 10px;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
-
 .search {
-  height: 32px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   background: #fff;
   border-radius: 12px;
   padding: 0 10px;
@@ -1431,7 +1447,7 @@ const helpOpen = ref(false);
   width: 100%;
   font-weight: 900;
   font-size: 12px;
-  color: var(--text);
+  color: rgba(15, 23, 42, 0.92);
 }
 .x {
   border: 0;
@@ -1440,36 +1456,6 @@ const helpOpen = ref(false);
   font-weight: 950;
   color: rgba(15, 23, 42, 0.55);
 }
-
-.toggle {
-  height: 32px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.03);
-  padding: 0 10px;
-  font-weight: 950;
-  font-size: 12px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.toggle.on {
-  border-color: rgba(32, 184, 232, 0.35);
-  background: rgba(32, 184, 232, 0.12);
-}
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  border: 2px solid rgba(15, 23, 42, 0.35);
-}
-.toggle.on .dot {
-  border-color: rgba(32, 184, 232, 0.6);
-  background: rgba(32, 184, 232, 0.25);
-}
-
-/* ✅ help next to Masquer 0 (unique info place) */
 .help {
   display: inline-flex;
   align-items: center;
@@ -1481,15 +1467,15 @@ const helpOpen = ref(false);
   width: 28px;
   height: 28px;
   border-radius: 10px;
-  border: 1px solid rgba(32, 184, 232, 0.35);
-  background: rgba(32, 184, 232, 0.12);
+  border: 1px solid rgba(2, 132, 199, 0.35);
+  background: rgba(2, 132, 199, 0.12);
   color: rgba(15, 23, 42, 0.85);
   font-weight: 950;
   cursor: pointer;
 }
 .helpBtn.on {
-  border-color: rgba(32, 184, 232, 0.6);
-  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.15);
+  border-color: rgba(2, 132, 199, 0.6);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
 }
 .helpTxt {
   font-size: 11px;
@@ -1510,7 +1496,7 @@ const helpOpen = ref(false);
 }
 .chip {
   background: rgba(15, 23, 42, 0.04);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 999px;
   padding: 4px 8px;
   font-size: 11px;
@@ -1518,9 +1504,9 @@ const helpOpen = ref(false);
   color: rgba(15, 23, 42, 0.65);
 }
 .chip.ok {
-  background: rgba(144, 192, 40, 0.16);
-  border-color: rgba(144, 192, 40, 0.22);
-  color: #2d5a00;
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(16, 185, 129, 0.22);
+  color: #065f46;
 }
 .sep {
   color: rgba(15, 23, 42, 0.35);
@@ -1529,7 +1515,7 @@ const helpOpen = ref(false);
   border: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--navy);
+  color: rgba(2, 132, 199, 0.95);
   font-weight: 950;
   font-size: 12px;
   text-decoration: underline;
@@ -1538,22 +1524,20 @@ const helpOpen = ref(false);
 
 /* Stack / Sections */
 .stack {
-  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-
 .sec {
-  border-radius: 16px;
-  border: 1px solid var(--border);
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   overflow: hidden;
 }
 .secHead {
   width: 100%;
   border: 0;
-  background: var(--panel);
+  background: rgba(15, 23, 42, 0.03);
   padding: 10px;
   display: flex;
   align-items: center;
@@ -1570,13 +1554,13 @@ const helpOpen = ref(false);
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  background: var(--cyan);
-  box-shadow: 0 0 0 3px rgba(32, 184, 232, 0.12);
+  background: rgba(2, 132, 199, 0.95);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
 .secTitle {
   font-weight: 950;
   font-size: 13px;
-  color: #0f172a;
+  color: rgba(15, 23, 42, 0.95);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1587,7 +1571,7 @@ const helpOpen = ref(false);
   font-weight: 950;
   color: rgba(15, 23, 42, 0.55);
   background: rgba(15, 23, 42, 0.06);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -1613,7 +1597,6 @@ const helpOpen = ref(false);
     grid-template-columns: 1fr;
   }
 }
-
 .field {
   border: 1px solid rgba(16, 24, 40, 0.08);
   background: rgba(15, 23, 42, 0.02);
@@ -1653,12 +1636,11 @@ const helpOpen = ref(false);
   font-weight: 900;
 }
 .lblSub .v {
-  color: rgba(15, 23, 42, 0.9);
+  color: rgba(15, 23, 42, 0.92);
 }
 .sep2 {
   opacity: 0.5;
 }
-
 .inWrap {
   display: inline-flex;
   align-items: center;
@@ -1667,33 +1649,29 @@ const helpOpen = ref(false);
 }
 .in {
   width: 86px;
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
-  border: 1px solid rgba(32, 184, 232, 0.45);
-  background: rgba(32, 184, 232, 0.12);
+  border: 1px solid rgba(2, 132, 199, 0.45);
+  background: rgba(2, 132, 199, 0.12);
   text-align: right;
   font-weight: 950;
   outline: none;
   padding: 0 10px;
 }
 .in:focus {
-  box-shadow: 0 0 0 4px rgba(32, 184, 232, 0.18);
-  border-color: rgba(32, 184, 232, 0.65);
+  box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.18);
+  border-color: rgba(2, 132, 199, 0.65);
 }
 .suf {
   font-size: 12px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.55);
 }
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
 
 .empty {
   border: 1px dashed rgba(16, 24, 40, 0.18);
   background: rgba(15, 23, 42, 0.02);
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 14px 12px;
   font-weight: 900;
   color: rgba(15, 23, 42, 0.6);
@@ -1712,12 +1690,11 @@ const helpOpen = ref(false);
   text-align: center;
 }
 
-/* Par majoration tab */
+/* Par majoration */
 .impactBox {
-  margin-top: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 10px;
 }
 .impactHead {
@@ -1730,8 +1707,8 @@ const helpOpen = ref(false);
 }
 .impactT {
   font-weight: 950;
-  color: var(--navy);
   font-size: 12.5px;
+  color: rgba(15, 23, 42, 0.95);
 }
 .impactS {
   font-size: 11px;
@@ -1782,7 +1759,6 @@ const helpOpen = ref(false);
   font-weight: 950;
   font-size: 12px;
   color: rgba(15, 23, 42, 0.75);
-  font-variant-numeric: tabular-nums;
 }
 .iCell {
   border-left: 1px dashed rgba(16, 24, 40, 0.16);
@@ -1800,7 +1776,6 @@ const helpOpen = ref(false);
   font-size: 12.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.95);
-  font-variant-numeric: tabular-nums;
 }
 .iS {
   font-size: 10.5px;
@@ -1808,7 +1783,7 @@ const helpOpen = ref(false);
   color: rgba(15, 23, 42, 0.55);
 }
 
-/* ✅ Confirm modal (généralisation) - AU-DESSUS du SectionTargetsGeneralizeModal (z=110000) */
+/* Modals (inchangés) */
 .ovl {
   position: fixed;
   inset: 0;
@@ -1823,7 +1798,7 @@ const helpOpen = ref(false);
 .dlg {
   width: min(520px, 100%);
   background: #fff;
-  border-radius: 18px;
+  border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   box-shadow: 0 20px 50px rgba(2, 6, 23, 0.25);
   overflow: hidden;
@@ -1867,7 +1842,7 @@ const helpOpen = ref(false);
   gap: 8px;
 }
 .btn2 {
-  height: 34px;
+  height: 32px;
   border-radius: 12px;
   padding: 0 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
@@ -1879,16 +1854,15 @@ const helpOpen = ref(false);
   background: #fff;
 }
 .btn2.pri {
-  background: rgba(24, 64, 112, 0.12);
-  border-color: rgba(24, 64, 112, 0.22);
-  color: var(--navy);
+  background: rgba(2, 132, 199, 0.12);
+  border-color: rgba(2, 132, 199, 0.22);
+  color: rgba(2, 132, 199, 0.95);
 }
 
-/* Confirm modal (apply real) - existant */
 .modalOverlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 120000;
   background: rgba(2, 6, 23, 0.5);
   backdrop-filter: blur(4px);
   display: flex;
@@ -1899,8 +1873,8 @@ const helpOpen = ref(false);
 .modal {
   width: min(520px, 100%);
   background: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 18px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 14px;
   box-shadow: 0 20px 50px rgba(2, 6, 23, 0.25);
   overflow: hidden;
 }

@@ -19,7 +19,7 @@ model Pnl {
   status    String    @default("ENCOURS")
   startDate DateTime?
   city      String
-region String @default("")
+  region    String    @default("")
   createdAt DateTime  @default(now())
 
   contracts Contract[]
@@ -39,15 +39,15 @@ model Contract {
   maintenance     String
   chargeuse       String
 
-  branchementEau String?
-  consoEau       String?
+  branchementEau  String?
+  consoEau        String?
   branchementElec String?
-  consoElec      String?
+  consoElec       String?
 
-  postes      Int?
-  sundayPrice Float?
+  postes       Int?
+  sundayPrice  Float?
   delayPenalty Float?
-  chillerRent Float?
+  chillerRent  Float?
 
   variants Variant[]
 }
@@ -98,53 +98,53 @@ model SectionMatierePremiere {
 }
 
 model VariantMp {
-  id        String @id @default(uuid())
+  id        String  @id @default(uuid())
   variantId String
   sectionId String
   mpId      String
   prix      Float?
   comment   String?
 
-  variant  Variant               @relation(fields: [variantId], references: [id])
-  section  SectionMatierePremiere @relation(fields: [sectionId], references: [id])
-  mp       MpCatalogue           @relation(fields: [mpId], references: [id])
+  variant Variant                @relation(fields: [variantId], references: [id])
+  section SectionMatierePremiere @relation(fields: [sectionId], references: [id])
+  mp      MpCatalogue            @relation(fields: [mpId], references: [id])
 }
 
 model SectionTransport {
-  id              String  @id @default(uuid())
-  variantId        String  @unique
-  category         String
-  type             String
-  prixMoyen         Float   @default(0)
-  includePompage  Boolean @default(false) // ✅ AJOUT
-  volumePompePct    Float?
-  prixAchatPompe    Float?
-  prixVentePompe    Float?
-  variant          Variant @relation(fields: [variantId], references: [id])
+  id             String  @id @default(uuid())
+  variantId      String  @unique
+  category       String
+  type           String
+  prixMoyen      Float   @default(0)
+  includePompage Boolean @default(false) // ✅ AJOUT
+  volumePompePct Float?
+  prixAchatPompe Float?
+  prixVentePompe Float?
+  variant        Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCab {
-  id        String  @id @default(uuid())
-  variantId String  @unique
-  category  String
-  etat      String
-  mode      String
-  capaciteM3 Float  @default(0)
-  amortMois Int     @default(0)
-  variant   Variant @relation(fields: [variantId], references: [id])
+  id         String  @id @default(uuid())
+  variantId  String  @unique
+  category   String
+  etat       String
+  mode       String
+  capaciteM3 Float   @default(0)
+  amortMois  Int     @default(0)
+  variant    Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionMaintenance {
-  id        String  @id @default(uuid())
-  variantId String  @unique
-  category  String
-  cab       Float   @default(0)
-  elec      Float   @default(0)
-  chargeur  Float   @default(0)
-  generale  Float   @default(0)
-  bassins   Float   @default(0)
-  preventive Float  @default(0)
-  variant   Variant @relation(fields: [variantId], references: [id])
+  id         String  @id @default(uuid())
+  variantId  String  @unique
+  category   String
+  cab        Float   @default(0)
+  elec       Float   @default(0)
+  chargeur   Float   @default(0)
+  generale   Float   @default(0)
+  bassins    Float   @default(0)
+  preventive Float   @default(0)
+  variant    Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCoutM3 {
@@ -158,27 +158,30 @@ model SectionCoutM3 {
 }
 
 model SectionCoutMensuel {
-  id                 String  @id @default(uuid())
-  variantId           String  @unique
+  id                  String @id @default(uuid())
+  variantId           String @unique
   category            String
-  electricite         Float   @default(0)
-  gasoil              Float   @default(0)
-  location            Float   @default(0)
-  securite            Float   @default(0)
-  hebergements        Float   @default(0)
-  locationTerrain     Float   @default(0)
-  telephone           Float   @default(0)
-  troisG              Float   @default(0)
-  taxeProfessionnelle Float   @default(0)
-  locationVehicule    Float   @default(0)
-  locationAmbulance   Float   @default(0)
-  locationBungalows   Float   @default(0)
-  epi                 Float   @default(0)
-  variant             Variant @relation(fields: [variantId], references: [id])
+  electricite         Float  @default(0)
+  gasoil              Float  @default(0)
+  location            Float  @default(0)
+  securite            Float  @default(0)
+  hebergements        Float  @default(0)
+  locationTerrain     Float  @default(0)
+  telephone           Float  @default(0)
+  troisG              Float  @default(0)
+  taxeProfessionnelle Float  @default(0)
+  locationVehicule    Float  @default(0)
+
+  // ✅ nouveau nom côté code, colonne DB inchangée
+  locationChargeur Float @default(0) @map("locationAmbulance")
+
+  locationBungalows Float   @default(0)
+  epi               Float   @default(0)
+  variant           Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionCoutOccasionnel {
-  id                 String  @id @default(uuid())
+  id                  String  @id @default(uuid())
   variantId           String  @unique
   category            String
   genieCivil          Float   @default(0)
@@ -199,34 +202,33 @@ model SectionEmployes {
   variant   Variant @relation(fields: [variantId], references: [id])
 
   // ✅ Champs employés
-  responsableNb                  Int   @default(0)
-  responsableCout                Float @default(0)
+  responsableNb   Int   @default(0)
+  responsableCout Float @default(0)
 
-  centralistesNb                 Int   @default(0)
-  centralistesCout               Float @default(0)
+  centralistesNb   Int   @default(0)
+  centralistesCout Float @default(0)
 
-  manoeuvreNb                    Int   @default(0)
-  manoeuvreCout                  Float @default(0)
+  manoeuvreNb   Int   @default(0)
+  manoeuvreCout Float @default(0)
 
-  coordinateurExploitationNb     Int   @default(0)
-  coordinateurExploitationCout   Float @default(0)
+  coordinateurExploitationNb   Int   @default(0)
+  coordinateurExploitationCout Float @default(0)
 
-  technicienLaboNb               Int   @default(0)
-  technicienLaboCout             Float @default(0)
+  technicienLaboNb   Int   @default(0)
+  technicienLaboCout Float @default(0)
 
-  femmeMenageNb                  Int   @default(0)
-  femmeMenageCout                Float @default(0)
+  femmeMenageNb   Int   @default(0)
+  femmeMenageCout Float @default(0)
 
-  gardienNb                      Int   @default(0)
-  gardienCout                    Float @default(0)
+  gardienNb   Int   @default(0)
+  gardienCout Float @default(0)
 
-  maintenancierNb                Int   @default(0)
-  maintenancierCout              Float @default(0)
+  maintenancierNb   Int   @default(0)
+  maintenancierCout Float @default(0)
 
-  panierRepasNb                  Int   @default(0)
-  panierRepasCout                Float @default(0)
+  panierRepasNb   Int   @default(0)
+  panierRepasCout Float @default(0)
 }
-
 
 model SectionAutresCouts {
   id          String  @id @default(uuid())
@@ -246,7 +248,7 @@ model AutreCoutItem {
   unite     String
   valeur    Float
 
-  variant Variant          @relation(fields: [variantId], references: [id])
+  variant Variant            @relation(fields: [variantId], references: [id])
   section SectionAutresCouts @relation(fields: [sectionId], references: [id])
 }
 
@@ -260,16 +262,16 @@ model SectionFormules {
 }
 
 model VariantFormule {
-  id         String  @id @default(uuid())
-  variantId  String
-  sectionId  String
-  formuleId  String
-  volumeM3   Float   @default(0)
-  momd       Float   @default(0)
+  id          String @id @default(uuid())
+  variantId   String
+  sectionId   String
+  formuleId   String
+  volumeM3    Float  @default(0)
+  momd        Float  @default(0)
   cmpOverride Float?
 
-  variant Variant         @relation(fields: [variantId], references: [id])
-  section SectionFormules @relation(fields: [sectionId], references: [id])
+  variant Variant          @relation(fields: [variantId], references: [id])
+  section SectionFormules  @relation(fields: [sectionId], references: [id])
   formule FormuleCatalogue @relation(fields: [formuleId], references: [id])
 }
 
@@ -281,27 +283,27 @@ model SectionMajorations {
 }
 
 model SectionDevis {
-  id        String  @id @default(uuid())
-  variantId String  @unique
+  id        String @id @default(uuid())
+  variantId String @unique
   category  String
 
   // legacy/global surcharge (kept for backward compatibility)
-  surcharge Float   @default(0)
+  surcharge Float @default(0)
 
   // ✅ devis content (JSON strings) — allows later Word/PDF export
-  meta               String @default("{}")  // { date, titreProjet, client, ... }
-  intro              String @default("")    // free text
+  meta                String @default("{}") // { date, titreProjet, client, ... }
+  intro               String @default("") // free text
   rappel              String @default("{}") // { dureeMois, quantiteM3, ... }
-  chargeFournisseur  String @default("[]")  // DevisLineItem[]
-  chargeClient       String @default("[]")  // DevisLineItem[]
+  chargeFournisseur   String @default("[]") // DevisLineItem[]
+  chargeClient        String @default("[]") // DevisLineItem[]
   prixComplementaires String @default("[]") // DevisLineItem[]
-  validiteTexte      String @default("")    // free text (validité)
-  signature          String @default("{}")  // { nom, poste, telephone }
+  validiteTexte       String @default("") // free text (validité)
+  signature           String @default("{}") // { nom, poste, telephone }
 
   // ✅ surcharges par formule (map JSON: { [variantFormuleId]: number })
-  surcharges         String @default("{}")
+  surcharges String @default("{}")
 
-  variant   Variant @relation(fields: [variantId], references: [id])
+  variant Variant @relation(fields: [variantId], references: [id])
 }
 
 // =======================
@@ -331,7 +333,7 @@ model FormuleCatalogue {
   region     String
   comment    String?
 
-  items FormuleCatalogueItem[]
+  items        FormuleCatalogueItem[]
   variantLinks VariantFormule[]
 }
 

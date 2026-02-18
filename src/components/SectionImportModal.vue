@@ -343,7 +343,7 @@ function sectionPreviewText(variant: any): string {
     add("3G", s.troisG);
     add("Taxe prof.", s.taxeProfessionnelle);
     add("Location véhicule", s.locationVehicule);
-    add("Location ambulance", s.locationAmbulance);
+    add("Location chargeur", s.locationChargeur);
     add("Location bungalows", s.locationBungalows);
     add("EPI", s.epi);
     return lines.length ? lines.join("\n") : "Valeurs à 0.";

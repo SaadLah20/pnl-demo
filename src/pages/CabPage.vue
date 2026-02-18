@@ -1,7 +1,8 @@
 <!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET)
      ✅ Contrat: CAB à charge client => amortMois forcé à 0 (UI + auto-fix backend),
      ✅ page reste active, seul champ amortissement verrouillé
-     ✅ UI: cohérente avec tes autres pages, titre + grand, meta retirée du header
+     ✅ Header calqué sur MomdAndQuantityPage (positions/tailles/boutons) + aucune info à côté du titre
+     ✅ Police chiffres: normale (pas monospace), comme FormulesCataloguePage
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
@@ -68,12 +69,6 @@ function isChargeClient(v: any): boolean {
 const variant = computed<any>(() => (store as any).activeVariant ?? null);
 const contract = computed<any>(() => (store as any).activeContract ?? null);
 const cab = computed<any>(() => (variant.value as any)?.cab ?? null);
-
-const variantLabel = computed(() => {
-  const v = variant.value;
-  if (!v) return "—";
-  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
-});
 
 /**
  * ✅ CAB à la charge du client ?
@@ -257,9 +252,7 @@ async function ensureAmortZeroIfChargeClient() {
 
 watch(
   () => [variant.value?.id, cabChargeClient.value, cab.value?.amortMois],
-  () => {
-    ensureAmortZeroIfChargeClient();
-  },
+  () => ensureAmortZeroIfChargeClient(),
   { immediate: true }
 );
 
@@ -482,28 +475,11 @@ const amortPctCa = computed<number>(() => {
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader (cohérent + plus grand + sans meta à côté du titre) -->
+    <!-- ✅ Header calqué sur MomdAndQuantityPage -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttlRow">
-            <div class="ttl">CAB</div>
-
-            <!-- ✅ badges ok, mais pas de données "durée/variantLabel" à côté -->
-            <span v-if="variant" class="badge">Variante active</span>
-            <span v-if="variant && cabChargeClient" class="badge lock">
-              <LockClosedIcon class="bic" />
-              Amortissement verrouillé (contrat)
-            </span>
-          </div>
-
-          <!-- ✅ meta déplacée sous le titre, plus discret -->
-          <div class="meta" v-if="variant">
-            <span class="clip"><b>{{ variantLabel }}</b></span>
-            <span class="sep">•</span>
-            <span>Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
-          </div>
-          <div class="meta" v-else>Aucune variante active.</div>
+          <div class="ttl">CAB</div>
         </div>
 
         <div class="actions" v-if="variant">
@@ -527,6 +503,12 @@ const amortPctCa = computed<number>(() => {
             {{ saving ? "…" : "Enregistrer" }}
           </button>
         </div>
+      </div>
+
+      <!-- ✅ Indication discrète (pas à côté du titre) -->
+      <div v-if="variant && cabChargeClient" class="hintLock">
+        <LockClosedIcon class="lic" />
+        Amortissement verrouillé (contrat à charge client) — valeur forcée à 0.
       </div>
 
       <div v-if="err" class="alert err">
@@ -633,8 +615,8 @@ const amortPctCa = computed<number>(() => {
             <div class="rrow">
               <div class="lab">
                 Amortissement / mois
-                <span v-if="cabChargeClient" class="lockHint">
-                  <LockClosedIcon class="lic" />
+                <span v-if="cabChargeClient" class="lockPill">
+                  <LockClosedIcon class="lic2" />
                   Contrat
                 </span>
               </div>
@@ -697,12 +679,7 @@ const amortPctCa = computed<number>(() => {
     </template>
 
     <!-- ✅ MODAL IMPORT -->
-    <SectionImportModal
-      v-model="impOpen"
-      sectionLabel="CAB"
-      :targetVariantId="variant?.id ?? null"
-      @apply="onApplyImport"
-    />
+    <SectionImportModal v-model="impOpen" sectionLabel="CAB" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
     <!-- ✅ MODAL GENERALISATION -->
     <SectionTargetsGeneralizeModal
@@ -756,12 +733,13 @@ const amortPctCa = computed<number>(() => {
 .muted {
   color: rgba(15, 23, 42, 0.55);
 }
+
+/* ✅ police normale (pas monospace) + chiffres tabulaires */
 .mono {
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-/* sticky subheader */
+/* sticky subheader (même esprit que MomdAndQuantityPage) */
 .subhdr {
   position: sticky;
   top: var(--hdrdash-h, -15px);
@@ -772,84 +750,31 @@ const amortPctCa = computed<number>(() => {
   border-radius: 16px;
   padding: 10px;
 }
-
 .row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
 }
 .left {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 240px;
-}
-
-.ttlRow {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  min-width: 180px;
 }
 .ttl {
-  font-size: 18px; /* ✅ plus grand */
+  font-size: 15px;
   font-weight: 950;
   color: #0f172a;
-  letter-spacing: -0.01em;
 }
 
-.badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.badge.lock {
-  color: #7c2d12;
-  background: #fff7ed;
-  border-color: #fed7aa;
-}
-.bic {
-  width: 14px;
-  height: 14px;
-}
-
-/* ✅ meta discret sous le titre */
-.meta {
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sep {
-  color: rgba(15, 23, 42, 0.35);
-}
-
+/* actions (mêmes tailles) */
 .actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
-
 .btn {
   height: 32px;
   border-radius: 12px;
@@ -882,10 +807,24 @@ const amortPctCa = computed<number>(() => {
   width: 18px;
   height: 18px;
 }
-.ic3 {
+
+/* hint discret sous header */
+.hintLock {
+  margin-top: 8px;
+  border-radius: 14px;
+  padding: 9px 10px;
+  border: 1px solid rgba(124, 45, 18, 0.18);
+  background: rgba(255, 247, 237, 0.75);
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  font-weight: 900;
+  color: rgba(124, 45, 18, 0.95);
+}
+.lic {
   width: 18px;
   height: 18px;
-  color: rgba(15, 23, 42, 0.75);
+  flex: 0 0 auto;
 }
 
 /* alerts */
@@ -946,6 +885,11 @@ const amortPctCa = computed<number>(() => {
   align-items: center;
   gap: 10px;
 }
+.ic3 {
+  width: 18px;
+  height: 18px;
+  color: rgba(15, 23, 42, 0.75);
+}
 .h {
   font-weight: 950;
   color: #0f172a;
@@ -982,7 +926,7 @@ const amortPctCa = computed<number>(() => {
   align-items: center;
   gap: 8px;
 }
-.lockHint {
+.lockPill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -994,7 +938,7 @@ const amortPctCa = computed<number>(() => {
   padding: 1px 6px;
   border-radius: 999px;
 }
-.lic {
+.lic2 {
   width: 12px;
   height: 12px;
 }
@@ -1100,7 +1044,6 @@ const amortPctCa = computed<number>(() => {
   align-items: flex-start;
   padding-top: 82px;
 }
-
 .dlg {
   width: min(520px, 100%);
   background: #fff;
@@ -1162,7 +1105,6 @@ const amortPctCa = computed<number>(() => {
   right: 12px;
   bottom: 12px;
   z-index: 100000;
-
   display: flex;
   align-items: center;
   gap: 10px;

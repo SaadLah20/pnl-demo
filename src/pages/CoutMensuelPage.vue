@@ -1,4 +1,9 @@
-<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET / ✅ UI type Maintenance (1 ligne = 1 poste) + colonnes Total / m³ / % + ✅ Masquer 0 auto + ✅ z-index modals au-dessus HeaderDashboard) -->
+<!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET)
+     ✅ UI type Maintenance (1 ligne = 1 poste) + colonnes Total / m³ / %
+     ✅ Masquer 0 auto
+     ✅ Locks contrat (charge client) appliqués
+     ✅ Modals au-dessus HeaderDashboard (z-index)
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -14,6 +19,7 @@ import {
   CalendarDaysIcon,
   ArrowDownTrayIcon,
   LockClosedIcon,
+  InformationCircleIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -69,12 +75,6 @@ function isChargeClient(v: any): boolean {
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
-
-const variantLabel = computed(() => {
-  const v = variant.value;
-  if (!v) return "—";
-  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
-});
 
 /* =========================
    ✅ CONTRAT → LOCK FLAGS
@@ -151,10 +151,9 @@ type Draft = {
   taxeProfessionnelle: number;
   securite: number;
   locationVehicule: number;
-  locationAmbulance: number;
+  locationChargeur: number;
   locationBungalows: number;
   epi: number;
-
   // legacy (utilisé comme "Location groupes")
   location: number;
 };
@@ -169,7 +168,7 @@ const draft = reactive<Draft>({
   taxeProfessionnelle: 0,
   securite: 0,
   locationVehicule: 0,
-  locationAmbulance: 0,
+  locationChargeur: 0,
   locationBungalows: 0,
   epi: 0,
   location: 0,
@@ -186,7 +185,7 @@ function applyFromVariant(v: any) {
   draft.taxeProfessionnelle = clamp(s.taxeProfessionnelle);
   draft.securite = clamp(s.securite);
   draft.locationVehicule = clamp(s.locationVehicule);
-  draft.locationAmbulance = clamp(s.locationAmbulance);
+  draft.locationChargeur = clamp(s.locationChargeur);
   draft.locationBungalows = clamp(s.locationBungalows);
   draft.epi = clamp(s.epi);
   draft.location = clamp(s.location); // legacy: "Location groupes"
@@ -198,15 +197,18 @@ function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
   const notes: string[] = [];
 
   if (lockElecAndGroups.value) {
+    let any = false;
     if (clamp(draft.electricite) !== 0) {
       draft.electricite = 0;
       changed = true;
+      any = true;
     }
     if (clamp(draft.location) !== 0) {
       draft.location = 0;
       changed = true;
+      any = true;
     }
-    if (changed) notes.push("Électricité + Location groupes forcées à 0 (charge client).");
+    if (any) notes.push("Électricité + Location groupes forcées à 0 (charge client).");
   }
 
   if (lockTerrain.value) {
@@ -236,7 +238,7 @@ const effective = computed(() => {
     taxeProfessionnelle: clamp(draft.taxeProfessionnelle),
     securite: clamp(draft.securite),
     locationVehicule: clamp(draft.locationVehicule),
-    locationAmbulance: clamp(draft.locationAmbulance),
+    locationChargeur: clamp(draft.locationChargeur),
     locationBungalows: clamp(draft.locationBungalows),
     epi: clamp(draft.epi),
   };
@@ -250,10 +252,7 @@ function anyEffectiveNonZero(): boolean {
 }
 
 /* =========================
-   ✅ MASQUER 0
-   - Auto ON à chaque accès si au moins 1 champ ≠ 0
-   - Auto OFF si tout = 0
-   - L'utilisateur peut forcer ON/OFF via bouton (prioritaire)
+   ✅ MASQUER 0 (AUTO + USER OVERRIDE)
 ========================= */
 const hideZeros = ref(false);
 const hideZerosUserToggled = ref(false);
@@ -261,24 +260,17 @@ const hideZerosUserToggled = ref(false);
 function syncHideZerosAuto() {
   const anyNZ = anyEffectiveNonZero();
 
-  // ✅ si tout est à 0 => OFF obligatoire + reset "user toggled"
   if (!anyNZ) {
     hideZeros.value = false;
     hideZerosUserToggled.value = false;
     return;
   }
 
-  // ✅ si au moins un ≠ 0 : ON par défaut à chaque accès (sauf si user a explicitement désactivé)
-  if (!hideZerosUserToggled.value) {
-    hideZeros.value = true;
-  }
+  if (!hideZerosUserToggled.value) hideZeros.value = true;
 }
 function toggleHideZeros() {
   hideZerosUserToggled.value = true;
   hideZeros.value = !hideZeros.value;
-
-  // si l'user met OFF, ok. si l'user met ON, ok.
-  // si plus tard tout repasse à 0, syncHideZerosAuto() remettra OFF et reset.
 }
 
 /* =========================
@@ -288,7 +280,6 @@ function loadFromVariant() {
   applyFromVariant(variant.value);
   enforceContractLocksOnDraft();
 
-  // ✅ "à chaque accès à la page"
   hideZerosUserToggled.value = false;
   syncHideZerosAuto();
 }
@@ -304,12 +295,9 @@ watch(
   { immediate: true }
 );
 
-// si user modifie des valeurs -> recalcul auto (mais n'écrase pas son choix)
 watch(
   () => ({ ...effective.value }),
-  () => {
-    syncHideZerosAuto();
-  }
+  () => syncHideZerosAuto()
 );
 
 /* =========================
@@ -324,7 +312,7 @@ const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
-   LINES (1 poste par ligne, comme Maintenance)
+   LINES (Maintenance)
 ========================= */
 type LineKey = keyof Draft; // inclut "location" legacy
 type Line = {
@@ -342,7 +330,6 @@ function mensuelForKey(key: LineKey): number {
   if (key === "location") return clamp(e.location);
   if (key === "electricite") return clamp(e.electricite);
   if (key === "locationTerrain") return clamp(e.locationTerrain);
-  // others exist on effective
   return clamp(e[key]);
 }
 
@@ -366,7 +353,7 @@ const lines = computed<Line[]>(() => {
     mk("taxeProfessionnelle", "Taxe professionnelle"),
     mk("securite", "Sécurité"),
     mk("locationVehicule", "Location véhicule"),
-    mk("locationAmbulance", "Location ambulance"),
+    mk("locationChargeur", "Location chargeur"),
     mk("locationBungalows", "Location bungalows"),
     mk("epi", "EPI"),
   ];
@@ -379,7 +366,7 @@ const visibleLines = computed(() => {
 });
 
 /* =========================
-   ✅ IMPORTER (depuis autre variante / UI only)
+   IMPORTER
 ========================= */
 const impOpen = ref(false);
 const impBusy = ref(false);
@@ -406,7 +393,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   if (!sourceId) return;
 
   if (String(variant.value?.id ?? "") === sourceId) {
-    showToast("La source est déjà la variante active.", "ok");
+    showToast("La source est déjà la variante active.", "info");
     impOpen.value = false;
     return;
   }
@@ -426,13 +413,10 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
     applyFromVariant(src);
     const { changed, notes } = enforceContractLocksOnDraft();
 
-    // ✅ on réactive auto Masquer 0 (sauf si user a déjà touché — ici c'est un import, donc on reset)
     hideZerosUserToggled.value = false;
     syncHideZerosAuto();
 
-    if (changed) showToast(`Import OK. Ajustements contrat: ${notes.join(" ")}`, "ok");
-    else showToast("Coûts mensuels importés. Pense à enregistrer.", "ok");
-
+    showToast(changed ? `Import OK. ${notes.join(" ")}` : "Coûts mensuels importés. Pense à enregistrer.", "ok");
     impOpen.value = false;
   } catch (e: any) {
     impErr.value = e?.message ?? String(e);
@@ -443,7 +427,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 }
 
 /* =========================
-   TOAST (non bloquant)
+   TOAST
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
@@ -472,13 +456,6 @@ function openConfirm(title: string, message: string, onConfirm: () => void | Pro
   modal.message = message;
   modal.mode = "confirm";
   modal.onConfirm = onConfirm;
-}
-function openInfo(title: string, message: string) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "info";
-  modal.onConfirm = null;
 }
 function closeModal() {
   modal.open = false;
@@ -509,7 +486,7 @@ function buildPayload() {
     taxeProfessionnelle: Number(e.taxeProfessionnelle),
     securite: Number(e.securite),
     locationVehicule: Number(e.locationVehicule),
-    locationAmbulance: Number(e.locationAmbulance),
+    locationChargeur: Number(e.locationChargeur),
     locationBungalows: Number(e.locationBungalows),
     epi: Number(e.epi),
   };
@@ -544,7 +521,7 @@ function askReset() {
 }
 
 /* =========================
-   GENERALISER
+   GENERALISER (avec warning contrats)
 ========================= */
 const genOpen = ref(false);
 const genBusy = ref(false);
@@ -650,7 +627,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 function setDraft(key: LineKey, value: any) {
   const v = clamp(value, 0, 1e15);
 
-  // respect locks
   if (key === "electricite" && lockElecAndGroups.value) return;
   if (key === "location" && lockElecAndGroups.value) return;
   if (key === "locationTerrain" && lockTerrain.value) return;
@@ -661,21 +637,10 @@ function setDraft(key: LineKey, value: any) {
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader -->
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttlRow">
-            <div class="ttl">Coûts mensuels</div>
-            <span v-if="variant" class="badge">Variante active</span>
-          </div>
-
-          <div class="meta" v-if="variant">
-            <span class="clip"><b>{{ variantLabel }}</b></span>
-            <span class="sep" v-if="dureeMois">•</span>
-            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
-          </div>
-          <div class="meta" v-else>Aucune variante active.</div>
+          <div class="ttl">Coûts mensuels</div>
         </div>
 
         <div class="actions">
@@ -706,42 +671,36 @@ function setDraft(key: LineKey, value: any) {
         </div>
       </div>
 
-      <!-- ✅ Contract locks info -->
-      <div v-if="variant && (lockElecAndGroups || lockTerrain)" class="lockInfo">
-        <LockClosedIcon class="lic" />
-        <div class="ltext">
+      <!-- ✅ lock info -->
+      <div v-if="variant && (lockElecAndGroups || lockTerrain)" class="alert lock">
+        <LockClosedIcon class="aic" />
+        <div>
           <b>Contrat :</b>
-          <span v-if="lockElecAndGroups"> Électricité + Location groupes figées à 0 (charge client).</span>
-          <span v-if="lockTerrain"> Location terrain figée à 0 (charge client).</span>
+          <span v-if="lockElecAndGroups"> Électricité + Location groupes forcées à 0 (charge client).</span>
+          <span v-if="lockTerrain"> Location terrain forcée à 0 (charge client).</span>
         </div>
       </div>
 
-      <!-- ✅ KPIs -->
+      <!-- ✅ KPIs compacts -->
       <div class="kpis" v-if="variant">
-        <div class="kpi main">
-          <div class="kLbl">
-            <CalendarDaysIcon class="ic2" />
-            / mois
-          </div>
-          <div class="kVal mono">
-            {{ money(monthly, 2) }}
-            <span class="unit">DH/mois</span>
-          </div>
+        <div class="kpi kpiTint">
+          <div class="kLbl"><CalendarDaysIcon class="ic" /> / mois</div>
+          <div class="kVal num">{{ money(monthly, 2) }} <span>DH/mois</span></div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">Total</div>
-          <div class="kVal mono">{{ money(total, 2) }}</div>
+          <div class="kVal num">{{ money(total, 2) }}</div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">/ m³</div>
-          <div class="kVal mono">{{ n(perM3, 2) }} <span class="unit">DH/m³</span></div>
+          <div class="kVal num">{{ n(perM3, 2) }} <span>DH/m³</span></div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">% CA</div>
-          <div class="kVal mono">{{ n(pct, 2) }}<span class="unit">%</span></div>
+          <div class="kVal num">{{ n(pct, 2) }} <span>%</span></div>
         </div>
       </div>
 
@@ -775,24 +734,21 @@ function setDraft(key: LineKey, value: any) {
     </div>
 
     <template v-else>
-      <div class="card">
-        <!-- ✅ cardHdr supprimé (logo + paragraphes supprimés) -->
-
-        <!-- ✅ Table style Maintenance (1 ligne = 1 poste) -->
+      <div class="card pad0">
         <div class="tableWrap">
           <table class="table">
             <colgroup>
-              <col class="colLabel" />
-              <col class="colMensuel" />
-              <col class="colTotal" />
-              <col class="colM3" />
-              <col class="colPct" />
+              <col class="colDesignation" />
+              <col class="colIn" />
+              <col class="colNumCa" />
+              <col class="colNum" />
+              <col class="colNum" />
             </colgroup>
 
             <thead>
               <tr>
-                <th class="th">Poste</th>
-                <th class="th r">DH/mois</th>
+                <th class="th thL">Poste</th>
+                <th class="th thC">DH/mois</th>
                 <th class="th r">Total</th>
                 <th class="th r">DH/m³</th>
                 <th class="th r">% CA</th>
@@ -801,17 +757,20 @@ function setDraft(key: LineKey, value: any) {
 
             <tbody>
               <tr v-for="ln in visibleLines" :key="String(ln.key)">
-                <td class="labelCell">
-                  <div class="labelWrap">
-                    <b>{{ ln.label }}</b>
-                    <span v-if="ln.locked" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+                <td>
+                  <div class="lblWrap">
+                    <span class="designationText">{{ ln.label }}</span>
+                    <span v-if="ln.locked" class="lockTag" title="Forcé à 0 par le contrat">
+                      <LockClosedIcon class="lk" />
+                      Contrat
+                    </span>
                   </div>
                 </td>
 
-                <td class="r">
+                <td class="thC">
                   <div class="inCell">
                     <input
-                      class="inputSm r mono"
+                      class="inputLg num"
                       type="number"
                       step="0.01"
                       min="0"
@@ -819,39 +778,40 @@ function setDraft(key: LineKey, value: any) {
                       :value="(draft as any)[ln.key]"
                       @input="setDraft(ln.key, ($event.target as HTMLInputElement).value)"
                     />
-                    <span class="unit unitMonth">DH</span>
+                    <span class="unit unitEdit">DH</span>
                   </div>
                 </td>
 
-                <td class="r mono"><b>{{ money(ln.total, 2) }}</b></td>
-                <td class="r mono">{{ n(ln.parM3, 2) }}</td>
-                <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
+                <td class="r val num">{{ money(ln.total, 2) }}</td>
+                <td class="r val num">{{ n(ln.parM3, 2) }}</td>
+                <td class="r val num">{{ n(ln.pctCa, 2) }}%</td>
               </tr>
 
-              <tr class="sumRow">
-                <td><b>Total</b></td>
-                <td class="r"><b>{{ n(monthly, 2) }}</b> <span class="unit">DH</span></td>
-                <td class="r"><b>{{ money(total, 2) }}</b></td>
-                <td class="r"><b>{{ n(perM3, 2) }}</b></td>
-                <td class="r"><b>{{ n(pct, 2) }}%</b></td>
+              <tr>
+                <td class="val">Total</td>
+                <td class="thC val num">{{ n(monthly, 2) }} <span class="unit">DH</span></td>
+                <td class="r val num">{{ money(total, 2) }}</td>
+                <td class="r val num">{{ n(perM3, 2) }}</td>
+                <td class="r val num">{{ n(pct, 2) }}%</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <div class="foot">
-          Durée : <b>{{ n(dureeMois, 0) }}</b> mois • Volume total : <b>{{ n(volumeTotal, 2) }}</b> m³ • CA estimé : <b>{{ money(caTotal, 2) }}</b>
+        <div class="foot tiny muted">
+          <InformationCircleIcon class="ic" style="vertical-align: -3px; margin-right: 6px" />
+          Durée : <b class="num">{{ n(dureeMois, 0) }}</b> mois • Volume total :
+          <b class="num">{{ n(volumeTotal, 2) }}</b> m³ • CA estimé :
+          <b class="num">{{ money(caTotal, 2) }}</b>
         </div>
       </div>
     </template>
 
-    <!-- ✅ IMPORT -->
     <SectionImportModal v-model="impOpen" sectionLabel="Coûts mensuels" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <!-- ✅ Generalize Modal -->
     <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Coûts mensuels" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
-    <!-- ✅ Modal confirm/info -->
+    <!-- confirm modal -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -874,7 +834,7 @@ function setDraft(key: LineKey, value: any) {
       </div>
     </teleport>
 
-    <!-- ✅ Toast -->
+    <!-- toast -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -887,10 +847,24 @@ function setDraft(key: LineKey, value: any) {
 
 <style scoped>
 .page {
-  padding: 10px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.muted {
+  color: rgba(15, 23, 42, 0.55);
+}
+.tiny {
+  font-size: 10.5px;
+}
+* {
+  box-sizing: border-box;
+}
+
+/* ✅ chiffres en police NORMALE + tabulaires */
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 /* sticky subheader */
@@ -901,10 +875,9 @@ function setDraft(key: LineKey, value: any) {
   background: rgba(248, 250, 252, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 8px 10px;
 }
-
 .row {
   display: flex;
   align-items: flex-end;
@@ -914,64 +887,31 @@ function setDraft(key: LineKey, value: any) {
 }
 .left {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 240px;
-}
-
-.ttlRow {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  min-width: 220px;
 }
 .ttl {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 950;
   color: #0f172a;
 }
-.badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
 
-.meta {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-}
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sep {
-  margin: 0 8px;
-  color: rgba(15, 23, 42, 0.35);
-}
-
+/* actions */
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
-
 .btn {
-  height: 32px;
+  height: 30px;
   border-radius: 12px;
   padding: 0 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   color: #0f172a;
   font-weight: 950;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -992,8 +932,12 @@ function setDraft(key: LineKey, value: any) {
 .btn.pri:hover {
   background: rgba(2, 132, 199, 0.18);
 }
+.ic {
+  width: 16px;
+  height: 16px;
+}
 
-/* ✅ Masquer 0 button state */
+/* masque 0 */
 .btn.on {
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.28);
@@ -1008,196 +952,169 @@ function setDraft(key: LineKey, value: any) {
   background: rgba(2, 132, 199, 0.9);
 }
 
-.ic {
-  width: 18px;
-  height: 18px;
-}
-.ic2 {
-  width: 16px;
-  height: 16px;
-  opacity: 0.85;
-  margin-right: 6px;
-}
-.ic3 {
-  width: 18px;
-  height: 18px;
-  color: rgba(15, 23, 42, 0.75);
-}
-
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-/* ✅ lock info line */
-.lockInfo {
-  margin-top: 8px;
-  border-radius: 14px;
-  padding: 8px 10px;
-  border: 1px solid rgba(2, 132, 199, 0.18);
-  background: rgba(2, 132, 199, 0.06);
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-.lic {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-.ltext {
-  font-size: 11.5px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.75);
-  line-height: 1.35;
-}
-
 /* KPIs */
 .kpis {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
-@media (max-width: 900px) {
+@media (max-width: 980px) {
   .kpis {
-    grid-template-columns: repeat(2, minmax(160px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 14px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-width: 0;
 }
-.kpi.main {
+.kpiTint {
   border-color: rgba(2, 132, 199, 0.28);
   background: rgba(2, 132, 199, 0.06);
 }
 .kLbl {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
 }
 .kVal {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 950;
   color: #0f172a;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.unit {
-  margin-left: 8px;
-  font-size: 10.5px;
-  font-weight: 900;
+.kVal span {
+  font-weight: 800;
   color: rgba(15, 23, 42, 0.55);
+  margin-left: 6px;
+  font-size: 10px;
 }
 
 /* alerts */
 .alert {
   margin-top: 8px;
-  border-radius: 14px;
-  padding: 9px 10px;
+  border-radius: 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   background: rgba(15, 23, 42, 0.03);
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  font-size: 12px;
+  font-weight: 800;
 }
 .alert.err {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.22);
 }
+.alert.lock {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
+}
 .aic {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   margin-top: 1px;
 }
 
 /* card */
 .card {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   overflow: hidden;
 }
-.cardHdr {
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+.card.pad0 {
+  padding: 0;
 }
-.cardTtl {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.h {
-  font-weight: 950;
-  color: #0f172a;
-  font-size: 13px;
-}
-.p {
-  font-weight: 750;
-  color: rgba(15, 23, 42, 0.55);
-  font-size: 12px;
+.empty {
+  padding: 12px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.6);
 }
 
+/* table */
 .tableWrap {
-  padding: 8px 10px 10px;
-  overflow-x: auto;
+  overflow: hidden;
 }
-
 .table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
   table-layout: fixed;
 }
-.colLabel {
-  width: 280px;
+.colDesignation {
+  width: 30%;
 }
-.colMensuel {
-  width: 150px;
+.colIn {
+  width: 22%;
 }
-.colTotal {
-  width: 170px;
+.colNumCa {
+  width: 24%;
 }
-.colM3 {
-  width: 120px;
-}
-.colPct {
-  width: 90px;
+.colNum {
+  width: 12%;
 }
 
 .th,
 .table td {
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  padding: 8px 8px;
+  padding: 10px 10px;
   vertical-align: middle;
+  overflow: hidden;
 }
 .th {
-  background: rgba(15, 23, 42, 0.03);
-  color: rgba(15, 23, 42, 0.55);
-  font-size: 11px;
+  background: #fafafa;
+  color: rgba(15, 23, 42, 0.6);
+  font-size: 10px;
+  font-weight: 950;
   white-space: nowrap;
+}
+.thC {
+  text-align: center;
+}
+.thL {
+  text-align: left;
 }
 .r {
   text-align: right;
 }
 
-.labelWrap {
+.val {
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.lblWrap {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
+.designationText {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #0f172a;
+  font-size: 12.5px;
+  font-weight: 950;
+}
+
 .lockTag {
   display: inline-flex;
   align-items: center;
@@ -1218,59 +1135,54 @@ function setDraft(key: LineKey, value: any) {
 .inCell {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 8px;
   width: 100%;
 }
-.inputSm {
-  width: 110px;
-  height: 30px;
+
+/* Inputs */
+.inputLg {
+  border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 12px;
-  border: 1px solid rgba(2, 132, 199, 0.26);
-  background: rgba(2, 132, 199, 0.06);
-  padding: 0 9px;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  width: 100%;
+  max-width: 150px;
+  background: rgba(2, 132, 199, 0.08);
   font-weight: 950;
-  color: #0f172a;
   outline: none;
+  color: #0f172a;
   text-align: right;
 }
-.inputSm:focus {
-  border-color: rgba(2, 132, 199, 0.55);
-  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+.inputLg:focus {
+  border-color: rgba(2, 132, 199, 0.7);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.14);
+  background: #fff;
 }
-.inputSm:disabled {
+.inputLg:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(16, 24, 40, 0.1);
 }
 
-.unitMonth {
-  font-size: 10.5px;
+.unit {
+  color: rgba(15, 23, 42, 0.55);
+  font-size: 11px;
+  min-width: 28px;
+  text-align: right;
   font-weight: 950;
-  color: rgba(2, 132, 199, 0.9);
-  white-space: nowrap;
 }
-
-.sumRow td {
-  background: rgba(15, 23, 42, 0.02);
-  font-weight: 950;
+.unitEdit {
+  color: rgba(2, 132, 199, 0.95);
 }
 
 .foot {
-  padding: 0 10px 10px;
-  font-size: 11.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.65);
+  padding: 8px 10px;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
-.empty {
-  padding: 12px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.6);
-}
-
-/* ✅ modal (au-dessus du HeaderDashboard) */
+/* modal */
 .ovl {
   position: fixed;
   inset: 0;
@@ -1287,7 +1199,6 @@ function setDraft(key: LineKey, value: any) {
   border-radius: 16px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   overflow: hidden;
-  z-index: 100000;
 }
 .dlgHdr {
   padding: 10px;
@@ -1315,6 +1226,7 @@ function setDraft(key: LineKey, value: any) {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.8);
   line-height: 1.45;
+  white-space: pre-wrap;
 }
 .dlgFtr {
   padding: 10px;
@@ -1342,7 +1254,7 @@ function setDraft(key: LineKey, value: any) {
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 100000;
+  z-index: 90;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1366,17 +1278,5 @@ function setDraft(key: LineKey, value: any) {
 .tmsg {
   font-weight: 900;
   color: rgba(15, 23, 42, 0.85);
-}
-
-/* safe overlays from child modals */
-:deep(.modalOverlay) {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 100000 !important;
-}
-:deep(.modalDialog),
-:deep(.modalCard),
-:deep(.modalPanel) {
-  z-index: 100001 !important;
 }
 </style>

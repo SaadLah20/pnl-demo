@@ -1,4 +1,8 @@
-<!-- ✅ src/pages/CoutEmployesPage.vue (FICHIER COMPLET / inputs alignés sur une colonne fixe “poste” + Nb/Salaire collés au titre) -->
+<!-- ✅ src/pages/CoutEmployesPage.vue (FICHIER COMPLET)
+     ✅ 0 affiché comme vide (placeholder "Nb"/"Salaire" visible)
+     ✅ Save/import/generalize sûrs (0 dans payload)
+     ✅ Textes/chiffres par poste un peu plus grands
+-->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -52,6 +56,33 @@ function money(v: number, digits = 2) {
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
+function compact(v: number, digits = 0) {
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
+}
+
+/* ✅ Affichage inputs: 0 => vide (placeholder), null => vide */
+function toNullableNumberInput(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const num = Number(v);
+  if (!Number.isFinite(num)) return null;
+  if (num === 0) return null; // ✅ 0 => placeholder visible
+  return num;
+}
+function inputToNullable(v: string, min: number, max: number, integers = false): number | null {
+  const raw = (v ?? "").trim();
+  if (!raw) return null; // vide => null (donc affichage placeholder)
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return null;
+  const x = Math.max(min, Math.min(max, num));
+  const out = integers ? Math.round(x) : x;
+  // ✅ si l'utilisateur tape 0, on l'accepte en data (mais en UI on veut placeholder)
+  // => on garde 0 en draft? non: on le remet à null pour afficher placeholder.
+  return out === 0 ? null : out;
+}
+function nz(x: number | null | undefined) {
+  // ✅ au moment des calculs/payload: null => 0
+  return Number.isFinite(Number(x)) ? Number(x) : 0;
+}
 
 /* =========================
    ACTIVE
@@ -59,12 +90,6 @@ function money(v: number, digits = 2) {
 const variant = computed<any>(() => (store as any).activeVariant ?? null);
 const contract = computed<any>(() => (store as any).activeContract ?? null);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
-
-const variantLabel = computed(() => {
-  const v = variant.value;
-  if (!v) return "—";
-  return v.title ?? v.name ?? v.id?.slice?.(0, 8) ?? "Variante";
-});
 
 /* =========================
    VOLUME + CA (pour /m3 et %)
@@ -76,7 +101,6 @@ function getFormDraft(id: string): DraftForm {
   if (!formDrafts[k]) formDrafts[k] = { volumeM3: 0, momd: 0 };
   return formDrafts[k];
 }
-
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
 watch(
   () => variant.value?.id,
@@ -119,7 +143,7 @@ const caTotal = computed(() => {
 /* =========================
    EMPLOYES
 ========================= */
-type Draft = Record<string, number>;
+type Draft = Record<string, number | null>;
 const draft = reactive<Draft>({});
 
 const EMP_GROUPS = [
@@ -152,31 +176,37 @@ function empIcon(key: string) {
 function loadFromVariant() {
   const s: any = (variant.value as any)?.employes ?? {};
   for (const g of EMP_GROUPS) {
-    draft[`${g.key}Nb`] = clamp(s[`${g.key}Nb`], 0, 9999);
-    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999999);
+    draft[`${g.key}Nb`] = toNullableNumberInput(s[`${g.key}Nb`]);
+    draft[`${g.key}Cout`] = toNullableNumberInput(s[`${g.key}Cout`]);
   }
 }
 
 /* =========================
-   ✅ Masquer 0 (AUTO)
+   ✅ Masquer 0 (AUTO + USER OVERRIDE)
 ========================= */
 const hideZero = ref(false);
 const hideZeroUserToggled = ref(false);
 
-const anyNonZero = computed(() => {
+function anyNonZeroNow(): boolean {
   for (const g of EMP_GROUPS) {
-    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
-    const cout = clamp(draft[`${g.key}Cout`], 0, 999999999);
+    const nb = clamp(nz(draft[`${g.key}Nb`]), 0, 9999);
+    const cout = clamp(nz(draft[`${g.key}Cout`]), 0, 999999999);
     if (nb !== 0 || cout !== 0) return true;
   }
   return false;
-});
-const allZero = computed(() => !anyNonZero.value);
-
+}
+function syncHideZeroAuto() {
+  const anyNZ = anyNonZeroNow();
+  if (!anyNZ) {
+    hideZero.value = false;
+    hideZeroUserToggled.value = false;
+    return;
+  }
+  if (!hideZeroUserToggled.value) hideZero.value = true;
+}
 function applyAutoHideZeroOnEnter() {
   hideZeroUserToggled.value = false;
-  hideZero.value = anyNonZero.value;
-  if (allZero.value) hideZero.value = false;
+  syncHideZeroAuto();
 }
 
 watch(
@@ -187,12 +217,10 @@ watch(
   },
   { immediate: true }
 );
+
 watch(
-  () => allZero.value,
-  (z) => {
-    if (z) hideZero.value = false;
-  },
-  { immediate: true }
+  () => EMP_GROUPS.map((g) => [draft[`${g.key}Nb`], draft[`${g.key}Cout`]]),
+  () => syncHideZeroAuto()
 );
 
 function toggleHideZero() {
@@ -203,19 +231,19 @@ function toggleHideZero() {
 const empGroupsFiltered = computed(() => {
   if (!hideZero.value) return EMP_GROUPS;
   return EMP_GROUPS.filter((g) => {
-    const nb = clamp(draft[`${g.key}Nb`], 0, 9999);
-    const cout = clamp(draft[`${g.key}Cout`], 0, 999999999);
+    const nb = clamp(nz(draft[`${g.key}Nb`]), 0, 9999);
+    const cout = clamp(nz(draft[`${g.key}Cout`]), 0, 999999999);
     return !(nb === 0 && cout === 0);
   });
 });
 const hiddenCount = computed(() => EMP_GROUPS.length - empGroupsFiltered.value.length);
 
 /* =========================
-   METRICS (global + per row)
+   METRICS
 ========================= */
 function rowMonthly(gKey: string) {
-  const nb = clamp(draft[`${gKey}Nb`], 0, 9999);
-  const cout = clamp(draft[`${gKey}Cout`], 0, 999999999);
+  const nb = clamp(nz(draft[`${gKey}Nb`]), 0, 9999);
+  const cout = clamp(nz(draft[`${gKey}Cout`]), 0, 999999999);
   return nb * cout;
 }
 function rowTotal(gKey: string) {
@@ -255,8 +283,8 @@ function findVariantById(variantId: string): any | null {
 function applyEmployesFromVariant(srcVariant: any) {
   const s: any = srcVariant?.employes ?? {};
   for (const g of EMP_GROUPS) {
-    draft[`${g.key}Nb`] = clamp(s[`${g.key}Nb`], 0, 9999);
-    draft[`${g.key}Cout`] = clamp(s[`${g.key}Cout`], 0, 999999999);
+    draft[`${g.key}Nb`] = toNullableNumberInput(s[`${g.key}Nb`]);
+    draft[`${g.key}Cout`] = toNullableNumberInput(s[`${g.key}Cout`]);
   }
 }
 async function onApplyImport(payload: { sourceVariantId: string }) {
@@ -266,7 +294,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
   if (!sourceId) return;
 
   if (String(variant.value?.id ?? "") === sourceId) {
-    showToast("La source est déjà la variante active.", "ok");
+    showToast("La source est déjà la variante active.", "info");
     impOpen.value = false;
     return;
   }
@@ -285,7 +313,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 
     applyEmployesFromVariant(src);
     hideZeroUserToggled.value = false;
-    hideZero.value = anyNonZero.value && !allZero.value;
+    syncHideZeroAuto();
 
     showToast("Coûts employés importés. Pense à enregistrer.", "ok");
     impOpen.value = false;
@@ -302,9 +330,9 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 ========================= */
 const toastOpen = ref(false);
 const toastMsg = ref("");
-const toastKind = ref<"ok" | "err">("ok");
+const toastKind = ref<"ok" | "err" | "info">("ok");
 
-function showToast(msg: string, kind: "ok" | "err" = "ok") {
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
@@ -344,9 +372,11 @@ const err = ref<string | null>(null);
 function buildPayload() {
   const existing: any = (variant.value as any)?.employes ?? {};
   const out: any = { category: existing.category ?? "COUTS_CHARGES" };
+
+  // ✅ null (ou champ vide / 0 affiché) => 0 dans le payload
   for (const g of EMP_GROUPS) {
-    out[`${g.key}Nb`] = Number(clamp(draft[`${g.key}Nb`], 0, 9999));
-    out[`${g.key}Cout`] = Number(clamp(draft[`${g.key}Cout`], 0, 999999999));
+    out[`${g.key}Nb`] = Number(clamp(nz(draft[`${g.key}Nb`]), 0, 9999));
+    out[`${g.key}Cout`] = Number(clamp(nz(draft[`${g.key}Cout`]), 0, 999999999));
   }
   return out;
 }
@@ -409,6 +439,7 @@ async function generalizeEmployesTo(variantIds: string[]) {
     genBusy.value = false;
   }
 }
+
 async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
   const ids = payload?.variantIds ?? [];
   if (!ids.length) return;
@@ -430,43 +461,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   <div class="page">
     <div class="subhdr">
       <div class="row">
-        <div class="left">
-          <div class="ttlRow">
-            <div class="ttl">Coûts employés</div>
-            <span v-if="variant" class="badge">Variante active</span>
-          </div>
+        <div class="ttl">Coûts employés</div>
 
-          <div class="meta" v-if="variant">
-            <span class="clip"><b>{{ variantLabel }}</b></span>
-            <span class="sep" v-if="dureeMois">•</span>
-            <span v-if="dureeMois">Durée <b>{{ n(dureeMois, 0) }}</b> mois</span>
-          </div>
-          <div class="meta" v-else>Aucune variante active.</div>
-        </div>
-
-        <div class="actions" v-if="variant">
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="askReset()">
-            <ArrowPathIcon class="ic" />
-            Reset
-          </button>
-
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="toggleHideZero()">
-            <span class="dot" :class="{ on: hideZero }"></span>
+        <div class="actions">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZero()" :class="{ on: hideZero }">
+            <span class="dot" aria-hidden="true"></span>
             {{ hideZero ? "Afficher" : "Masquer 0" }}
             <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="impOpen = true">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="askReset()">
+            <ArrowPathIcon class="ic" />
+            Reset
+          </button>
+
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="impOpen = true">
             <ArrowDownTrayIcon class="ic" />
             {{ impBusy ? "…" : "Importer" }}
           </button>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy" @click="genOpen = true">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="saving || genBusy || impBusy" @click="askSave()">
+          <button class="btn pri" :disabled="!variant || saving || genBusy || impBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
@@ -476,19 +495,19 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       <div class="kpis" v-if="variant">
         <div class="kpi">
           <div class="kLbl">/ m³</div>
-          <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+          <div class="kVal num">{{ n(perM3, 2) }} <span>DH/m³</span></div>
         </div>
-        <div class="kpi kpiMonth">
+        <div class="kpi kpiTint">
           <div class="kLbl">Total/mois</div>
-          <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
+          <div class="kVal num">{{ money(monthly, 2) }} <span>DH/mois</span></div>
         </div>
         <div class="kpi">
           <div class="kLbl">Total</div>
-          <div class="kVal mono">{{ money(total, 2) }}</div>
+          <div class="kVal num">{{ money(total, 2) }}</div>
         </div>
         <div class="kpi">
-          <div class="kLbl">%</div>
-          <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
+          <div class="kLbl">% CA</div>
+          <div class="kVal num">{{ n(pct, 2) }} <span>%</span></div>
         </div>
       </div>
 
@@ -516,52 +535,44 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
         <div class="list">
           <div v-for="g in empGroupsFiltered" :key="g.key" class="rowCard">
-            <!-- ✅ Inputs “collés” au titre : layout fixe basé sur le titre le plus long -->
-            <div class="top">
-              <div class="poste">
+            <div class="line">
+              <div class="poste" :title="g.label">
                 <component :is="empIcon(g.key)" class="pi" />
-                <div class="plbl" :title="g.label">{{ g.label }}</div>
+                <div class="plbl">{{ g.label }}</div>
               </div>
 
               <input
-                class="inNb mono"
+                class="inNb num"
                 type="number"
                 step="1"
                 min="0"
                 max="9999"
-                :value="draft[`${g.key}Nb`]"
-                @input="draft[`${g.key}Nb`] = clamp(($event.target as HTMLInputElement).value, 0, 9999)"
-                title="Nb"
+                placeholder="Nb"
+                :value="draft[`${g.key}Nb`] ?? ''"
+                @input="draft[`${g.key}Nb`] = inputToNullable(($event.target as HTMLInputElement).value, 0, 9999, true)"
               />
+
               <input
-                class="inSalaire mono"
+                class="inSalaire num"
                 type="number"
                 step="0.01"
                 min="0"
                 max="999999999"
-                :value="draft[`${g.key}Cout`]"
-                @input="draft[`${g.key}Cout`] = clamp(($event.target as HTMLInputElement).value, 0, 999999999)"
-                title="Salaire DH/mois"
+                placeholder="Salaire"
+                :value="draft[`${g.key}Cout`] ?? ''"
+                @input="draft[`${g.key}Cout`] = inputToNullable(($event.target as HTMLInputElement).value, 0, 999999999, false)"
               />
-              <div class="unit">DH/mois</div>
-            </div>
 
-            <div class="krow">
-              <div class="rk">
-                <div class="rkLbl">Mois</div>
-                <div class="rkVal mono">{{ money(rowMonthly(g.key), 2) }}</div>
-              </div>
-              <div class="rk">
-                <div class="rkLbl">/m³</div>
-                <div class="rkVal mono">{{ n(rowPerM3(g.key), 2) }} <span class="rkU">DH/m³</span></div>
-              </div>
-              <div class="rk">
-                <div class="rkLbl">Total</div>
-                <div class="rkVal mono">{{ money(rowTotal(g.key), 2) }}</div>
-              </div>
-              <div class="rk">
-                <div class="rkLbl">%</div>
-                <div class="rkVal mono">{{ n(rowPct(g.key), 2) }} <span class="rkU">%</span></div>
+              <div class="unit">DH/mois</div>
+
+              <div class="kpiInline num" :title="'/m³ / mois / total / %CA'">
+                <span class="k">{{ n(rowPerM3(g.key), 2) }}</span><span class="u">DH/m³</span>
+                <span class="s">/</span>
+                <span class="k">{{ compact(rowMonthly(g.key), 0) }}</span><span class="u">DH/mois</span>
+                <span class="s">/</span>
+                <span class="k">{{ compact(rowTotal(g.key), 0) }}</span><span class="u">DH</span>
+                <span class="s">/</span>
+                <span class="k">{{ n(rowPct(g.key), 2) }}</span><span class="u">%</span>
               </div>
             </div>
           </div>
@@ -573,12 +584,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
-      section-label="Coûts employés"
-      :source-variant-id="String((store as any).activeVariantId ?? (variant?.id ?? '')) || null"
+      sectionLabel="Coûts employés"
+      :sourceVariantId="variant?.id ?? null"
       @apply="onApplyGeneralize"
-      @close="() => {}"
     />
 
+    <!-- confirm modal -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -599,8 +610,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
+    <!-- toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -616,12 +628,11 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   flex-direction: column;
   gap: 8px;
 }
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
 * {
-  box-sizing: border-box; /* ✅ évite les “superpositions” dues au padding/border */
+  box-sizing: border-box;
+}
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 /* sticky subheader */
@@ -637,20 +648,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 .row {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.left {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 220px;
-}
-.ttlRow {
-  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -658,31 +657,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
-}
-.badge {
-  font-size: 10px;
-  font-weight: 950;
-  color: #065f46;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-.meta {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.55);
-}
-.clip {
-  display: inline-block;
-  max-width: 520px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sep {
-  margin: 0 8px;
-  color: rgba(15, 23, 42, 0.35);
 }
 
 /* actions */
@@ -714,7 +688,8 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   opacity: 0.55;
   cursor: not-allowed;
 }
-.btn.pri {
+.btn.pri,
+.btn.on {
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.28);
 }
@@ -723,16 +698,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   height: 16px;
 }
 .dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
-  border: 2px solid rgba(15, 23, 42, 0.35);
-  background: transparent;
-  display: inline-block;
+  background: rgba(15, 23, 42, 0.35);
 }
-.dot.on {
-  border-color: rgba(2, 132, 199, 0.55);
-  background: rgba(2, 132, 199, 0.22);
+.btn.on .dot {
+  background: rgba(2, 132, 199, 0.9);
 }
 .miniBadge {
   font-size: 10px;
@@ -743,7 +715,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(2, 132, 199, 0.08);
 }
 
-/* KPIs header */
+/* KPI globaux */
 .kpis {
   margin-top: 8px;
   display: grid;
@@ -765,6 +737,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 3px;
   min-width: 0;
 }
+.kpiTint {
+  border-color: rgba(2, 132, 199, 0.28);
+  background: rgba(2, 132, 199, 0.06);
+}
 .kLbl {
   font-size: 9.5px;
   font-weight: 950;
@@ -785,10 +761,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: rgba(15, 23, 42, 0.55);
   margin-left: 6px;
   font-size: 10px;
-}
-.kpiMonth {
-  border-color: rgba(2, 132, 199, 0.28);
-  background: rgba(2, 132, 199, 0.06);
 }
 
 /* alerts */
@@ -837,75 +809,65 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: rgba(15, 23, 42, 0.65);
 }
 
+/* list */
 .list {
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
+/* alternance plus visible */
 .rowCard {
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  background: rgba(15, 23, 42, 0.012);
+  border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 12px;
-  padding: 8px;
+  padding: 10px;
+}
+.rowCard:nth-child(odd) {
+  background: rgba(15, 23, 42, 0.085);
+}
+.rowCard:nth-child(even) {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+/* ✅ une seule ligne */
+.line {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-/* ✅ Ligne “poste + inputs” ALIGNÉE sur une largeur fixe (Technicien labo) */
-.top {
-  --posteW: 230px; /* ✅ base sur “Technicien labo” + icône */
-  display: grid;
-  grid-template-columns: var(--posteW) 44px 148px 60px;
-  gap: 6px; /* ✅ évite la superposition */
-  align-items: center; /* ✅ alignement vertical identique pour tous */
-}
-@media (max-width: 780px) {
-  .top {
-    --posteW: 1fr;
-    grid-template-columns: 1fr 44px 1fr 60px; /* ✅ reste compact */
-  }
-}
-@media (max-width: 560px) {
-  .top {
-    grid-template-columns: 1fr; /* ✅ stack mobile */
-    gap: 8px;
-  }
-}
-
+/* poste (un peu plus grand) */
 .poste {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 0 0 auto;
 }
 .pi {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   flex: 0 0 auto;
   color: rgba(2, 132, 199, 0.95);
 }
 .plbl {
   font-weight: 950;
-  font-size: 11.5px;
-  color: rgba(15, 23, 42, 0.75);
+  font-size: 12.5px;
+  color: rgba(15, 23, 42, 0.88);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* inputs (plus de width fixe sur l’input lui-même => pas de chevauchement) */
+/* inputs (un peu plus grands) */
 .inNb,
 .inSalaire {
-  width: 100%;
-  height: 28px;
-  border-radius: 11px;
+  height: 26px;
+  border-radius: 10px;
   border: 1px solid rgba(2, 132, 199, 0.26);
-  background: rgba(2, 132, 199, 0.06);
+  background: rgba(2, 132, 199, 0.055);
   padding: 0 8px;
   font-weight: 950;
   font-size: 12px;
@@ -914,73 +876,84 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   text-align: right;
 }
 .inNb {
-  padding: 0 6px; /* ✅ plus petit */
+  width: 66px;
+  padding: 0 7px;
 }
-.inNb::-webkit-outer-spin-button,
-.inNb::-webkit-inner-spin-button,
-.inSalaire::-webkit-outer-spin-button,
-.inSalaire::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+.inSalaire {
+  width: 160px;
+}
+.inNb::placeholder,
+.inSalaire::placeholder {
+  color: rgba(15, 23, 42, 0.45);
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 .inNb:focus,
 .inSalaire:focus {
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
+
 .unit {
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
 }
-@media (max-width: 560px) {
-  .unit {
-    display: none;
-  }
-}
 
-/* KPIs par poste */
-.krow {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-@media (max-width: 820px) {
-  .krow {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-.rk {
-  background: #fff;
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 12px;
-  padding: 6px 8px;
+/* KPI poste */
+.kpiInline {
+  margin-left: auto;
+  flex: 0 1 auto;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.rkLbl {
-  font-size: 9.5px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.55);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.rkVal {
-  font-size: 12px;
-  font-weight: 950;
-  color: #0f172a;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  padding: 3px 7px;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.55);
+
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+
+  font-size: 10.5px;
+  line-height: 1.1;
 }
-.rkU {
-  font-size: 10px;
+.kpiInline .k {
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.9);
+  font-size: 10.5px;
+}
+.kpiInline .u {
   font-weight: 850;
   color: rgba(15, 23, 42, 0.55);
-  margin-left: 6px;
+  font-size: 10px;
+  margin-left: 2px;
+}
+.kpiInline .s {
+  opacity: 0.35;
+  padding: 0 2px;
+  font-weight: 900;
+}
+
+/* responsive */
+@media (max-width: 980px) {
+  .kpiInline {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .line {
+    flex-wrap: wrap;
+  }
+  .unit {
+    display: none;
+  }
 }
 
 /* modal + toast */
@@ -1067,6 +1040,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .toast.err {
   border-color: rgba(239, 68, 68, 0.22);
 }
+.toast.info {
+  border-color: rgba(59, 130, 246, 0.22);
+}
 .tic {
   width: 18px;
   height: 18px;
@@ -1074,5 +1050,17 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .tmsg {
   font-weight: 900;
   color: rgba(15, 23, 42, 0.85);
+}
+
+/* safe overlays from child modals */
+:deep(.modalOverlay) {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100000 !important;
+}
+:deep(.modalDialog),
+:deep(.modalCard),
+:deep(.modalPanel) {
+  z-index: 100001 !important;
 }
 </style>
