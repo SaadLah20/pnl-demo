@@ -6,6 +6,15 @@ import { getPnls } from "./pnl.repo";
 import { Prisma } from "@prisma/client";
 import { registerDevisRoutes } from "./devis.routes";
 
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT_EXCEPTION:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED_REJECTION:", err);
+});
+
+
 const app = express();
 
 app.use(cors());
