@@ -2,7 +2,7 @@
 import { defineStore } from "pinia";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 
-const API = "http://localhost:3001";
+const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 
 async function jsonFetch(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {

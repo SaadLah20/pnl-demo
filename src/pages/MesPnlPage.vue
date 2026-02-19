@@ -24,7 +24,7 @@ import VariantWizardModal, {
   type VariantCreateMode,
 } from "@/components/VariantWizardModal.vue";
 
-const API = "http://localhost:3001";
+const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 
 async function apiJson(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {
