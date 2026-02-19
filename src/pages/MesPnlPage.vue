@@ -25,6 +25,8 @@ import VariantWizardModal, {
 } from "@/components/VariantWizardModal.vue";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+console.log("VITE_API_BASE =", import.meta.env.VITE_API_BASE);
+console.log("API_BASE USED =", API_BASE);
 
 async function apiJson(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {
