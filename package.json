@@ -8,8 +8,9 @@
     "build:api": "tsc -p tsconfig.node.json",
     "build": "vite build && npm run build:api",
     "preview": "vite preview",
-    "start": "node dist/server/index.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "start": "prisma migrate deploy && node dist/server/index.js"
+
   },
   "dependencies": {
     "@heroicons/vue": "^2.0.18",
