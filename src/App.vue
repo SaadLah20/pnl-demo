@@ -25,11 +25,14 @@ onMounted(() => {
 });
 
 // debug (optionnel) — tu peux supprimer plus tard
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+
 onMounted(async () => {
-  const res = await fetch("http://localhost:3001/pnls");
+  const res = await fetch(`${API_BASE}/pnls`);
   const data = await res.json();
   console.log("PNLS:", data);
 });
+
 </script>
 
 <style>
