@@ -4,7 +4,7 @@
      ✅ Masquer 0 auto + override user
      ✅ Locks contrat + badge
      ✅ Import + Generalize + confirmation variantes impactées
-     ✅ Typo comme les autres pages (system-ui) + mono uniquement chiffres
+     ✅ Typo comme les autres pages (system-ui) + chiffres tabulaires (PAS monospace)
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -38,10 +38,7 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: number, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
 function money(v: number, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -116,9 +113,7 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() =>
-  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
-);
+const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
@@ -178,6 +173,7 @@ function enforceLocks() {
   if (lockGenieCivil.value) draft.genieCivil = 0;
   if (lockTransport.value) draft.transport = 0;
 }
+
 function anyNonZeroDraft() {
   return (
     clamp(draft.genieCivil) > 0 ||
@@ -190,6 +186,7 @@ function anyNonZeroDraft() {
     clamp(draft.installation) > 0
   );
 }
+
 function loadFromVariant() {
   const s: any = (variant.value as any)?.coutOccasionnel ?? {};
   draft.genieCivil = clamp(s.genieCivil);
@@ -209,6 +206,7 @@ function loadFromVariant() {
     if (!anyNonZeroDraft()) hideZeros.value = false;
   }
 }
+
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 watch(() => contract.value, () => enforceLocks(), { immediate: true });
 
@@ -371,6 +369,7 @@ async function save() {
     saving.value = false;
   }
 }
+
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts occasionnels ?", async () => {
     closeModal();
@@ -592,26 +591,26 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
 
-      <!-- ✅ KPIs : mono uniquement sur les valeurs -->
+      <!-- ✅ KPIs : chiffres tabulaires (pas monospace) -->
       <div class="kpis" v-if="variant">
         <div class="kpi">
           <div class="kLbl">/ mois</div>
-          <div class="kVal mono">{{ money(monthly, 2) }} <span>DH/mois</span></div>
+          <div class="kVal num">{{ money(monthly, 2) }} <span>DH/mois</span></div>
         </div>
 
         <div class="kpi main">
           <div class="kLbl">Total</div>
-          <div class="kVal mono">{{ money(total, 2) }}</div>
+          <div class="kVal num">{{ money(total, 2) }}</div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">/ m³</div>
-          <div class="kVal mono">{{ n(perM3, 2) }} <span>DH/m³</span></div>
+          <div class="kVal num">{{ n(perM3, 2) }} <span>DH/m³</span></div>
         </div>
 
         <div class="kpi">
           <div class="kLbl">% CA</div>
-          <div class="kVal mono">{{ n(pct, 2) }} <span>%</span></div>
+          <div class="kVal num">{{ n(pct, 2) }} <span>%</span></div>
         </div>
       </div>
 
@@ -669,7 +668,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
                     <div class="inLine">
                       <input
-                        class="inputSm r mono"
+                        class="inputSm r num"
                         type="number"
                         step="0.01"
                         min="0"
@@ -683,18 +682,18 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                   </div>
                 </td>
 
-                <td class="r mono"><b>{{ money(ln.totalBold, 2) }}</b></td>
-                <td class="r mono">{{ money(ln.perMonth, 2) }}</td>
-                <td class="r mono">{{ n(ln.parM3, 2) }}</td>
-                <td class="r mono">{{ n(ln.pctCa, 2) }}%</td>
+                <td class="r num"><b>{{ money(ln.totalBold, 2) }}</b></td>
+                <td class="r num">{{ money(ln.perMonth, 2) }}</td>
+                <td class="r num">{{ n(ln.parM3, 2) }}</td>
+                <td class="r num">{{ n(ln.pctCa, 2) }}%</td>
               </tr>
 
               <tr class="sumRow">
                 <td><b>Total</b></td>
-                <td class="r mono"><b>{{ money(total, 2) }}</b></td>
-                <td class="r mono"><b>{{ money(monthly, 2) }}</b></td>
-                <td class="r mono"><b>{{ n(perM3, 2) }}</b></td>
-                <td class="r mono"><b>{{ n(pct, 2) }}%</b></td>
+                <td class="r num"><b>{{ money(total, 2) }}</b></td>
+                <td class="r num"><b>{{ money(monthly, 2) }}</b></td>
+                <td class="r num"><b>{{ n(perM3, 2) }}</b></td>
+                <td class="r num"><b>{{ n(pct, 2) }}%</b></td>
               </tr>
             </tbody>
           </table>
@@ -702,20 +701,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </template>
 
-    <SectionImportModal
-      v-model="impOpen"
-      sectionLabel="Coûts occasionnels"
-      :targetVariantId="variant?.id ?? null"
-      @apply="onApplyImport"
-    />
+    <!-- ✅ IMPORT -->
+    <SectionImportModal v-model="impOpen" sectionLabel="Coûts occasionnels" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <SectionTargetsGeneralizeModal
-      v-model="genOpen"
-      sectionLabel="Coûts occasionnels"
-      :sourceVariantId="variant?.id ?? null"
-      @apply="onApplyGeneralize"
-    />
+    <!-- ✅ GENERALISATION -->
+    <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Coûts occasionnels" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
+    <!-- ✅ Modal confirm/info -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -738,6 +730,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
+    <!-- ✅ Toast -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -749,32 +742,14 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
-/* ✅ TYPO par défaut comme tes autres pages */
-.page,
-.subhdr,
-.card,
-.table,
-.th,
-.ttl,
-.actions,
-.btn,
-.kLbl,
-.poste,
-.posteLbl,
-.lockTag,
-.alert,
-.empty,
-.unitDh {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-}
-
-/* ✅ Mono uniquement pour chiffres */
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
+/* ✅ Pas besoin d’imposer la typo partout: on hérite du global (src/style.css) */
 * {
   box-sizing: border-box;
+}
+
+/* ✅ chiffres alignés (comme tes autres pages) */
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 .page {

@@ -2,6 +2,7 @@
      - Modals identiques à MesPnlPage (VIEW/EDIT/DUPLICATE + tabs contrat)
      - ✅ Edit PNL: dropdown status comme MesPnlPage
      - ✅ Edit Variant: dropdown status comme la création (VARIANT_STATUS_OPTS)
+     - ✅ Charges: seulement 2 options (LHM / CLIENT) partout
      - Teleport body + scroll lock + ESC close
 -->
 <script setup lang="ts">
@@ -76,39 +77,19 @@ const activeContract = computed<any | null>(() => {
 ========================================================= */
 type Opt = { value: any; label: string };
 
-const CHARGE_3: Opt[] = [
+/* ✅ IMPORTANT: charges = seulement 2 options */
+const CHARGE_2: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
-  { value: "EXISTANTE", label: "Existante" },
 ];
 
-const GENIE_CIVIL_4: Opt[] = [
-  { value: "LHM", label: "À la charge de LHM" },
-  { value: "CLIENT", label: "À la charge du client" },
-  { value: "EXISTANTE", label: "Existante" },
-  { value: "PARTAGE", label: "Partagé" },
-];
+/* ✅ mêmes 2 options pour tous les postes “charges” */
+const GENIE_CIVIL_2: Opt[] = [...CHARGE_2];
+const TERRAIN_2: Opt[] = [...CHARGE_2];
+const MATIERE_2: Opt[] = [...CHARGE_2];
+const MAINTENANCE_2: Opt[] = [...CHARGE_2];
 
-const TERRAIN_4: Opt[] = [
-  { value: "LHM", label: "À la charge de LHM" },
-  { value: "CLIENT", label: "À la charge du client" },
-  { value: "EXISTANTE", label: "Existante" },
-  { value: "PARTAGE", label: "Partagé" },
-];
-
-const MATIERE_3: Opt[] = [
-  { value: "LHM", label: "À la charge de LHM" },
-  { value: "CLIENT", label: "À la charge du client" },
-  { value: "PRESTATAIRE", label: "Prestataire" },
-];
-
-const MAINTENANCE_4: Opt[] = [
-  { value: "LHM", label: "À la charge de LHM" },
-  { value: "CLIENT", label: "À la charge du client" },
-  { value: "PARTAGE_STANDARD", label: "Partage standard" },
-  { value: "PARTAGE_PARTICULIER", label: "Partage particulier" },
-];
-
+/* Consommations (déjà 2 options) */
 const CONSOMMATION_2: Opt[] = [
   { value: "LHM", label: "À la charge de LHM" },
   { value: "CLIENT", label: "À la charge du client" },
@@ -330,7 +311,7 @@ async function saveEdit() {
           title: draft.title,
           client: draft.client,
           city: draft.city,
-          status: draft.status, // ✅ dropdown MesPnlPage
+          status: draft.status,
           startDate: fromDateInput(draft.startDate),
         }),
       });
@@ -368,7 +349,7 @@ async function saveEdit() {
         method: "PUT",
         body: JSON.stringify({
           title: draft.title,
-          status: draft.status, // ✅ dropdown VARIANT_STATUS_OPTS
+          status: draft.status,
           description: draft.description,
         }),
       });
@@ -421,8 +402,8 @@ function openDuplicateVariant() {
 
   const baseTitle = String(v.title ?? "Variante");
   dupDraft.title = `${baseTitle} (copie)`;
-dupDraft.status = (String(v.status ?? "ENCOURS") as VariantStatusUi);
-dupDraft.description = String(v.description ?? "");
+  dupDraft.status = String(v.status ?? "ENCOURS") as VariantStatusUi;
+  dupDraft.description = String(v.description ?? "");
 
   dupOpen.value = true;
 
@@ -442,8 +423,8 @@ function resetDupTitle() {
   const v = activeVariant.value;
   const baseTitle = String(v?.title ?? "Variante");
   dupDraft.title = `${baseTitle} (copie)`;
-  dupDraft.status = (String(activeVariant.value?.status ?? "ENCOURS") as VariantStatusUi);
-dupDraft.description = String(activeVariant.value?.description ?? "");
+  dupDraft.status = String(activeVariant.value?.status ?? "ENCOURS") as VariantStatusUi;
+  dupDraft.description = String(activeVariant.value?.description ?? "");
 
   nextTick(() => {
     dupTitleRef.value?.focus();
@@ -475,8 +456,8 @@ async function confirmDuplicate() {
     const body = {
       contractId: String(c.id),
       title,
-description: (dupDraft.description ?? "").trim() || null,
-status: dupDraft.status,
+      description: (dupDraft.description ?? "").trim() || null,
+      status: dupDraft.status,
 
       createMode: "COMPOSEE",
       composee: {
@@ -597,7 +578,6 @@ function handleCreateNext(payload: VariantCreateNextPayload) {
   createBase.contractId = payload.contractId;
   createBase.title = payload.title;
   createBase.description = payload.description;
-  // ✅ on accepte ce que renvoie le modal (et ton backend), tout en gardant VariantStatusUi côté UI
   createBase.status = String((payload as any).status ?? "ENCOURS") as VariantStatusUi;
   createBase.createMode = payload.createMode;
 
@@ -785,23 +765,23 @@ defineExpose({
             <div class="sec">
               <div class="sec__t">Charges</div>
               <div class="kv2">
-                <div class="k">Cab</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.cab) }}</div>
-                <div class="k">Installation</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.installation) }}</div>
-                <div class="k">Génie civil</div><div class="v">{{ labelFrom(GENIE_CIVIL_4, viewData?.genieCivil) }}</div>
-                <div class="k">Transport</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.transport) }}</div>
-                <div class="k">Terrain</div><div class="v">{{ labelFrom(TERRAIN_4, viewData?.terrain) }}</div>
-                <div class="k">Matière</div><div class="v">{{ labelFrom(MATIERE_3, viewData?.matierePremiere) }}</div>
-                <div class="k">Maintenance</div><div class="v">{{ labelFrom(MAINTENANCE_4, viewData?.maintenance) }}</div>
-                <div class="k">Chargeuse</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.chargeuse) }}</div>
+                <div class="k">Cab</div><div class="v">{{ labelFrom(CHARGE_2, viewData?.cab) }}</div>
+                <div class="k">Installation</div><div class="v">{{ labelFrom(CHARGE_2, viewData?.installation) }}</div>
+                <div class="k">Génie civil</div><div class="v">{{ labelFrom(GENIE_CIVIL_2, viewData?.genieCivil) }}</div>
+                <div class="k">Transport</div><div class="v">{{ labelFrom(CHARGE_2, viewData?.transport) }}</div>
+                <div class="k">Terrain</div><div class="v">{{ labelFrom(TERRAIN_2, viewData?.terrain) }}</div>
+                <div class="k">Matière</div><div class="v">{{ labelFrom(MATIERE_2, viewData?.matierePremiere) }}</div>
+                <div class="k">Maintenance</div><div class="v">{{ labelFrom(MAINTENANCE_2, viewData?.maintenance) }}</div>
+                <div class="k">Chargeuse</div><div class="v">{{ labelFrom(CHARGE_2, viewData?.chargeuse) }}</div>
               </div>
             </div>
 
             <div class="sec">
               <div class="sec__t">Eau &amp; Électricité</div>
               <div class="kv2">
-                <div class="k">Branchement Eau</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementEau) }}</div>
+                <div class="k">Branchement Eau</div><div class="v">{{ labelFrom(CHARGE_2, viewData?.branchementEau) }}</div>
                 <div class="k">Conso Eau</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoEau) }}</div>
-                <div class="k">Branchement Élec</div><div class="v">{{ labelFrom(CHARGE_3, viewData?.branchementElec) }}</div>
+                <div class="k">Branchement Élec</div><div class="v">{{ labelFrom(CHARGE_2, viewData?.branchementElec) }}</div>
                 <div class="k">Conso Élec</div><div class="v">{{ labelFrom(CONSOMMATION_2, viewData?.consoElec) }}</div>
               </div>
             </div>
@@ -873,21 +853,22 @@ defineExpose({
                 :class="{ inBad: !dupTitleOk && dupTitleLen > 0 }"
                 placeholder="Ex: Variante X (copie)"
               />
-<div class="grid" style="margin-top:10px;">
-  <div class="f">
-    <div class="k">Statut</div>
-    <select class="in" v-model="dupDraft.status">
-      <option v-for="o in VARIANT_STATUS_OPTS" :key="o.value" :value="o.value">
-        {{ o.label }}
-      </option>
-    </select>
-  </div>
 
-  <div class="f f--full">
-    <div class="k">Description</div>
-    <textarea class="in" rows="4" v-model="dupDraft.description" placeholder="Optionnel"></textarea>
-  </div>
-</div>
+              <div class="grid" style="margin-top:10px;">
+                <div class="f">
+                  <div class="k">Statut</div>
+                  <select class="in" v-model="dupDraft.status">
+                    <option v-for="o in VARIANT_STATUS_OPTS" :key="o.value" :value="o.value">
+                      {{ o.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <div class="f f--full">
+                  <div class="k">Description</div>
+                  <textarea class="in" rows="4" v-model="dupDraft.description" placeholder="Optionnel"></textarea>
+                </div>
+              </div>
 
               <div class="miniActions">
                 <button class="btn btn--ghost" type="button" @click="resetDupTitle" :disabled="dupBusy">
@@ -998,52 +979,52 @@ defineExpose({
               <div class="f">
                 <div class="k">Cab</div>
                 <select class="in" v-model="draft.cab">
-                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in CHARGE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
               <div class="f">
                 <div class="k">Installation</div>
                 <select class="in" v-model="draft.installation">
-                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in CHARGE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
 
               <div class="f">
                 <div class="k">Génie civil</div>
                 <select class="in" v-model="draft.genieCivil">
-                  <option v-for="o in GENIE_CIVIL_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in GENIE_CIVIL_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
               <div class="f">
                 <div class="k">Transport</div>
                 <select class="in" v-model="draft.transport">
-                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in CHARGE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
 
               <div class="f">
                 <div class="k">Terrain</div>
                 <select class="in" v-model="draft.terrain">
-                  <option v-for="o in TERRAIN_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in TERRAIN_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
               <div class="f">
                 <div class="k">Matière première</div>
                 <select class="in" v-model="draft.matierePremiere">
-                  <option v-for="o in MATIERE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in MATIERE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
 
               <div class="f">
                 <div class="k">Maintenance</div>
                 <select class="in" v-model="draft.maintenance">
-                  <option v-for="o in MAINTENANCE_4" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in MAINTENANCE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
               <div class="f">
                 <div class="k">Chargeuse</div>
                 <select class="in" v-model="draft.chargeuse">
-                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in CHARGE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
             </div>
@@ -1052,7 +1033,7 @@ defineExpose({
               <div class="f">
                 <div class="k">Branchement Eau</div>
                 <select class="in" v-model="draft.branchementEau">
-                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in CHARGE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
               <div class="f">
@@ -1065,7 +1046,7 @@ defineExpose({
               <div class="f">
                 <div class="k">Branchement Électricité</div>
                 <select class="in" v-model="draft.branchementElec">
-                  <option v-for="o in CHARGE_3" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+                  <option v-for="o in CHARGE_2" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
                 </select>
               </div>
               <div class="f">
