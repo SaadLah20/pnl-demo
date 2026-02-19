@@ -7,6 +7,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { MOROCCO_CITIES } from "@/constants/morocco.cities";
+import { MOROCCO_REGIONS } from "@/constants/morocco.regions";
+
+
 
 import {
   PlusIcon,
@@ -1110,21 +1114,18 @@ onMounted(reload);
       </div>
     </div>
 
-    <!-- Create/Edit/Duplicate modal -->
-    <FormuleModal
-      :open="showFormModal"
-      :mode="mode"
-      :initial="formDraft"
-        :cities="cityOptions"
-  :regions="regionOptions"
-      :busy="busy.create || busy.update"
-      :error="modalError"
-      :mpOptions="mpOptions"
-      :initialItems="dupItems ?? []"
-      :showItems="mode === 'create' && !!dupItems"
-      @close="closeFormModal"
-      @save="saveForm"
-    />
+<FormuleModal
+  :open="showFormModal"
+  :mode="mode"
+  :initial="formDraft"
+  :cities="MOROCCO_CITIES"
+  :regions="MOROCCO_REGIONS"
+  :busy="busy.create || busy.update"
+  :error="modalError"
+  @close="closeFormModal"
+  @save="saveForm"
+/>
+
 
     <!-- Toast -->
     <teleport to="body">
