@@ -13,6 +13,7 @@ import {
 import { usePnlStore } from "@/stores/pnl.store";
 import { contractUiTitle } from "@/services/contractTitle";
 import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
+import { API_BASE, apiGet } from "@/api/http";
 
 import VariantCreateModal, {
   type VariantCreateNextPayload,
@@ -25,8 +26,7 @@ import VariantWizardModal, {
 } from "@/components/VariantWizardModal.vue";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
-console.log("VITE_API_BASE =", import.meta.env.VITE_API_BASE);
-console.log("API_BASE USED =", API_BASE);
+
 
 async function apiJson(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {

@@ -1,6 +1,7 @@
 // src/stores/pnl.store.ts
 import { defineStore } from "pinia";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
+import { API_BASE, apiGet } from "@/api/http";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 

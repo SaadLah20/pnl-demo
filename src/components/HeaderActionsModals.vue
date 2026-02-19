@@ -9,6 +9,7 @@
 import { computed, reactive, ref, watch, onBeforeUnmount, onMounted, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
+import { API_BASE, apiGet } from "@/api/http";
 
 import VariantCreateModal, {
   type VariantCreateNextPayload,
@@ -25,6 +26,7 @@ import VariantWizardModal, {
    API
 ========================================================= */
 const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+
 
 async function apiJson(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {
