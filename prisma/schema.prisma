@@ -181,18 +181,23 @@ model SectionCoutMensuel {
 }
 
 model SectionCoutOccasionnel {
-  id                  String  @id @default(uuid())
-  variantId           String  @unique
+  id                  String @id @default(uuid())
+  variantId           String @unique
   category            String
-  genieCivil          Float   @default(0)
-  installation        Float   @default(0)
-  transport           Float   @default(0)
-  demontage           Float   @default(0)
-  remisePointCentrale Float   @default(0)
-  silots              Float   @default(0)
-  localAdjuvant       Float   @default(0)
-  bungalows           Float   @default(0)
-  variant             Variant @relation(fields: [variantId], references: [id])
+  genieCivil          Float  @default(0)
+  installation        Float  @default(0)
+  transport           Float  @default(0)
+  demontage           Float  @default(0)
+  remisePointCentrale Float  @default(0)
+  silots              Float  @default(0)
+  localAdjuvant       Float  @default(0)
+  bungalows           Float  @default(0)
+
+  // ✅ nouveaux champs
+  branchementElectricite Float @default(0)
+  branchementEau         Float @default(0)
+
+  variant Variant @relation(fields: [variantId], references: [id])
 }
 
 model SectionEmployes {

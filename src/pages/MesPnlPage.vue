@@ -764,9 +764,9 @@ function resetDraft() {
   draft.consoElec = "LHM";
 
   draft.postes = 1;
-  draft.sundayPrice = 0;
-  draft.delayPenalty = 0;
-  draft.chillerRent = 0;
+  draft.sundayPrice = 5000;
+  draft.delayPenalty = 150000;
+  draft.chillerRent = 150000;
 
   draft.description = "";
 }

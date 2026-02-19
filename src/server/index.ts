@@ -238,6 +238,10 @@ app.post("/variants/:id/majorations/apply", async (req: Request, res: Response) 
           ["silots", "coutOccasionnel.silots"],
           ["localAdjuvant", "coutOccasionnel.localAdjuvant"],
           ["bungalows", "coutOccasionnel.bungalows"],
+
+          // ✅ NOUVEAUX CHAMPS
+          ["branchementElectricite", "coutOccasionnel.branchementElectricite"],
+          ["branchementEau", "coutOccasionnel.branchementEau"],
         ];
         for (const [field, key] of keys) {
           const pct = pctOf(maj, key);
@@ -245,6 +249,7 @@ app.post("/variants/:id/majorations/apply", async (req: Request, res: Response) 
         }
         if (Object.keys(data).length) await tx.sectionCoutOccasionnel.update({ where: { variantId }, data });
       }
+
 
       // 8) AutresCouts items (skip POURCENT)
       if ((v.autresCouts as any)?.items?.length) {
@@ -546,9 +551,14 @@ async function ensureVariantSkeleton(tx: Prisma.TransactionClient, variantId: st
       silots: 0,
       localAdjuvant: 0,
       bungalows: 0,
+
+      // ✅ NOUVEAUX CHAMPS
+      branchementElectricite: 0,
+      branchementEau: 0,
     },
     update: {},
   });
+
 
   await tx.sectionEmployes.upsert({
     where: { variantId },
@@ -689,6 +699,12 @@ async function sanitizeVariantByContract(
       data: { locationTerrain: 0 },
     });
   }
+    if (isChargeClient(contract.chargeuse)) {
+    await tx.sectionCoutMensuel.updateMany({
+      where: { variantId },
+      data: { locationVehicule: 0 },
+    });
+  }
 
   // Cout occasionnel
   if (isChargeClient(contract.installation)) {
@@ -711,6 +727,36 @@ async function sanitizeVariantByContract(
       data: { transport: 0 },
     });
   }
+    // Cout occasionnel — branchements
+  if (isChargeClient((contract as any).branchementElec)) {
+    await tx.sectionCoutOccasionnel.updateMany({
+      where: { variantId },
+      data: { branchementElectricite: 0 },
+    });
+  }
+
+  if (isChargeClient((contract as any).branchementEau)) {
+    await tx.sectionCoutOccasionnel.updateMany({
+      where: { variantId },
+      data: { branchementEau: 0 },
+    });
+  }
+
+    // ✅ Cout / m3 (Eau) dépend de consoEau
+  if (isChargeClient(contract.consoEau)) {
+    await tx.sectionCoutM3.updateMany({
+      where: { variantId },
+      data: { eau: 0 },
+    });
+  }
+    // ✅ Maintenance: tous les champs dépendent de maintenance
+  if (isChargeClient(contract.maintenance)) {
+    await tx.sectionMaintenance.updateMany({
+      where: { variantId },
+      data: { cab: 0, elec: 0, chargeur: 0, generale: 0, bassins: 0, preventive: 0 },
+    });
+  }
+
 }
 
 function isCabFixeModel(model: any): boolean {
@@ -1225,7 +1271,12 @@ async function applyComposee(
         silots: src.silots,
         localAdjuvant: src.localAdjuvant,
         bungalows: src.bungalows,
+
+        // ✅ NOUVEAUX CHAMPS
+        branchementElectricite: (src as any).branchementElectricite ?? 0,
+        branchementEau: (src as any).branchementEau ?? 0,
       } as any,
+
     });
   };
 
@@ -1975,45 +2026,62 @@ const data = pick(body.transport, allowed);
       /* =========================================================
          MAINTENANCE
       ========================================================= */
-      if (body.maintenance) {
-        const allowed = ["category", "cab", "elec", "chargeur", "generale", "bassins", "preventive"];
-        const data = pick(body.maintenance, allowed);
+if (body.maintenance) {
+  const allowed = ["category", "cab", "elec", "chargeur", "generale", "bassins", "preventive"];
+  const data = pick(body.maintenance, allowed);
 
-        await upsertPartialSection({
-          tx,
-          model: tx.sectionMaintenance,
-          variantId,
-          categoryDefault: "COUTS_CHARGES",
-          defaults: {
-            cab: 0,
-            elec: 0,
-            chargeur: 0,
-            generale: 0,
-            bassins: 0,
-            preventive: 0,
-          },
-          data,
-          logLabel: "maintenance",
-        });
-      }
+  // ✅ Contrat: maintenance "charge client" => toute la section forcée à 0
+  if (contract && isChargeClient((contract as any).maintenance)) {
+    (data as any).cab = 0;
+    (data as any).elec = 0;
+    (data as any).chargeur = 0;
+    (data as any).generale = 0;
+    (data as any).bassins = 0;
+    (data as any).preventive = 0;
+  }
+
+  await upsertPartialSection({
+    tx,
+    model: tx.sectionMaintenance,
+    variantId,
+    categoryDefault: "COUTS_CHARGES",
+    defaults: {
+      cab: 0,
+      elec: 0,
+      chargeur: 0,
+      generale: 0,
+      bassins: 0,
+      preventive: 0,
+    },
+    data,
+    logLabel: "maintenance",
+  });
+}
+
 
       /* =========================================================
          COUT / M3
       ========================================================= */
-      if (body.coutM3) {
-        const allowed = ["category", "eau", "qualite", "dechets"];
-        const data = pick(body.coutM3, allowed);
+if (body.coutM3) {
+  const allowed = ["category", "eau", "qualite", "dechets"];
+  const data = pick(body.coutM3, allowed);
 
-        await upsertPartialSection({
-          tx,
-          model: tx.sectionCoutM3,
-          variantId,
-          categoryDefault: "COUTS_CHARGES",
-          defaults: { eau: 0, qualite: 0, dechets: 0 },
-          data,
-          logLabel: "coutM3",
-        });
-      }
+  // ✅ Contrat: consoEau "charge client" => eau forcée à 0
+  if (contract && isChargeClient((contract as any).consoEau)) {
+    (data as any).eau = 0;
+  }
+
+  await upsertPartialSection({
+    tx,
+    model: tx.sectionCoutM3,
+    variantId,
+    categoryDefault: "COUTS_CHARGES",
+    defaults: { eau: 0, qualite: 0, dechets: 0 },
+    data,
+    logLabel: "coutM3",
+  });
+}
+
 
       /* =========================================================
          COUT MENSUEL
@@ -2052,6 +2120,10 @@ const data = pick(body.transport, allowed);
         if (contract && isChargeClient((contract as any).terrain)) {
           (data as any).locationTerrain = 0;
         }
+        if (contract && isChargeClient((contract as any).chargeuse)) {
+  (data as any).locationVehicule = 0;
+}
+
 
         for (const k of Object.keys(data)) {
           if (k !== "category") (data as any)[k] = numOr0((data as any)[k]);
@@ -2103,13 +2175,20 @@ const data = pick(body.transport, allowed);
           "silots",
           "localAdjuvant",
           "bungalows",
+
+          // ✅ NOUVEAUX CHAMPS
+          "branchementElectricite",
+          "branchementEau",
         ];
+
 
         const data = pick(incoming, allowed);
 
         if (contract && isChargeClient((contract as any).installation)) (data as any).installation = 0;
         if (contract && isChargeClient((contract as any).genieCivil)) (data as any).genieCivil = 0;
         if (contract && isChargeClient((contract as any).transport)) (data as any).transport = 0;
+        if (contract && isChargeClient((contract as any).branchementElec)) (data as any).branchementElectricite = 0;
+        if (contract && isChargeClient((contract as any).branchementEau)) (data as any).branchementEau = 0;
 
         for (const k of Object.keys(data)) {
           if (k !== "category") (data as any)[k] = numOr0((data as any)[k]);
@@ -2129,7 +2208,12 @@ const data = pick(body.transport, allowed);
             silots: 0,
             localAdjuvant: 0,
             bungalows: 0,
+
+            // ✅ NOUVEAUX CHAMPS
+            branchementElectricite: 0,
+            branchementEau: 0,
           },
+
           data,
           logLabel: "coutOccasionnel",
         });

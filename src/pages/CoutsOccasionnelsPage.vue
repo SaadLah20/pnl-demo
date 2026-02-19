@@ -2,7 +2,7 @@
      ✅ Titre seul (aucune meta à côté)
      ✅ Input collé au poste (dans la même cellule)
      ✅ Masquer 0 auto + override user
-     ✅ Locks contrat + badge
+     ✅ Locks contrat + badge (GC/Transport/Installation + Branchement Eau/Elec)
      ✅ Import + Generalize + confirmation variantes impactées
      ✅ Typo comme les autres pages (system-ui) + chiffres tabulaires (PAS monospace)
 -->
@@ -84,9 +84,14 @@ function norm(s: any): string {
 function isChargeClient(v: any): boolean {
   return norm(v).includes("client");
 }
+
 const lockInstallation = computed<boolean>(() => isChargeClient(contract.value?.installation));
 const lockGenieCivil = computed<boolean>(() => isChargeClient(contract.value?.genieCivil));
 const lockTransport = computed<boolean>(() => isChargeClient(contract.value?.transport));
+
+// ✅ nouveaux locks (selon Prisma Contract)
+const lockBranchementEau = computed<boolean>(() => isChargeClient(contract.value?.branchementEau));
+const lockBranchementElec = computed<boolean>(() => isChargeClient(contract.value?.branchementElec));
 
 /* =========================
    VOLUME + CA (pour /m3 et %)
@@ -154,6 +159,10 @@ type Draft = {
   localAdjuvant: number;
   bungalows: number;
   installation: number; // legacy = Installation CAB
+
+  // ✅ nouveaux champs
+  branchementEau: number;
+  branchementElec: number;
 };
 
 const draft = reactive<Draft>({
@@ -166,12 +175,17 @@ const draft = reactive<Draft>({
   localAdjuvant: 0,
   bungalows: 0,
   installation: 0,
+  branchementEau: 0,
+  branchementElec: 0,
 });
 
 function enforceLocks() {
   if (lockInstallation.value) draft.installation = 0;
   if (lockGenieCivil.value) draft.genieCivil = 0;
   if (lockTransport.value) draft.transport = 0;
+
+  if (lockBranchementEau.value) draft.branchementEau = 0;
+  if (lockBranchementElec.value) draft.branchementElec = 0;
 }
 
 function anyNonZeroDraft() {
@@ -183,7 +197,9 @@ function anyNonZeroDraft() {
     clamp(draft.silots) > 0 ||
     clamp(draft.localAdjuvant) > 0 ||
     clamp(draft.bungalows) > 0 ||
-    clamp(draft.installation) > 0
+    clamp(draft.installation) > 0 ||
+    clamp(draft.branchementEau) > 0 ||
+    clamp(draft.branchementElec) > 0
   );
 }
 
@@ -198,6 +214,10 @@ function loadFromVariant() {
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
   draft.installation = clamp(s.installation);
+
+  // ✅ nouveaux
+  draft.branchementEau = clamp(s.branchementEau);
+  draft.branchementElec = clamp(s.branchementElec);
 
   enforceLocks();
 
@@ -217,6 +237,8 @@ const total = computed(() => {
   const inst = lockInstallation.value ? 0 : clamp(draft.installation);
   const gc = lockGenieCivil.value ? 0 : clamp(draft.genieCivil);
   const tr = lockTransport.value ? 0 : clamp(draft.transport);
+  const eau = lockBranchementEau.value ? 0 : clamp(draft.branchementEau);
+  const elec = lockBranchementElec.value ? 0 : clamp(draft.branchementElec);
 
   return (
     gc +
@@ -226,7 +248,9 @@ const total = computed(() => {
     clamp(draft.silots) +
     clamp(draft.localAdjuvant) +
     clamp(draft.bungalows) +
-    inst
+    inst +
+    eau +
+    elec
   );
 });
 const monthly = computed(() => {
@@ -254,6 +278,10 @@ const LINES = [
   { key: "localAdjuvant", label: "Local adjuvant" },
   { key: "bungalows", label: "Bungalows" },
   { key: "installation", label: "Installation CAB" },
+
+  // ✅ nouveaux
+  { key: "branchementEau", label: "Branchement eau" },
+  { key: "branchementElec", label: "Branchement électricité" },
 ] as const;
 
 type LineKey = (typeof LINES)[number]["key"];
@@ -262,6 +290,8 @@ function isLockedKey(k: LineKey): boolean {
   if (k === "genieCivil") return lockGenieCivil.value;
   if (k === "transport") return lockTransport.value;
   if (k === "installation") return lockInstallation.value;
+  if (k === "branchementEau") return lockBranchementEau.value;
+  if (k === "branchementElec") return lockBranchementElec.value;
   return false;
 }
 function getValue(k: LineKey): number {
@@ -351,6 +381,10 @@ function buildPayload() {
     localAdjuvant: Number(clamp(draft.localAdjuvant)),
     bungalows: Number(clamp(draft.bungalows)),
     installation: Number(lockInstallation.value ? 0 : clamp(draft.installation)),
+
+    // ✅ nouveaux
+    branchementEau: Number(lockBranchementEau.value ? 0 : clamp(draft.branchementEau)),
+    branchementElec: Number(lockBranchementElec.value ? 0 : clamp(draft.branchementElec)),
   };
 }
 
@@ -416,6 +450,11 @@ function applyFromVariant(srcVariant: any) {
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
   draft.installation = clamp(s.installation);
+
+  // ✅ nouveaux
+  draft.branchementEau = clamp(s.branchementEau);
+  draft.branchementElec = clamp(s.branchementElec);
+
   enforceLocks();
 
   if (!hideZerosUserToggled.value) {
@@ -491,6 +530,10 @@ function impactedByContractOnTargets(targetIds: string[], payload: any) {
     if (isChargeClient(c?.genieCivil) && toNum(payload?.genieCivil) !== 0) fields.push("Génie civil");
     if (isChargeClient(c?.transport) && toNum(payload?.transport) !== 0) fields.push("Transport");
     if (isChargeClient(c?.installation) && toNum(payload?.installation) !== 0) fields.push("Installation CAB");
+
+    // ✅ nouveaux
+    if (isChargeClient(c?.branchementEau) && toNum(payload?.branchementEau) !== 0) fields.push("Branchement eau");
+    if (isChargeClient(c?.branchementElec) && toNum(payload?.branchementElec) !== 0) fields.push("Branchement électricité");
 
     if (fields.length) {
       const v = findVariantById(tid);
@@ -742,12 +785,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 </template>
 
 <style scoped>
-/* ✅ Pas besoin d’imposer la typo partout: on hérite du global (src/style.css) */
 * {
   box-sizing: border-box;
 }
-
-/* ✅ chiffres alignés (comme tes autres pages) */
 .num {
   font-variant-numeric: tabular-nums;
 }
@@ -960,7 +1000,7 @@ tbody td {
   vertical-align: middle;
 }
 
-/* ✅ poste + input collé */
+/* poste + input collé */
 .posteRow {
   display: flex;
   align-items: center;

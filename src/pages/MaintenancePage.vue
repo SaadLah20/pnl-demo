@@ -2,6 +2,7 @@
      ✅ Header compact = style référence (MomdAndQuantity-like)
      ✅ Pas d'infos à côté du titre
      ✅ Chiffres en police NORMALE via .num (tabulaires)
+     ✅ Lock maintenance (charge client) => tous les champs forcés à 0 + verrouillés
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -18,6 +19,7 @@ import {
   CalendarDaysIcon,
   ArrowDownTrayIcon,
   InformationCircleIcon,
+  LockClosedIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -53,6 +55,22 @@ function clamp(x: any, min: number, max: number) {
   const v = toNum(x);
   return Math.max(min, Math.min(max, v));
 }
+function isZero(v: any) {
+  return Math.abs(toNum(v)) <= 0;
+}
+
+// same logic family as backend
+function norm(s: any): string {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+function isChargeClient(v: any): boolean {
+  const t = norm(v);
+  return t.includes("client"); // "à la charge du client", "charge client", etc.
+}
 
 /* =========================
    ACTIVE
@@ -60,6 +78,14 @@ function clamp(x: any, min: number, max: number) {
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
 const dureeMois = computed(() => Math.max(0, toNum(contract.value?.dureeMois)));
+
+/* =========================
+   ✅ CONTRACT LOCK (maintenance)
+========================= */
+const lockMaintenance = computed<boolean>(() => {
+  const c: any = contract.value ?? {};
+  return isChargeClient(c?.maintenance);
+});
 
 /* =========================
    EDIT MODEL (MAINTENANCE)
@@ -82,8 +108,8 @@ const edit = reactive<MaintenanceEdit>({
   preventive: 0,
 });
 
-function loadFromVariant() {
-  const m: any = (variant.value as any)?.maintenance ?? {};
+function applyFromVariant(v: any) {
+  const m: any = (v as any)?.maintenance ?? {};
   edit.cab = clamp(m?.cab, 0, 1e12);
   edit.elec = clamp(m?.elec, 0, 1e12);
   edit.chargeur = clamp(m?.chargeur, 0, 1e12);
@@ -92,11 +118,75 @@ function loadFromVariant() {
   edit.preventive = clamp(m?.preventive, 0, 1e12);
 }
 
+/** ✅ enforce contract rule (immediate KPI correctness) */
+function enforceMaintenanceLock(): { changed: boolean; note?: string } {
+  if (!lockMaintenance.value) return { changed: false };
+
+  const before = {
+    cab: toNum(edit.cab),
+    elec: toNum(edit.elec),
+    chargeur: toNum(edit.chargeur),
+    generale: toNum(edit.generale),
+    bassins: toNum(edit.bassins),
+    preventive: toNum(edit.preventive),
+  };
+
+  edit.cab = 0;
+  edit.elec = 0;
+  edit.chargeur = 0;
+  edit.generale = 0;
+  edit.bassins = 0;
+  edit.preventive = 0;
+
+  const changed =
+    before.cab !== 0 ||
+    before.elec !== 0 ||
+    before.chargeur !== 0 ||
+    before.generale !== 0 ||
+    before.bassins !== 0 ||
+    before.preventive !== 0;
+
+  return {
+    changed,
+    note: changed ? "Maintenance forcée à 0 (charge client)." : undefined,
+  };
+}
+
+function loadFromVariant() {
+  applyFromVariant(variant.value);
+  enforceMaintenanceLock();
+}
+
 watch(
   () => variant.value?.id,
   () => loadFromVariant(),
   { immediate: true }
 );
+
+watch(
+  () => lockMaintenance.value,
+  () => {
+    enforceMaintenanceLock();
+  },
+  { immediate: true }
+);
+
+/* =========================
+   ✅ EFFECTIVE VALUES (for KPI + save + rows)
+========================= */
+const effective = computed(() => {
+  if (lockMaintenance.value) {
+    return { cab: 0, elec: 0, chargeur: 0, generale: 0, bassins: 0, preventive: 0 };
+  }
+  return {
+    cab: clamp(edit.cab, 0, 1e12),
+    elec: clamp(edit.elec, 0, 1e12),
+    chargeur: clamp(edit.chargeur, 0, 1e12),
+    generale: clamp(edit.generale, 0, 1e12),
+    bassins: clamp(edit.bassins, 0, 1e12),
+    preventive: clamp(edit.preventive, 0, 1e12),
+  };
+});
 
 /* =========================
    METRICS
@@ -104,6 +194,7 @@ watch(
 type Line = {
   key: keyof MaintenanceEdit;
   label: string;
+  locked: boolean;
   mensuel: number; // DH/mois
   total: number; // DH
   parM3: number; // DH/m3
@@ -148,14 +239,8 @@ const caTotal = computed(() => {
 });
 
 const mensuelTotal = computed(() => {
-  return (
-    toNum(edit.cab) +
-    toNum(edit.elec) +
-    toNum(edit.chargeur) +
-    toNum(edit.generale) +
-    toNum(edit.bassins) +
-    toNum(edit.preventive)
-  );
+  const e = effective.value;
+  return toNum(e.cab) + toNum(e.elec) + toNum(e.chargeur) + toNum(e.generale) + toNum(e.bassins) + toNum(e.preventive);
 });
 
 const total = computed(() => mensuelTotal.value * dureeMois.value);
@@ -164,11 +249,11 @@ const pctCa = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) 
 
 const lines = computed<Line[]>(() => {
   const mk = (key: keyof MaintenanceEdit, label: string): Line => {
-    const mensuel = toNum(edit[key]);
+    const mensuel = toNum((effective.value as any)[key]);
     const total = mensuel * dureeMois.value;
     const parM3 = volumeTotal.value > 0 ? total / volumeTotal.value : 0;
     const pctCa = caTotal.value > 0 ? (total / caTotal.value) * 100 : 0;
-    return { key, label, mensuel, total, parM3, pctCa };
+    return { key, label, locked: lockMaintenance.value, mensuel, total, parM3, pctCa };
   };
 
   return [
@@ -185,13 +270,12 @@ const lines = computed<Line[]>(() => {
    ✅ MASQUER 0 (UI only)
 ========================= */
 const hideZeros = ref(false);
-function isZero(v: any) {
-  return Math.abs(toNum(v)) <= 0;
-}
 const visibleLines = computed(() => {
   const arr = lines.value ?? [];
   if (!hideZeros.value) return arr;
-  return arr.filter((ln) => !isZero((edit as any)[ln.key]));
+
+  // ✅ garder visibles les lignes verrouillées même à 0
+  return arr.filter((ln) => !isZero(ln.mensuel) || ln.locked);
 });
 
 /* =========================
@@ -248,19 +332,25 @@ const err = ref<string | null>(null);
 
 function buildPayload(): any {
   const existing: any = (variant.value as any)?.maintenance ?? {};
+  const e = effective.value;
+
   return {
     category: existing?.category ?? "COUTS_CHARGES",
-    cab: Number(clamp(edit.cab, 0, 1e12)),
-    elec: Number(clamp(edit.elec, 0, 1e12)),
-    chargeur: Number(clamp(edit.chargeur, 0, 1e12)),
-    generale: Number(clamp(edit.generale, 0, 1e12)),
-    bassins: Number(clamp(edit.bassins, 0, 1e12)),
-    preventive: Number(clamp(edit.preventive, 0, 1e12)),
+    cab: Number(clamp(e.cab, 0, 1e12)),
+    elec: Number(clamp(e.elec, 0, 1e12)),
+    chargeur: Number(clamp(e.chargeur, 0, 1e12)),
+    generale: Number(clamp(e.generale, 0, 1e12)),
+    bassins: Number(clamp(e.bassins, 0, 1e12)),
+    preventive: Number(clamp(e.preventive, 0, 1e12)),
   };
 }
 
 async function save() {
   if (!variant.value) return;
+
+  // ✅ safety: enforce before save
+  const { changed, note } = enforceMaintenanceLock();
+  if (changed && note) showToast(note, "info");
 
   err.value = null;
   saving.value = true;
@@ -311,13 +401,7 @@ function findVariantById(variantId: string): any | null {
 }
 
 function applyMaintenanceFromVariant(srcVariant: any) {
-  const m: any = srcVariant?.maintenance ?? {};
-  edit.cab = clamp(m?.cab, 0, 1e12);
-  edit.elec = clamp(m?.elec, 0, 1e12);
-  edit.chargeur = clamp(m?.chargeur, 0, 1e12);
-  edit.generale = clamp(m?.generale, 0, 1e12);
-  edit.bassins = clamp(m?.bassins, 0, 1e12);
-  edit.preventive = clamp(m?.preventive, 0, 1e12);
+  applyFromVariant(srcVariant);
 }
 
 async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
@@ -336,17 +420,21 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
   impBusy.value = true;
   try {
     let src = findVariantById(sourceId);
-
     if (!src) await (store as any).loadPnls?.();
-
     src = src ?? findVariantById(sourceId);
+
     if (!src) {
       showToast("Variante source introuvable (données non chargées).", "err");
       return;
     }
 
     applyMaintenanceFromVariant(src);
-    showToast("Maintenance importée dans la variante active. Pense à enregistrer.", "ok");
+
+    // ✅ enforce lock after import
+    const { changed, note } = enforceMaintenanceLock();
+    if (changed && note) showToast(`Import OK. ${note} Pense à enregistrer.`, "info");
+    else showToast("Maintenance importée. Pense à enregistrer.", "ok");
+
     impOpen.value = false;
   } catch (e: any) {
     impErr.value = e?.message ?? String(e);
@@ -363,10 +451,43 @@ const genOpen = ref(false);
 const genBusy = ref(false);
 const genErr = ref<string | null>(null);
 
+function findContractByVariantId(variantId: string): any | null {
+  const id = String(variantId ?? "").trim();
+  if (!id) return null;
+
+  for (const p of (store as any).pnls ?? []) {
+    for (const c of (p as any)?.contracts ?? []) {
+      for (const v of c?.variants ?? []) {
+        if (String(v?.id ?? "") === id) return c;
+      }
+    }
+  }
+  return null;
+}
+
+function impactedByMaintenanceLock(targetIds: string[]) {
+  const impacted: Array<{ id: string; label: string }> = [];
+
+  for (const tid of targetIds) {
+    const c = findContractByVariantId(tid);
+    if (!c) continue;
+
+    if (isChargeClient(c?.maintenance)) {
+      const v = findVariantById(tid);
+      const label = v?.title ?? v?.name ?? String(tid).slice(0, 8);
+      impacted.push({ id: tid, label });
+    }
+  }
+
+  return impacted;
+}
+
 async function generalizeTo(variantIds: string[]) {
   const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceId) return;
 
+  // ✅ safety: enforce before build payload
+  enforceMaintenanceLock();
   const payload = buildPayload();
 
   genErr.value = null;
@@ -388,19 +509,40 @@ async function generalizeTo(variantIds: string[]) {
 }
 
 async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
-  const ids = payload?.variantIds ?? [];
+  const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
   if (!ids.length) return;
+
+  const impacted = impactedByMaintenanceLock(ids);
+  let warn = "";
+  if (impacted.length) {
+    const list = impacted
+      .slice(0, 8)
+      .map((x) => `• ${x.label} → Maintenance forcée à 0`)
+      .join("\n");
+    warn =
+      `\n\n⚠️ Contrats: ${impacted.length} variante(s) recevront la Maintenance à 0 (charge client):\n` +
+      list +
+      (impacted.length > 8 ? `\n… (+${impacted.length - 8} autres)` : "");
+  }
 
   const msg =
     payload.mode === "ALL"
-      ? "Confirmer la généralisation de la section Maintenance sur TOUTES les variantes ?"
-      : `Confirmer la généralisation de la section Maintenance sur ${ids.length} variante(s) ?`;
+      ? "Confirmer la généralisation de la section Maintenance sur TOUTES les variantes ?" + warn
+      : `Confirmer la généralisation de la section Maintenance sur ${ids.length} variante(s) ?` + warn;
 
   openConfirm("Généraliser Maintenance", msg, async () => {
     closeModal();
     await generalizeTo(ids);
     if (!genErr.value) genOpen.value = false;
   });
+}
+
+/* =========================
+   INPUT HANDLERS
+========================= */
+function setEdit(key: keyof MaintenanceEdit, value: any) {
+  if (lockMaintenance.value) return;
+  (edit as any)[key] = clamp(value, 0, 1e12);
 }
 </script>
 
@@ -438,6 +580,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             {{ saving ? "…" : "Enregistrer" }}
           </button>
         </div>
+      </div>
+
+      <!-- ✅ lock info -->
+      <div v-if="variant && lockMaintenance" class="alert lock">
+        <LockClosedIcon class="aic" />
+        <div><b>Contrat :</b> Maintenance forcée à <b>0</b> (charge client).</div>
       </div>
 
       <div class="kpis" v-if="variant">
@@ -521,7 +669,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             <tbody>
               <tr v-for="ln in visibleLines" :key="String(ln.key)">
                 <td class="labelCell">
-                  <span class="designationText">{{ ln.label }}</span>
+                  <div class="lblWrap">
+                    <span class="designationText">{{ ln.label }}</span>
+                    <span v-if="ln.locked" class="lockTag" title="Forcé à 0 par le contrat">
+                      <LockClosedIcon class="lk" />
+                      Contrat
+                    </span>
+                  </div>
                 </td>
 
                 <td class="r">
@@ -531,8 +685,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                       type="number"
                       step="0.01"
                       min="0"
+                      :disabled="ln.locked"
+                      :title="ln.locked ? 'Forcé à 0 par le contrat' : ''"
                       :value="(edit as any)[ln.key]"
-                      @input="(edit as any)[ln.key] = clamp(($event.target as HTMLInputElement).value, 0, 1e12)"
+                      @input="setEdit(ln.key, ($event.target as HTMLInputElement).value)"
                     />
                     <span class="unit unitEdit">DH</span>
                   </div>
@@ -561,19 +717,9 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </template>
 
-    <SectionImportModal
-      v-model="impOpen"
-      sectionLabel="Maintenance"
-      :targetVariantId="variant?.id ?? null"
-      @apply="onApplyImport"
-    />
+    <SectionImportModal v-model="impOpen" sectionLabel="Maintenance" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <SectionTargetsGeneralizeModal
-      v-model="genOpen"
-      sectionLabel="Maintenance"
-      :sourceVariantId="variant?.id ?? null"
-      @apply="onApplyGeneralize"
-    />
+    <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Maintenance" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
@@ -782,6 +928,10 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.22);
 }
+.alert.lock {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
+}
 .aic {
   width: 16px;
   height: 16px;
@@ -857,6 +1007,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 12px;
   font-weight: 950;
 }
+
+.lblWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .designationText {
   display: block;
   white-space: nowrap;
@@ -866,6 +1023,24 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 12.5px;
   font-weight: 950;
 }
+
+.lockTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(2, 132, 199, 0.95);
+  background: rgba(2, 132, 199, 0.08);
+  border: 1px solid rgba(2, 132, 199, 0.18);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.lk {
+  width: 14px;
+  height: 14px;
+}
+
 .inCell {
   display: inline-flex;
   align-items: center;
@@ -893,6 +1068,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.14);
   background: #fff;
 }
+.inputLg:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(16, 24, 40, 0.1);
+}
+
 .unit {
   color: rgba(15, 23, 42, 0.55);
   font-size: 11px;

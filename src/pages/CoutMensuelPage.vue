@@ -1,7 +1,7 @@
 <!-- ✅ src/pages/CoutMensuelPage.vue (FICHIER COMPLET)
      ✅ UI type Maintenance (1 ligne = 1 poste) + colonnes Total / m³ / %
      ✅ Masquer 0 auto
-     ✅ Locks contrat (charge client) appliqués
+     ✅ Locks contrat (charge client) appliqués (+ Location chargeur)
      ✅ Modals au-dessus HeaderDashboard (z-index)
 -->
 <script setup lang="ts">
@@ -80,26 +80,24 @@ const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
    ✅ CONTRAT → LOCK FLAGS
    - consoElec à charge client => electricite + locationGroupes (legacy: location) forcés à 0
    - terrain à charge client => locationTerrain forcé à 0
+   - chargeuse à charge client => locationChargeur forcé à 0
 ========================= */
-const lockElecAndGroups = computed<boolean>(() => {
-  const c: any = contract.value ?? {};
-  return isChargeClient(c?.consoElec);
-});
-const lockTerrain = computed<boolean>(() => {
-  const c: any = contract.value ?? {};
-  return isChargeClient(c?.terrain);
-});
+const lockElecAndGroups = computed<boolean>(() => isChargeClient((contract.value ?? {})?.consoElec));
+const lockTerrain = computed<boolean>(() => isChargeClient((contract.value ?? {})?.terrain));
+const lockChargeur = computed<boolean>(() => isChargeClient((contract.value ?? {})?.chargeuse));
 
 /* =========================
    VOLUME + CA (for %)
 ========================= */
 type DraftForm = { volumeM3: number; momd: number };
 const formDrafts = reactive<Record<string, DraftForm>>({});
+
 function getFormDraft(id: string): DraftForm {
   const k = String(id);
   if (!formDrafts[k]) formDrafts[k] = { volumeM3: 0, momd: 0 };
   return formDrafts[k];
 }
+
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
 
 watch(
@@ -117,6 +115,7 @@ watch(
 const volumeTotal = computed(() =>
   formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
 );
+
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
@@ -219,6 +218,14 @@ function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
     }
   }
 
+  if (lockChargeur.value) {
+    if (clamp(draft.locationChargeur) !== 0) {
+      draft.locationChargeur = 0;
+      changed = true;
+      notes.push("Location chargeur forcée à 0 (charge client).");
+    }
+  }
+
   return { changed, notes };
 }
 
@@ -230,6 +237,7 @@ const effective = computed(() => {
     electricite: lockElecAndGroups.value ? 0 : clamp(draft.electricite),
     location: lockElecAndGroups.value ? 0 : clamp(draft.location), // location groupes
     locationTerrain: lockTerrain.value ? 0 : clamp(draft.locationTerrain),
+    locationChargeur: lockChargeur.value ? 0 : clamp(draft.locationChargeur),
 
     gasoil: clamp(draft.gasoil),
     hebergements: clamp(draft.hebergements),
@@ -238,7 +246,6 @@ const effective = computed(() => {
     taxeProfessionnelle: clamp(draft.taxeProfessionnelle),
     securite: clamp(draft.securite),
     locationVehicule: clamp(draft.locationVehicule),
-    locationChargeur: clamp(draft.locationChargeur),
     locationBungalows: clamp(draft.locationBungalows),
     epi: clamp(draft.epi),
   };
@@ -287,7 +294,7 @@ function loadFromVariant() {
 watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
 
 watch(
-  () => [lockElecAndGroups.value, lockTerrain.value],
+  () => [lockElecAndGroups.value, lockTerrain.value, lockChargeur.value],
   () => {
     enforceContractLocksOnDraft();
     syncHideZerosAuto();
@@ -312,7 +319,7 @@ const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
-   LINES (Maintenance)
+   LINES
 ========================= */
 type LineKey = keyof Draft; // inclut "location" legacy
 type Line = {
@@ -330,6 +337,7 @@ function mensuelForKey(key: LineKey): number {
   if (key === "location") return clamp(e.location);
   if (key === "electricite") return clamp(e.electricite);
   if (key === "locationTerrain") return clamp(e.locationTerrain);
+  if (key === "locationChargeur") return clamp(e.locationChargeur);
   return clamp(e[key]);
 }
 
@@ -353,7 +361,7 @@ const lines = computed<Line[]>(() => {
     mk("taxeProfessionnelle", "Taxe professionnelle"),
     mk("securite", "Sécurité"),
     mk("locationVehicule", "Location véhicule"),
-    mk("locationChargeur", "Location chargeur"),
+    mk("locationChargeur", "Location chargeur", lockChargeur.value),
     mk("locationBungalows", "Location bungalows"),
     mk("epi", "EPI"),
   ];
@@ -362,7 +370,9 @@ const lines = computed<Line[]>(() => {
 const visibleLines = computed(() => {
   const arr = lines.value ?? [];
   if (!hideZeros.value) return arr;
-  return arr.filter((ln) => !isZero(ln.mensuel));
+
+  // ✅ garder visibles les lignes verrouillées même à 0
+  return arr.filter((ln) => !isZero(ln.mensuel) || ln.locked);
 });
 
 /* =========================
@@ -556,6 +566,9 @@ function impactedByContractOnTargets(targetIds: string[], payload: any) {
     if (isChargeClient(c?.terrain)) {
       if (toNum(payload?.locationTerrain) !== 0) fields.push("Location terrain");
     }
+    if (isChargeClient(c?.chargeuse)) {
+      if (toNum(payload?.locationChargeur) !== 0) fields.push("Location chargeur");
+    }
 
     if (fields.length) {
       const v = findVariantById(tid);
@@ -630,6 +643,7 @@ function setDraft(key: LineKey, value: any) {
   if (key === "electricite" && lockElecAndGroups.value) return;
   if (key === "location" && lockElecAndGroups.value) return;
   if (key === "locationTerrain" && lockTerrain.value) return;
+  if (key === "locationChargeur" && lockChargeur.value) return;
 
   (draft as any)[key] = v;
 }
@@ -672,12 +686,13 @@ function setDraft(key: LineKey, value: any) {
       </div>
 
       <!-- ✅ lock info -->
-      <div v-if="variant && (lockElecAndGroups || lockTerrain)" class="alert lock">
+      <div v-if="variant && (lockElecAndGroups || lockTerrain || lockChargeur)" class="alert lock">
         <LockClosedIcon class="aic" />
         <div>
           <b>Contrat :</b>
           <span v-if="lockElecAndGroups"> Électricité + Location groupes forcées à 0 (charge client).</span>
           <span v-if="lockTerrain"> Location terrain forcée à 0 (charge client).</span>
+          <span v-if="lockChargeur"> Location chargeur forcée à 0 (charge client).</span>
         </div>
       </div>
 
@@ -775,6 +790,7 @@ function setDraft(key: LineKey, value: any) {
                       step="0.01"
                       min="0"
                       :disabled="ln.locked"
+                      :title="ln.locked ? 'Forcé à 0 par le contrat' : ''"
                       :value="(draft as any)[ln.key]"
                       @input="setDraft(ln.key, ($event.target as HTMLInputElement).value)"
                     />
@@ -807,9 +823,19 @@ function setDraft(key: LineKey, value: any) {
       </div>
     </template>
 
-    <SectionImportModal v-model="impOpen" sectionLabel="Coûts mensuels" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="Coûts mensuels"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
 
-    <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Coûts mensuels" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      sectionLabel="Coûts mensuels"
+      :sourceVariantId="variant?.id ?? null"
+      @apply="onApplyGeneralize"
+    />
 
     <!-- confirm modal -->
     <teleport to="body">
@@ -836,7 +862,13 @@ function setDraft(key: LineKey, value: any) {
 
     <!-- toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
+      <div
+        v-if="toastOpen"
+        class="toast"
+        :class="{ err: toastKind === 'err', info: toastKind === 'info' }"
+        role="status"
+        aria-live="polite"
+      >
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>

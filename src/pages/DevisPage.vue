@@ -1,9 +1,10 @@
-<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte + ajustements demandés)
+<!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte + ✅ PV non pondéré)
      Ajustements demandés :
      ✅ Améliorer style + taille du "Total" par formule (aligné style app)
      ✅ Champ "Surcharge" plus petit + BG bleu (comme autres pages)
      ✅ Supprimer la ligne sous le titre (Variante • Vol • PMV)
      ✅ Libellés colonnes EXACTEMENT au-dessus des champs (grid alignée)
+     ✅ IMPORTANT: Suppression notion "PV pondéré" (arrondi au 5) => PV déf = PV base + surcharge
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
@@ -42,11 +43,6 @@ function pricePerKg(prixTonne: number): number {
   if (p <= 0) return 0;
   return p / 1000;
 }
-function roundTo5(x: number): number {
-  const v = n(x);
-  if (!Number.isFinite(v)) return 0;
-  return Math.round(v / 5) * 5;
-}
 function todayISO() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -67,15 +63,6 @@ function formatDateFr(x: any) {
   } catch {
     return "";
   }
-}
-
-function parseBoolLike(v: any): boolean | null {
-  if (v === true || v === false) return v;
-  if (v == null) return null;
-  const s = String(v).trim().toLowerCase();
-  if (["1", "true", "yes", "y", "oui"].includes(s)) return true;
-  if (["0", "false", "no", "n", "non"].includes(s)) return false;
-  return null;
 }
 
 /* =========================
@@ -505,6 +492,7 @@ function closeExportGuard() {
 
 /* =========================
    BASE CALCS (/m3)
+   ✅ PV NON PONDÉRÉ: PV déf = PV base + surcharge
 ========================= */
 function mpPrixUsed(mpId: string): number {
   const mpItems = variant.value?.mp?.items ?? [];
@@ -532,15 +520,11 @@ function pvBaseM3(r: any): number {
   return cmp + transportBaseM3.value + momd;
 }
 
-function pvPondereM3(r: any): number {
-  const base = pvBaseM3(r);
-  return roundTo5(base);
-}
 function pvDefinitifM3(r: any): number {
-  return pvPondereM3(r) + getSurcharge(r);
+  return pvBaseM3(r) + getSurcharge(r);
 }
 function pvSavedDefinitifM3(r: any): number {
-  return pvPondereM3(r) + getSavedSurcharge(r);
+  return pvBaseM3(r) + getSavedSurcharge(r);
 }
 
 /* =========================
@@ -1179,7 +1163,7 @@ function onContentScrollSpy() {
                     Transport (base) : <b class="mono">{{ money2(transportBaseM3) }}</b> DH/m³<br />
                     MOMD : <b class="mono">{{ money2(r?.momd) }}</b> DH/m³<br />
                     PV Base : <b class="mono">{{ money2(pvBaseM3(r)) }}</b> DH/m³<br />
-                    PV Pond (arrondi 5) : <b class="mono">{{ money2(pvPondereM3(r)) }}</b> DH/m³<br />
+                    PV déf. : <b class="mono">{{ money2(pvDefinitifM3(r)) }}</b> DH/m³<br />
                     <span class="mutedLine">Clé: {{ rowKey(r) }}</span>
                   </span>
                 </span>
@@ -1189,7 +1173,7 @@ function onContentScrollSpy() {
                 <span class="chip"><span class="muted">Vol</span> <b class="mono">{{ int(r?.volumeM3) }}</b> <span class="muted">m³</span></span>
                 <span class="chip"><span class="muted">CMP</span> <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b></span>
                 <span class="chip"><span class="muted">MOMD</span> <b class="mono">{{ money2(r?.momd) }}</b></span>
-                <span class="chip"><span class="muted">PV pond</span> <b class="mono">{{ money2(pvPondereM3(r)) }}</b></span>
+                <span class="chip"><span class="muted">PV base</span> <b class="mono">{{ money2(pvBaseM3(r)) }}</b></span>
               </div>
             </div>
 
@@ -1234,7 +1218,7 @@ function onContentScrollSpy() {
           </div>
 
           <div class="muted noteLine">
-            • <b>Pond</b> = PV arrondi au multiple de 5. • <b>Surcharge</b> peut être négative et s’ajoute après pondération.
+            • <b>PV déf.</b> = PV base (CMP + Transport + MOMD) + <b>Surcharge</b>. • La surcharge peut être négative.
           </div>
         </div>
       </div>

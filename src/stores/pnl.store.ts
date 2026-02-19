@@ -213,21 +213,27 @@ export const usePnlStore = defineStore("pnl", {
           const merged: AnyObj = { ...prev, ...next };
 
           // ✅ merge shallow des sections (évite perte de sous-champs)
+          // NOTE: on garde aussi tes anciens alias pour compatibilité.
           const sectionKeys = [
+            // ✅ noms "backend"
             "cab",
             "transport",
             "mp",
             "formules",
-            "momd",
             "maintenance",
             "coutM3",
             "coutMensuel",
-            "coutEmployes",
-            "coutsOccasionnels",
+            "coutOccasionnel", // ✅ IMPORTANT (singulier)
+            "employes",
             "autresCouts",
             "majorations",
             "devis",
             "details",
+
+            // ⚠️ anciens alias observés dans ton front (compat)
+            "momd",
+            "coutEmployes",
+            "coutsOccasionnels",
           ];
 
           for (const k of sectionKeys) {
@@ -236,6 +242,23 @@ export const usePnlStore = defineStore("pnl", {
             if (p && n && typeof p === "object" && typeof n === "object" && !Array.isArray(p) && !Array.isArray(n)) {
               merged[k] = { ...p, ...n };
             }
+          }
+
+          // ✅ petite compat: si backend renvoie coutOccasionnel, mais une page lit coutsOccasionnels
+          if ((merged as any).coutOccasionnel && !(merged as any).coutsOccasionnels) {
+            (merged as any).coutsOccasionnels = (merged as any).coutOccasionnel;
+          }
+          // ✅ compat inverse (si une page patch coutsOccasionnels)
+          if ((merged as any).coutsOccasionnels && !(merged as any).coutOccasionnel) {
+            (merged as any).coutOccasionnel = (merged as any).coutsOccasionnels;
+          }
+
+          // idem employes/coutEmployes si tu as encore des pages qui utilisent coutEmployes
+          if ((merged as any).employes && !(merged as any).coutEmployes) {
+            (merged as any).coutEmployes = (merged as any).employes;
+          }
+          if ((merged as any).coutEmployes && !(merged as any).employes) {
+            (merged as any).employes = (merged as any).coutEmployes;
           }
 
           c.variants[i] = merged;
@@ -450,28 +473,23 @@ export const usePnlStore = defineStore("pnl", {
     },
 
     // =========================================================
-// ✅ Appliquer réellement les majorations (persistées) sur la variante
-// - appelle le backend: POST /variants/:id/majorations/apply
-// - retourne la variante mise à jour (getFullVariant)
-// =========================================================
-async applyMajorationsReal(variantId?: string, addMomdM3?: number) {
-  const vid = String(variantId ?? this.activeVariant?.id ?? "").trim();
-  if (!vid) throw new Error("Aucune variante active (variantId manquant)");
+    // ✅ Appliquer réellement les majorations (persistées) sur la variante
+    // =========================================================
+    async applyMajorationsReal(variantId?: string, addMomdM3?: number) {
+      const vid = String(variantId ?? this.activeVariant?.id ?? "").trim();
+      if (!vid) throw new Error("Aucune variante active (variantId manquant)");
 
-  const resp = await jsonFetch(`/variants/${vid}/majorations/apply`, {
-    method: "POST",
-    body: JSON.stringify({ addMomdM3: Number(addMomdM3 ?? 0) }),
-  });
+      const resp = await jsonFetch(`/variants/${vid}/majorations/apply`, {
+        method: "POST",
+        body: JSON.stringify({ addMomdM3: Number(addMomdM3 ?? 0) }),
+      });
 
-  const updated = (resp as any)?.variant ?? resp;
-  if (updated?.id) this.replaceActiveVariantInState(updated);
+      const updated = (resp as any)?.variant ?? resp;
+      if (updated?.id) this.replaceActiveVariantInState(updated);
 
-  this.headerMajorationsPreview = null;
-  return updated;
-},
-
-
-
+      this.headerMajorationsPreview = null;
+      return updated;
+    },
 
     // =========================================================
     // Devis
@@ -492,94 +510,91 @@ async applyMajorationsReal(variantId?: string, addMomdM3?: number) {
     // =========================================================
     // ✅ Export Devis Word (DOCX)
     // =========================================================
-async exportDevisWord(variantId?: string) {
-  const vid = String(variantId ?? this.activeVariant?.id ?? "");
-  if (!vid) throw new Error("Aucune variante active (variantId manquant)");
+    async exportDevisWord(variantId?: string) {
+      const vid = String(variantId ?? this.activeVariant?.id ?? "");
+      if (!vid) throw new Error("Aucune variante active (variantId manquant)");
 
-  const useMajorations = !!this.headerUseMajorations;
-  const useDevisSurcharges = !!this.headerUseDevisSurcharge;
+      const useMajorations = !!this.headerUseMajorations;
+      const useDevisSurcharges = !!this.headerUseDevisSurcharge;
 
-  const qs = new URLSearchParams({
-    useMajorations: useMajorations ? "1" : "0",
-    useDevisSurcharges: useDevisSurcharges ? "1" : "0",
-  });
+      const qs = new URLSearchParams({
+        useMajorations: useMajorations ? "1" : "0",
+        useDevisSurcharges: useDevisSurcharges ? "1" : "0",
+      });
 
-  const url = `${API}/variants/${vid}/devis/word?${qs.toString()}`;
+      const url = `${API}/variants/${vid}/devis/word?${qs.toString()}`;
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    let msg = `Export devis Word échoué: ${res.status}`;
-    try {
-      const j = await res.clone().json();
-      if (typeof j?.error === "string") msg = j.error;
-    } catch {}
-    throw new Error(msg);
-  }
+      const res = await fetch(url);
+      if (!res.ok) {
+        let msg = `Export devis Word échoué: ${res.status}`;
+        try {
+          const j = await res.clone().json();
+          if (typeof j?.error === "string") msg = j.error;
+        } catch {}
+        throw new Error(msg);
+      }
 
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
 
-  // ✅ download browser
-  const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = `Devis-${vid}.docx`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+      // ✅ download browser
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `Devis-${vid}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
 
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
-},
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    },
 
-// =========================================================
-// ✅ Export Devis MULTI (DOCX) - plusieurs variantes
-// payload: { variantIds: string[], options: {useMajorations,useDevisSurcharges}, meta: {...} }
-// =========================================================
-async exportDevisMultiWord(payload: {
-  variantIds: string[];
-  options?: { useMajorations?: boolean; useDevisSurcharges?: boolean };
-  meta?: any;
-}) {
-  const variantIds = (payload?.variantIds ?? []).map((x) => String(x)).filter(Boolean);
-  if (!variantIds.length) throw new Error("Aucune variante sélectionnée.");
+    // =========================================================
+    // ✅ Export Devis MULTI (DOCX)
+    // =========================================================
+    async exportDevisMultiWord(payload: {
+      variantIds: string[];
+      options?: { useMajorations?: boolean; useDevisSurcharges?: boolean };
+      meta?: any;
+    }) {
+      const variantIds = (payload?.variantIds ?? []).map((x) => String(x)).filter(Boolean);
+      if (!variantIds.length) throw new Error("Aucune variante sélectionnée.");
 
-  const useMajorations = payload?.options?.useMajorations !== undefined ? !!payload.options.useMajorations : true;
-  const useDevisSurcharges =
-    payload?.options?.useDevisSurcharges !== undefined ? !!payload.options.useDevisSurcharges : true;
+      const useMajorations = payload?.options?.useMajorations !== undefined ? !!payload.options.useMajorations : true;
+      const useDevisSurcharges =
+        payload?.options?.useDevisSurcharges !== undefined ? !!payload.options.useDevisSurcharges : true;
 
-  const res = await fetch(`${API}/devis/multi/word`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      variantIds,
-      useMajorations,
-      useDevisSurcharges,
-      meta: payload?.meta ?? null,
-    }),
-  });
+      const res = await fetch(`${API}/devis/multi/word`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          variantIds,
+          useMajorations,
+          useDevisSurcharges,
+          meta: payload?.meta ?? null,
+        }),
+      });
 
-  if (!res.ok) {
-    let msg = `Export devis multi Word échoué: ${res.status}`;
-    try {
-      const j = await res.clone().json();
-      if (typeof j?.error === "string") msg = j.error;
-    } catch {}
-    throw new Error(msg);
-  }
+      if (!res.ok) {
+        let msg = `Export devis multi Word échoué: ${res.status}`;
+        try {
+          const j = await res.clone().json();
+          if (typeof j?.error === "string") msg = j.error;
+        } catch {}
+        throw new Error(msg);
+      }
 
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
 
-  const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = `Devis-Multi-${new Date().toISOString().slice(0, 10)}.docx`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `Devis-Multi-${new Date().toISOString().slice(0, 10)}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
 
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
-},
-
-
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    },
 
     // =========================================================
     // Variant update (optimistic + normalisation réponse)
@@ -593,18 +608,43 @@ async exportDevisMultiWord(payload: {
         const optimistic = {
           ...current,
           ...p,
+
+          cab: p.cab ? { ...(current.cab ?? {}), ...(p.cab ?? {}) } : current.cab,
           transport: p.transport ? { ...(current.transport ?? {}), ...(p.transport ?? {}) } : current.transport,
-          autresCouts: p.autresCouts ? { ...(current.autresCouts ?? {}), ...(p.autresCouts ?? {}) } : current.autresCouts,
           coutM3: p.coutM3 ? { ...(current.coutM3 ?? {}), ...(p.coutM3 ?? {}) } : current.coutM3,
           coutMensuel: p.coutMensuel ? { ...(current.coutMensuel ?? {}), ...(p.coutMensuel ?? {}) } : current.coutMensuel,
           maintenance: p.maintenance ? { ...(current.maintenance ?? {}), ...(p.maintenance ?? {}) } : current.maintenance,
+          autresCouts: p.autresCouts ? { ...(current.autresCouts ?? {}), ...(p.autresCouts ?? {}) } : current.autresCouts,
+          devis: p.devis ? { ...(current.devis ?? {}), ...(p.devis ?? {}) } : current.devis,
+          details: p.details ? { ...(current.details ?? {}), ...(p.details ?? {}) } : current.details,
+
+          // ✅ vrais noms backend
+          employes: p.employes ? { ...(current.employes ?? {}), ...(p.employes ?? {}) } : current.employes,
+          coutOccasionnel: p.coutOccasionnel
+            ? { ...(current.coutOccasionnel ?? {}), ...(p.coutOccasionnel ?? {}) }
+            : current.coutOccasionnel,
+
+          // ⚠️ compat anciens alias
           coutEmployes: p.coutEmployes ? { ...(current.coutEmployes ?? {}), ...(p.coutEmployes ?? {}) } : current.coutEmployes,
           coutsOccasionnels: p.coutsOccasionnels
             ? { ...(current.coutsOccasionnels ?? {}), ...(p.coutsOccasionnels ?? {}) }
             : current.coutsOccasionnels,
-          details: p.details ? { ...(current.details ?? {}), ...(p.details ?? {}) } : current.details,
-          cab: p.cab ? { ...(current.cab ?? {}), ...(p.cab ?? {}) } : current.cab,
         };
+
+        // ✅ compat croisée
+        if ((optimistic as any).coutOccasionnel && !(optimistic as any).coutsOccasionnels) {
+          (optimistic as any).coutsOccasionnels = (optimistic as any).coutOccasionnel;
+        }
+        if ((optimistic as any).coutsOccasionnels && !(optimistic as any).coutOccasionnel) {
+          (optimistic as any).coutOccasionnel = (optimistic as any).coutsOccasionnels;
+        }
+
+        if ((optimistic as any).employes && !(optimistic as any).coutEmployes) {
+          (optimistic as any).coutEmployes = (optimistic as any).employes;
+        }
+        if ((optimistic as any).coutEmployes && !(optimistic as any).employes) {
+          (optimistic as any).employes = (optimistic as any).coutEmployes;
+        }
 
         this.replaceActiveVariantInState(optimistic);
       }
@@ -631,28 +671,27 @@ async exportDevisMultiWord(payload: {
       return resp;
     },
 
-// =========================================================
-// Variant MP override (route correcte backend)
-// =========================================================
-async updateVariantMp(variantMpId: string, payload: AnyObj) {
-  const variantId = String((this as any).activeVariant?.id ?? "");
-  if (!variantId) throw new Error("Aucune variante active (activeVariant.id introuvable).");
+    // =========================================================
+    // Variant MP override (route correcte backend)
+    // =========================================================
+    async updateVariantMp(variantMpId: string, payload: AnyObj) {
+      const variantId = String((this as any).activeVariant?.id ?? "");
+      if (!variantId) throw new Error("Aucune variante active (activeVariant.id introuvable).");
 
-  const id = encodeURIComponent(String(variantMpId ?? ""));
-  const body = JSON.stringify(payload ?? {});
+      const id = encodeURIComponent(String(variantMpId ?? ""));
+      const body = JSON.stringify(payload ?? {});
 
-  const resp = await jsonFetch(`/variants/${encodeURIComponent(variantId)}/mps/${id}`, {
-    method: "PUT",
-    body,
-  });
+      const resp = await jsonFetch(`/variants/${encodeURIComponent(variantId)}/mps/${id}`, {
+        method: "PUT",
+        body,
+      });
 
-  // backend: { ok: true, variant }
-  const updatedVariant = (resp as any)?.variant ?? resp;
-  if (updatedVariant?.id) this.replaceActiveVariantInState(updatedVariant);
+      // backend: { ok: true, variant }
+      const updatedVariant = (resp as any)?.variant ?? resp;
+      if (updatedVariant?.id) this.replaceActiveVariantInState(updatedVariant);
 
-  return resp;
-},
-
+      return resp;
+    },
 
     // =========================================================
     // Variant / Formules

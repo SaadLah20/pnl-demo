@@ -3,6 +3,7 @@
      ✅ Masquer 0 auto + toggle user prioritaire
      ✅ Import + Généraliser + Toast + Modal confirm
      ✅ Chiffres en police NORMALE via .num (tabulaires)
+     ✅ NEW: Eau liée au contrat consoEau => forcée à 0 + verrouillée UI
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -56,12 +57,34 @@ function isZero(v: any) {
   return Math.abs(toNum(v)) <= 0;
 }
 
+/** ✅ même règle que backend: "charge client" si contient 'client' */
+function norm(s: any) {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+function isChargeClient(v: any) {
+  return norm(v).includes("client");
+}
+
 /* =========================
    ACTIVE
 ========================= */
 const variant = computed<any>(() => (store as any).activeVariant);
 const contract = computed<any>(() => (store as any).activeContract);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
+
+/* =========================
+   ✅ LOCKS (contrat-managed)
+========================= */
+const eauLocked = computed<boolean>(() => isChargeClient(contract.value?.consoEau));
+const lockReason = computed(() => `Géré par contrat (Consommation d’eau = charge client)`);
+function isLockedKey(key: LineKey) {
+  if (key === "eau") return eauLocked.value;
+  return false;
+}
 
 /* =========================
    DRAFT (coutM3)
@@ -108,6 +131,9 @@ function loadDraftFromVariant() {
   draft.qualite = clamp(c?.qualite, 0, 1e12);
   draft.dechets = clamp(c?.dechets, 0, 1e12);
 
+  // ✅ contrat-managed: forcer eau à 0 si verrouillé
+  if (eauLocked.value) draft.eau = 0;
+
   // "à chaque accès" : on repart en auto
   hideZerosUserToggled.value = false;
   syncHideZerosAuto();
@@ -117,6 +143,15 @@ watch(
   () => variant.value?.id,
   () => loadDraftFromVariant(),
   { immediate: true }
+);
+
+// si le contrat change / verrouillage change, on force à 0
+watch(
+  () => eauLocked.value,
+  (locked) => {
+    if (locked) draft.eau = 0;
+    syncHideZerosAuto();
+  }
 );
 
 watch(
@@ -199,10 +234,14 @@ const lines = computed<Line[]>(() => {
 const visibleLines = computed(() => {
   const arr = lines.value ?? [];
   if (!hideZeros.value) return arr;
-  return arr.filter((ln) => !isZero(ln.value));
+
+  // ✅ On garde visibles les lignes verrouillées même à 0 (pour expliquer le 0)
+  return arr.filter((ln) => !isZero(ln.value) || isLockedKey(ln.key));
 });
 
 function setDraft(key: LineKey, value: any) {
+  // ✅ empêcher l'édition si verrouillé
+  if (isLockedKey(key)) return;
   (draft as any)[key] = clamp(value, 0, 1e12);
 }
 
@@ -254,7 +293,8 @@ function buildPayload() {
   const existing: any = (variant.value as any)?.coutM3 ?? {};
   return {
     category: existing?.category ?? "COUTS_CHARGES",
-    eau: Number(clamp(draft.eau, 0, 1e12)),
+    // ✅ contrat-managed: eau forcée à 0
+    eau: eauLocked.value ? 0 : Number(clamp(draft.eau, 0, 1e12)),
     qualite: Number(clamp(draft.qualite, 0, 1e12)),
     dechets: Number(clamp(draft.dechets, 0, 1e12)),
   };
@@ -314,6 +354,9 @@ function applyCoutM3FromVariant(srcVariant: any) {
   draft.eau = clamp(c?.eau, 0, 1e12);
   draft.qualite = clamp(c?.qualite, 0, 1e12);
   draft.dechets = clamp(c?.dechets, 0, 1e12);
+
+  // ✅ contrat-managed: eau forcée à 0
+  if (eauLocked.value) draft.eau = 0;
 
   hideZerosUserToggled.value = false;
   syncHideZerosAuto();
@@ -514,16 +557,22 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
             <tbody>
               <tr v-for="ln in visibleLines" :key="String(ln.key)">
                 <td>
-                  <span class="designationText">{{ ln.label }}</span>
+                  <div class="designation">
+                    <span class="designationText">{{ ln.label }}</span>
+                    <span v-if="ln.key === 'eau' && eauLocked" class="lockBadge" :title="lockReason">🔒 Contrat</span>
+                  </div>
                 </td>
 
                 <td class="r">
                   <div class="inCell">
                     <input
                       class="inputLg num"
+                      :class="{ locked: ln.key === 'eau' && eauLocked }"
                       type="number"
                       step="0.01"
                       min="0"
+                      :disabled="ln.key === 'eau' && eauLocked"
+                      :title="ln.key === 'eau' && eauLocked ? lockReason : ''"
                       :value="ln.value"
                       @input="setDraft(ln.key, ($event.target as HTMLInputElement).value)"
                     />
@@ -594,7 +643,13 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
     <!-- ✅ toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
+      <div
+        v-if="toastOpen"
+        class="toast"
+        :class="{ err: toastKind === 'err', info: toastKind === 'info' }"
+        role="status"
+        aria-live="polite"
+      >
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -850,6 +905,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-weight: 950;
 }
 
+.designation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .designationText {
   display: block;
   white-space: nowrap;
@@ -858,6 +919,19 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   color: #0f172a;
   font-size: 12.5px;
   font-weight: 950;
+  min-width: 0;
+}
+
+.lockBadge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 950;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  background: rgba(2, 132, 199, 0.08);
+  color: rgba(2, 132, 199, 0.95);
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .inCell {
@@ -886,6 +960,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.7);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.14);
   background: #fff;
+}
+.inputLg.locked {
+  opacity: 0.75;
+  cursor: not-allowed;
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(16, 24, 40, 0.12);
 }
 .unit {
   color: rgba(15, 23, 42, 0.55);

@@ -1,4 +1,4 @@
-// src/services/kpis/headerkpis.ts
+// ✅ src/services/kpis/headerkpis.ts
 import type { HeaderKPIs } from "@/types/kpis.types";
 
 function n(x: any): number {
@@ -62,6 +62,7 @@ function readPersistedDevisSurcharges(variant: any): Record<string, number> {
       variant?.devis?.data;
 
     if (!raw) return {};
+
     if (typeof raw === "object") {
       const maybe = (raw as any).surcharges ?? raw;
       return maybe && typeof maybe === "object" ? (maybe as Record<string, number>) : {};
@@ -98,6 +99,11 @@ function getDevisSurchargeM3(
   return 0;
 }
 
+function clamp(x: any, min: number, max: number) {
+  const v = n(x);
+  return Math.max(min, Math.min(max, v));
+}
+
 export function computeHeaderKpis(
   variant: any,
   dureeMois: number,
@@ -106,9 +112,9 @@ export function computeHeaderKpis(
   useDevisSurcharge: boolean = false,
   opts?: { disableMomdImputation?: boolean }
 ): HeaderKPIs {
-  // =========================
-  // MOMD IMPUTATION (Majorations -> MOMD)
-  // =========================
+  /* =========================
+     MOMD IMPUTATION (Majorations -> MOMD)
+  ========================= */
   const IMP_ENABLED_KEY = "momdImputation.enabled";
   const IMP_PCT_KEY = "momdImputation.pct";
 
@@ -122,13 +128,10 @@ export function computeHeaderKpis(
   const impEnabled =
     !disableImp &&
     getMajorationPct(IMP_ENABLED_KEY, persistedMajorations, previewMajorations) >= 0.5;
-  const impPct =
-    impEnabled
-      ? Math.max(
-          0,
-          Math.min(100, getMajorationPct(IMP_PCT_KEY, persistedMajorations, previewMajorations))
-        )
-      : 0;
+
+  const impPct = impEnabled
+    ? Math.max(0, Math.min(100, getMajorationPct(IMP_PCT_KEY, persistedMajorations, previewMajorations)))
+    : 0;
 
   const duree = n(dureeMois);
   const dureeJours = duree > 0 ? Math.round(duree * 30) : null;
@@ -167,8 +170,8 @@ export function computeHeaderKpis(
         { disableMomdImputation: true }
       );
 
-      const lossEbitda = Math.max(0, n(kBase?.ebitdaTotal) - n(kMajNoImp?.ebitdaTotal));
-      const fgPct = Math.max(0, Math.min(99.9, n(kBase?.fraisGenerauxPct))) / 100;
+      const lossEbitda = Math.max(0, n((kBase as any)?.ebitdaTotal) - n((kMajNoImp as any)?.ebitdaTotal));
+      const fgPct = Math.max(0, Math.min(99.9, n((kBase as any)?.fraisGenerauxPct))) / 100;
 
       const addCaTotal = fgPct < 0.999 ? (lossEbitda * (impPct / 100)) / (1 - fgPct) : 0;
       momdImputedAddM3 = addCaTotal / volumeTotalM3;
@@ -178,11 +181,7 @@ export function computeHeaderKpis(
   }
 
   // 2) Transport (majorable)
-  const transportPct = getMajorationPct(
-    "transport.prixMoyen",
-    persistedMajorations,
-    previewMajorations
-  );
+  const transportPct = getMajorationPct("transport.prixMoyen", persistedMajorations, previewMajorations);
   const transportMoyenM3 = applyMajoration(n(variant?.transport?.prixMoyen), transportPct);
   const transportTotal = transportMoyenM3 * volumeTotalM3;
 
@@ -258,10 +257,7 @@ export function computeHeaderKpis(
   const autresItems = variant?.autresCouts?.items ?? [];
 
   // 5.1) Coûts / m3 (majorables par ligne)
-  const coutM3Eau = applyMajoration(
-    n(coutM3?.eau),
-    getMajorationPct("coutM3.eau", persistedMajorations, previewMajorations)
-  );
+  const coutM3Eau = applyMajoration(n(coutM3?.eau), getMajorationPct("coutM3.eau", persistedMajorations, previewMajorations));
   const coutM3Qualite = applyMajoration(
     n(coutM3?.qualite),
     getMajorationPct("coutM3.qualite", persistedMajorations, previewMajorations)
@@ -270,7 +266,6 @@ export function computeHeaderKpis(
     n(coutM3?.dechets),
     getMajorationPct("coutM3.dechets", persistedMajorations, previewMajorations)
   );
-
   const coutM3Total = (coutM3Eau + coutM3Qualite + coutM3Dechets) * volumeTotalM3;
 
   // 5.2) Coûts mensuels
@@ -278,18 +273,9 @@ export function computeHeaderKpis(
     n(coutMensuel?.electricite),
     getMajorationPct("coutMensuel.electricite", persistedMajorations, previewMajorations)
   );
-  const cmGasoil = applyMajoration(
-    n(coutMensuel?.gasoil),
-    getMajorationPct("coutMensuel.gasoil", persistedMajorations, previewMajorations)
-  );
-  const cmLocation = applyMajoration(
-    n(coutMensuel?.location),
-    getMajorationPct("coutMensuel.location", persistedMajorations, previewMajorations)
-  );
-  const cmSecurite = applyMajoration(
-    n(coutMensuel?.securite),
-    getMajorationPct("coutMensuel.securite", persistedMajorations, previewMajorations)
-  );
+  const cmGasoil = applyMajoration(n(coutMensuel?.gasoil), getMajorationPct("coutMensuel.gasoil", persistedMajorations, previewMajorations));
+  const cmLocation = applyMajoration(n(coutMensuel?.location), getMajorationPct("coutMensuel.location", persistedMajorations, previewMajorations));
+  const cmSecurite = applyMajoration(n(coutMensuel?.securite), getMajorationPct("coutMensuel.securite", persistedMajorations, previewMajorations));
   const cmHebergements = applyMajoration(
     n(coutMensuel?.hebergements),
     getMajorationPct("coutMensuel.hebergements", persistedMajorations, previewMajorations)
@@ -298,14 +284,8 @@ export function computeHeaderKpis(
     n(coutMensuel?.locationTerrain),
     getMajorationPct("coutMensuel.locationTerrain", persistedMajorations, previewMajorations)
   );
-  const cmTelephone = applyMajoration(
-    n(coutMensuel?.telephone),
-    getMajorationPct("coutMensuel.telephone", persistedMajorations, previewMajorations)
-  );
-  const cmTroisG = applyMajoration(
-    n(coutMensuel?.troisG),
-    getMajorationPct("coutMensuel.troisG", persistedMajorations, previewMajorations)
-  );
+  const cmTelephone = applyMajoration(n(coutMensuel?.telephone), getMajorationPct("coutMensuel.telephone", persistedMajorations, previewMajorations));
+  const cmTroisG = applyMajoration(n(coutMensuel?.troisG), getMajorationPct("coutMensuel.troisG", persistedMajorations, previewMajorations));
   const cmTaxePro = applyMajoration(
     n(coutMensuel?.taxeProfessionnelle),
     getMajorationPct("coutMensuel.taxeProfessionnelle", persistedMajorations, previewMajorations)
@@ -322,10 +302,7 @@ export function computeHeaderKpis(
     n(coutMensuel?.locationBungalows),
     getMajorationPct("coutMensuel.locationBungalows", persistedMajorations, previewMajorations)
   );
-  const cmEpi = applyMajoration(
-    n(coutMensuel?.epi),
-    getMajorationPct("coutMensuel.epi", persistedMajorations, previewMajorations)
-  );
+  const cmEpi = applyMajoration(n(coutMensuel?.epi), getMajorationPct("coutMensuel.epi", persistedMajorations, previewMajorations));
 
   const coutMensuelMensuel =
     cmElectricite +
@@ -345,14 +322,8 @@ export function computeHeaderKpis(
   const coutMensuelTotal = coutMensuelMensuel * duree;
 
   // 5.3) Maintenance
-  const mCab = applyMajoration(
-    n(maintenance?.cab),
-    getMajorationPct("maintenance.cab", persistedMajorations, previewMajorations)
-  );
-  const mElec = applyMajoration(
-    n(maintenance?.elec),
-    getMajorationPct("maintenance.elec", persistedMajorations, previewMajorations)
-  );
+  const mCab = applyMajoration(n(maintenance?.cab), getMajorationPct("maintenance.cab", persistedMajorations, previewMajorations));
+  const mElec = applyMajoration(n(maintenance?.elec), getMajorationPct("maintenance.elec", persistedMajorations, previewMajorations));
   const mChargeur = applyMajoration(
     n(maintenance?.chargeur),
     getMajorationPct("maintenance.chargeur", persistedMajorations, previewMajorations)
@@ -361,10 +332,7 @@ export function computeHeaderKpis(
     n(maintenance?.generale),
     getMajorationPct("maintenance.generale", persistedMajorations, previewMajorations)
   );
-  const mBassins = applyMajoration(
-    n(maintenance?.bassins),
-    getMajorationPct("maintenance.bassins", persistedMajorations, previewMajorations)
-  );
+  const mBassins = applyMajoration(n(maintenance?.bassins), getMajorationPct("maintenance.bassins", persistedMajorations, previewMajorations));
   const mPreventive = applyMajoration(
     n(maintenance?.preventive),
     getMajorationPct("maintenance.preventive", persistedMajorations, previewMajorations)
@@ -445,10 +413,7 @@ export function computeHeaderKpis(
     n(coutOcc?.remisePointCentrale),
     getMajorationPct("coutOccasionnel.remisePointCentrale", persistedMajorations, previewMajorations)
   );
-  const occSilots = applyMajoration(
-    n(coutOcc?.silots),
-    getMajorationPct("coutOccasionnel.silots", persistedMajorations, previewMajorations)
-  );
+  const occSilots = applyMajoration(n(coutOcc?.silots), getMajorationPct("coutOccasionnel.silots", persistedMajorations, previewMajorations));
   const occLocalAdjuvant = applyMajoration(
     n(coutOcc?.localAdjuvant),
     getMajorationPct("coutOccasionnel.localAdjuvant", persistedMajorations, previewMajorations)
@@ -459,19 +424,10 @@ export function computeHeaderKpis(
   );
 
   const coutOccasionnelTotal =
-    occGenieCivil +
-    occInstallation +
-    occTransport +
-    occDemontage +
-    occRemise +
-    occSilots +
-    occLocalAdjuvant +
-    occBungalows;
+    occGenieCivil + occInstallation + occTransport + occDemontage + occRemise + occSilots + occLocalAdjuvant + occBungalows;
 
   // 5.6) Autres coûts
-  const fraisGenPct = n(
-    autresItems.find((x: any) => String(x?.unite ?? "").includes("POURCENT"))?.valeur
-  );
+  const fraisGenPct = n(autresItems.find((x: any) => String(x?.unite ?? "").includes("POURCENT"))?.valeur);
 
   const autresCoutsHorsPctTotal = sum(autresItems, (x: any) => {
     const unite = String(x?.unite ?? "");
@@ -479,12 +435,7 @@ export function computeHeaderKpis(
 
     if (unite.includes("POURCENT")) return 0;
 
-    const pctItem = getMajorationPct(
-      `autresCoutsItem:${String(x?.id ?? "")}`,
-      persistedMajorations,
-      previewMajorations
-    );
-
+    const pctItem = getMajorationPct(`autresCoutsItem:${String(x?.id ?? "")}`, persistedMajorations, previewMajorations);
     const valMajore = applyMajoration(baseVal, pctItem);
 
     if (unite === "MOIS") return valMajore * duree;
@@ -493,22 +444,13 @@ export function computeHeaderKpis(
   });
 
   const productionTotal =
-    coutM3Total +
-    coutMensuelTotal +
-    maintenanceTotal +
-    employesTotal +
-    coutOccasionnelTotal +
-    autresCoutsHorsPctTotal;
+    coutM3Total + coutMensuelTotal + maintenanceTotal + employesTotal + coutOccasionnelTotal + autresCoutsHorsPctTotal;
 
-  function clamp(x: any, min: number, max: number) {
-    const v = n(x);
-    return Math.max(min, Math.min(max, v));
-  }
-
-  // 6) Pompage (conditionné par transport.includePompage)
-  // ✅ Important : si includePompage est absent (ancien data), on l'infère depuis les valeurs
+  /* =========================
+     6) Pompage (conditionné par transport.includePompage)
+     - Si includePompage absent (ancien data), on l'infère depuis les valeurs
+  ========================= */
   const t = variant?.transport ?? {};
-
   const rawInclude = (t as any)?.includePompage;
 
   // valeurs (on ne les "zero" jamais ici — juste ignorées si includePompage=false)
@@ -516,10 +458,8 @@ export function computeHeaderKpis(
   const rawPrixAchatPompe = n((t as any)?.prixAchatPompe);
   const rawPrixVentePompe = n((t as any)?.prixVentePompe);
 
-  // ✅ si flag absent : on active si des valeurs existent (corrige le besoin d'aller "Enregistrer" après refresh)
-  const inferredIncludePompage =
-    rawVolumePompePct > 0 || rawPrixAchatPompe > 0 || rawPrixVentePompe > 0;
-
+  // ✅ si flag absent : on active si des valeurs existent
+  const inferredIncludePompage = rawVolumePompePct > 0 || rawPrixAchatPompe > 0 || rawPrixVentePompe > 0;
   const includePompage = typeof rawInclude === "boolean" ? rawInclude : inferredIncludePompage;
 
   const volumePompePct = includePompage ? clamp(rawVolumePompePct, 0, 100) : 0;
@@ -528,13 +468,13 @@ export function computeHeaderKpis(
 
   const volumePompeM3 = (volumePompePct / 100) * volumeTotalM3;
 
-  // ✅ AJOUT: CA pompage (PV * volume pompé) ajouté au CA uniquement si includePompage=true
+  // ✅ CA pompage (PV * volume pompé) ajouté au CA uniquement si includePompage=true
   const caPompageTotal = includePompage ? prixVentePompe * volumePompeM3 : 0;
 
   // Marge totale pompage = (PV - PA) * volume pompé
   const margePompageTotal = (prixVentePompe - prixAchatPompe) * volumePompeM3;
 
-  // ✅ AJOUT: on augmente le CA total et on recalcule les dépendants (prix moyen + marge brute)
+  // ✅ AJOUT: on augmente le CA total et on recalcule les dépendants
   if (includePompage && caPompageTotal !== 0) {
     caTotal = caTotal + caPompageTotal;
 
