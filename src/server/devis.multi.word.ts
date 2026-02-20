@@ -1,4 +1,4 @@
-// src/server/devis.multi.word.ts (FICHIER COMPLET / docx-compatible + mutualisation sections + charges communes + prix compl. filtrés + ✅ prix compl commun en bas + ✅ majorations PV global + ✅ articles extras alignés comme devis.word)
+// src/server/devis.multi.word.ts (FICHIER COMPLET / mise en page pro + titre centré + hiérarchie + tabulations/puces)
 import path from "path";
 import fs from "fs";
 import {
@@ -120,10 +120,6 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
 
 /* =========================
    EXTRA ARTICLES (hors formules)
-   ✅ Alignement identique à devis.word :
-   - ajoutés au tableau "Prix"
-   - PU toujours en /m3 (pas d'unité affichée ailleurs)
-   - si qty absent/0 => afficher "-" dans Volume & Montant (non inclus dans totaux)
 ========================= */
 
 type ExtraArticle = {
@@ -190,27 +186,35 @@ function readExtraArticlesFromDevis(v: any): ExtraArticle[] {
 }
 
 /* =========================
-   DOC HELPERS (compat + spacing propre)
+   DOC HELPERS (mise en page pro)
 ========================= */
 
 const FONT = "Tahoma";
-const SIZE_9 = 18; // 9pt
+const TABLE_BODY_FONT = "Arial";
+
+const SIZE_9 = 18;  // 9pt
 const SIZE_10 = 20; // 10pt
+const SIZE_11 = 22; // 11pt (petit renfort hiérarchie)
 const SIZE_12 = 24; // 12pt
 
-const TABLE_BODY_FONT = "Arial";
 const ROW_HEIGHT = 360;
 
-// ✅ spacing anti “trous”
+// ✅ espacements cohérents
 const LINE = 240;
-const AFTER_P = 60;
-const AFTER_TITLE = 90;
+const AFTER_P = 80;        // plus aéré que 60
+const AFTER_TITLE = 120;   // titres plus “lisibles”
+const AFTER_SUBTITLE = 90;
 const AFTER_BULLET = 30;
+const BEFORE_SECTION = 80;
 
-function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment; size?: number }) {
+// ✅ cover spacing
+const COVER_GAP_1 = 120;
+const COVER_GAP_2 = 180;
+
+function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment; size?: number; after?: number; before?: number }) {
   return new Paragraph({
     alignment: opts?.align,
-    spacing: { before: 0, after: AFTER_P, line: LINE },
+    spacing: { before: opts?.before ?? 0, after: opts?.after ?? AFTER_P, line: LINE },
     children: [
       new TextRun({
         text: text ?? "",
@@ -247,21 +251,48 @@ function blank(lines = 1) {
   );
 }
 
+// ✅ titre section = clair et stable
 function sectionTitle(text: string) {
   return new Paragraph({
-    spacing: { before: 0, after: AFTER_TITLE, line: LINE },
+    spacing: { before: BEFORE_SECTION, after: AFTER_TITLE, line: LINE },
     children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_10 })],
   });
 }
 
+// ✅ titre de proposition
 function propositionTitle(text: string) {
   return new Paragraph({
-    spacing: { before: 160, after: 140, line: LINE },
+    spacing: { before: 200, after: 140, line: LINE },
     children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_12 })],
   });
 }
 
-// ✅ Puces cercle vide
+// ✅ cover title
+function coverTitle(text: string) {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 0, after: COVER_GAP_1, line: LINE },
+    children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_12 })],
+  });
+}
+
+function coverProject(text: string) {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 0, after: COVER_GAP_2, line: LINE },
+    children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_11 })],
+  });
+}
+
+function coverClient(text: string) {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 0, after: COVER_GAP_1, line: LINE },
+    children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_10 })],
+  });
+}
+
+// ✅ Puces cercle vide (indent stable)
 const HOLLOW_BULLET_REF = "HOLLOW_BULLET";
 
 function bulletsFromStrings(lines: string[]) {
@@ -295,7 +326,6 @@ function normalizeLines(raw: any, opts?: { dropZero?: boolean }): string[] {
           return text.trim();
         }
 
-        // ✅ filtre: si value numérique <=0, on ignore (pour prix complémentaires / pénalités)
         if (opts?.dropZero && value !== undefined && value !== null && value !== "") {
           const vNum0 = Number(value);
           if (Number.isFinite(vNum0) && vNum0 <= 0) return "";
@@ -377,7 +407,7 @@ function cell(
   return new TableCell({
     children,
     columnSpan: opts?.columnSpan,
-    verticalAlign: (VerticalAlign.CENTER as any) ?? undefined,
+    verticalAlign: VerticalAlign.CENTER,
     borders: opts?.borders,
     width: opts?.widthPct ? { size: opts.widthPct, type: WidthType.PERCENTAGE } : undefined,
   });
@@ -401,8 +431,14 @@ function kvTable(items: KV[]) {
   const row = (a: KV, b: KV) =>
     new TableRow({
       children: [
-        cell([pTxt(a.k, { bold: true }), pTxt(a.v, { bold: true, size: SIZE_10 })], { borders: TABLE_BORDERS, widthPct: 50 }),
-        cell([pTxt(b.k, { bold: true }), pTxt(b.v, { bold: true, size: SIZE_10 })], { borders: TABLE_BORDERS, widthPct: 50 }),
+        cell([pTxt(a.k, { bold: true, after: 0 }), pTxt(a.v, { bold: true, size: SIZE_10, after: 0 })], {
+          borders: TABLE_BORDERS,
+          widthPct: 50,
+        }),
+        cell([pTxt(b.k, { bold: true, after: 0 }), pTxt(b.v, { bold: true, size: SIZE_10, after: 0 })], {
+          borders: TABLE_BORDERS,
+          widthPct: 50,
+        }),
       ],
     });
 
@@ -430,20 +466,15 @@ function getPenalitesLines(v: any): string[] {
   const raw2 = rappel?.penalitesTexte;
   if (typeof raw2 === "string" && raw2.trim()) return [raw2.trim()];
 
-  // fallback: penalites (liste) — on peut filtrer les value 0 si objets
   return normalizeLines(devis?.penalites, { dropZero: true });
 }
 
 /* =========================
-   Prix complémentaires : règle demandée
-   ✅ si toutes les pénalités/prix du contrat sont à 0 => PAS de bloc
-   - On prend devis.prixComplementaires si présent
-   - Sinon, on construit depuis le contrat (champs connus / heuristique)
+   Prix complémentaires
 ========================= */
 
 function contractHasAnyExtraPrices(contract: any): boolean {
   const c: any = contract ?? {};
-  // on scanne des champs usuels "Price/Rent/Penal..."
   for (const [k, v] of Object.entries(c)) {
     const key = String(k);
     if (!/(price|rent|penal|penalty)/i.test(key)) continue;
@@ -457,7 +488,6 @@ function buildExtrasFromContract(contract: any): string[] {
   const c: any = contract ?? {};
   const out: string[] = [];
 
-  // champs connus chez toi (vu dans DevisPage)
   const sundayPrice = n(c?.sundayPrice);
   const chillerRent = n(c?.chillerRent);
 
@@ -469,7 +499,6 @@ function buildExtrasFromContract(contract: any): string[] {
     );
   }
 
-  // si tu as un champ contractuel pour dépassement durée (on supporte plusieurs noms possibles)
   const overrunMonthly =
     n((c as any)?.overrunMonthlyPrice) ||
     n((c as any)?.beyondDurationMonthlyPrice) ||
@@ -497,7 +526,7 @@ function buildExtrasFromContract(contract: any): string[] {
 }
 
 /* =========================
-   Charges communes (mutualisation)
+   Charges communes
 ========================= */
 
 function intersectLines(all: string[][]): string[] {
@@ -626,13 +655,11 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     dureeQuantiteTexte: string;
     penalitesLines: string[];
 
-    // charges (complètes) + diff (calculées après)
     chargeFournisseurAll: string[];
     chargeClientAll: string[];
     chargeFournisseurDiff: string[];
     chargeClientDiff: string[];
 
-    // prix complémentaires par variante (filtrés)
     prixComplementaires: string[];
     pcKey: string;
 
@@ -669,20 +696,16 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     const chargeFournisseurAll = normalizeLines((v?.devis as any)?.chargeFournisseur);
     const chargeClientAll = normalizeLines((v?.devis as any)?.chargeClient);
 
-    // ✅ Prix complémentaires: on filtre les items value<=0
     let prixComplementaires = normalizeLines((v?.devis as any)?.prixComplementaires, { dropZero: true });
 
-    // ✅ Si le contrat n’a AUCUN prix/pénalité (>0), on FORCE à vide (pas de bloc)
     const hasAnyExtraPrice = contractHasAnyExtraPrices(c);
     if (!hasAnyExtraPrice) {
       prixComplementaires = [];
     } else {
-      // si rien n’est persisté côté devis, on construit depuis le contrat (champs connus)
       if (!prixComplementaires.length) {
         const built = buildExtrasFromContract(c);
         prixComplementaires = built.filter((x) => norm(x));
       }
-      // si tout est 0 ou vide après filtre => pas de bloc
       prixComplementaires = (prixComplementaires ?? []).map(norm).filter(Boolean);
     }
 
@@ -726,11 +749,9 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
       ? getFirstMajPct(["pv", "pv.m3", "devis.pv", "devis.pvM3", "global", "globalPct", "majorationGlobale"], maj)
       : 0;
 
-    // (optionnel) MOMD majoré si présent
     const momdPctKey = ["momd", "momd.m3", "mainOeuvre", "mo", "momdPct"];
 
-    // ✅ lignes tableau formules
-    const tableLines: TableLine[] = rows.map((r: any) => {
+    const formuleLines: TableLine[] = rows.map((r: any) => {
       const label = String(r?.formule?.label ?? "—");
       const vol = n(r?.volumeM3);
 
@@ -740,12 +761,8 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
 
       const cmp = cmpFormuleM3(r?.formule);
 
-      // ✅ base PV
       const pvBase = cmp + transportUsed + momdUsed;
-
-      // ✅ majoration PV globale
       const pvMaj = pvGlobalPct ? applyMaj(pvBase, pvGlobalPct) : pvBase;
-
       const pvArr = roundTo5(pvMaj);
 
       const surcharge = useDevisSurcharges ? getSurchargeM3(r, surMap) : 0;
@@ -754,12 +771,22 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
       return { label, pu, vol, total: pu * vol };
     });
 
-    // ✅ Hydrofuge (meta)
-    if (hydroPu > 0 && hydroQty > 0) {
-      tableLines.push({ label: "Plus value Hydrofuge", pu: hydroPu, vol: hydroQty, total: hydroPu * hydroQty });
+    formuleLines.sort((a, b) => n(b.pu) - n(a.pu));
+
+    const tableLines: TableLine[] = [...formuleLines];
+
+    if (hydroPu > 0) {
+      const hasQty = hydroQty > 0;
+      tableLines.push({
+        label: "Plus value Hydrofuge",
+        pu: hydroPu,
+        vol: hasQty ? hydroQty : 0,
+        total: hasQty ? hydroPu * hydroQty : 0,
+        volDash: !hasQty,
+        totalDash: !hasQty,
+      });
     }
 
-    // ✅ Articles extras (hors formules) — ajout au tableau comme dans devis.word
     const extras = readExtraArticlesFromDevis(v);
     for (const ex of extras) {
       const pu = n(ex?.puM3);
@@ -776,18 +803,17 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
       });
     }
 
-    // ✅ Totaux basés sur les lignes avec montants (les "dash" contribuent 0)
-    const totalHT = tableLines.reduce((s, x) => s + n(x.total), 0);
+    const totalHT = tableLines.reduce((s, x) => s + (x.volDash || x.totalDash ? 0 : n(x.total)), 0);
     const tva = totalHT * 0.2;
     const totalTTC = totalHT + tva;
 
     const headerRow = new TableRow({
       height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [
-        cell([pTxt("Désignation", { bold: true })]),
-        cell([pTxt("PU HT/m3", { bold: true, align: AlignmentType.RIGHT })]),
-        cell([pTxt("Volume", { bold: true, align: AlignmentType.RIGHT })]),
-        cell([pTxt("Montant HT", { bold: true, align: AlignmentType.RIGHT })]),
+        cell([pTxt("Désignation", { bold: true, after: 0 })]),
+        cell([pTxt("PU HT/m3", { bold: true, align: AlignmentType.RIGHT, after: 0 })]),
+        cell([pTxt("Volume", { bold: true, align: AlignmentType.RIGHT, after: 0 })]),
+        cell([pTxt("Montant HT", { bold: true, align: AlignmentType.RIGHT, after: 0 })]),
       ],
     });
 
@@ -804,7 +830,6 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
         })
     );
 
-    // ✅ Total volume: on garde le volume formules (cohérent avec le calcul projet et ton doc actuel)
     const totalRow = new TableRow({
       height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [
@@ -841,7 +866,6 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     const rappelKey = `${fmtMoney0(volumeTotal)}|${fmtMoney0(dureeMois)}|${norm(demarrage)}|${norm(lieu)}`;
     const dqKey = norm(dureeQuantiteTexte);
     const penalKey = (penalitesLines ?? []).map(norm).filter(Boolean).join("\n");
-
     const pcKey = (prixComplementaires ?? []).map(norm).filter(Boolean).join("\n");
 
     computedList.push({
@@ -868,14 +892,12 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
   if (!computedList.length) throw new Error("Aucune donnée calculée (liste vide).");
   const cFirst = computedList[0]!;
 
-  // ===== Mutualisation : Rappel / Durée-Quantité / Pénalités
   const hasCommonRappel = computedList.length > 1 && computedList.every((x) => x.rappelKey === cFirst.rappelKey);
   const hasCommonDQ = computedList.length > 1 && !!cFirst.dqKey && computedList.every((x) => x.dqKey === cFirst.dqKey);
 
   const hasAnyPen = computedList.some((x) => (x.penalitesLines ?? []).some((s) => norm(s)));
   const hasCommonPen = hasAnyPen && computedList.length > 1 && computedList.every((x) => x.penalKey === cFirst.penalKey);
 
-  // ===== Mutualisation : Charges & responsabilités communes
   const commonLhm = computedList.length > 1 ? intersectLines(computedList.map((x) => x.chargeFournisseurAll)) : [];
   const commonClient = computedList.length > 1 ? intersectLines(computedList.map((x) => x.chargeClientAll)) : [];
 
@@ -886,36 +908,22 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
 
   const hasCommonCharges = commonLhm.length + commonClient.length > 0;
 
-  // ===== Mutualisation : Prix complémentaires
   const hasAnyPc = computedList.some((x) => (x.prixComplementaires ?? []).length > 0);
   const hasCommonPc = hasAnyPc && computedList.length > 1 && computedList.every((x) => x.pcKey === cFirst.pcKey);
   const pcFirst = hasAnyPc ? cFirst : null;
 
-  // ===== Cover
+  // ===== Cover (✅ titre + projet centrés)
   docChildren.push(
     new Paragraph({
       alignment: AlignmentType.RIGHT,
       spacing: { before: 0, after: 0, line: LINE },
       children: [new TextRun({ text: `${ville ? `${ville}, ` : ""}le ${date}`, font: FONT, size: SIZE_9 })],
     }),
-
     ...blank(1),
-
-    new Paragraph({
-      alignment: AlignmentType.LEFT,
-      spacing: { before: 0, after: 60, line: LINE },
-      children: [new TextRun({ text: "Propositions de prix", bold: true, font: FONT, size: SIZE_12 })],
-    }),
-
-    pTxt(projet, { bold: true, size: SIZE_10 }),
-
-    ...blank(1),
-
-    pTxt(client ? `Client : ${client}` : "Client : —", { bold: true }),
-
-    ...blank(1),
-
-    pTxt(intro),
+    coverTitle("PROPOSITIONS DE PRIX"),
+    coverProject(projet),
+    coverClient(client ? `Client : ${client}` : "Client : —"),
+    pTxt(intro, { align: AlignmentType.LEFT, after: 120 }),
 
     sectionTitle("Contenu :"),
     ...bulletsFromStrings([
@@ -924,10 +932,8 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     ])
   );
 
-  // ===== Rappel commun (en haut) si identique
   if (hasCommonRappel) {
     docChildren.push(
-      ...blank(1),
       sectionTitle("Rappel des données du projet :"),
       kvTable([
         { k: "Quantité", v: `${fmtMoney0(cFirst.volumeTotal)} m³` },
@@ -938,23 +944,20 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     );
   }
 
-  // ===== Bloc commun charges avant propositions
   if (hasCommonCharges) {
-    docChildren.push(...blank(1), sectionTitle("Charges & responsabilités communes :"));
+    docChildren.push(sectionTitle("Charges & responsabilités communes :"));
 
     if (commonLhm.length) {
-      docChildren.push(pTxt("À la charge de LafargeHolcim Maroc :", { bold: true }));
+      docChildren.push(pTxt("À la charge de LafargeHolcim Maroc :", { bold: true, after: AFTER_SUBTITLE }));
       docChildren.push(...bulletsFromStrings(commonLhm));
     }
 
     if (commonClient.length) {
-      if (commonLhm.length) docChildren.push(...blank(1));
-      docChildren.push(pTxt("À la charge du client :", { bold: true }));
+      docChildren.push(pTxt("À la charge du client :", { bold: true, after: AFTER_SUBTITLE }));
       docChildren.push(...bulletsFromStrings(commonClient));
     }
   }
 
-  // ===== Propositions
   for (let i = 0; i < computedList.length; i++) {
     const it = computedList[i]!;
     if (i > 0) docChildren.push(...blank(2));
@@ -974,72 +977,51 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
               { k: "Démarrage", v: it.demarrage || "—" },
               { k: "Lieu", v: it.lieu || "—" },
             ]),
-            ...blank(1),
           ] as DocChild[])),
 
-      // ✅ Dans les propositions, on n’affiche que ce qui diffère
       ...(hasDiffCharges
         ? ([
             sectionTitle("Charges & responsabilités (spécifiques) :"),
 
             ...(it.chargeFournisseurDiff.length
-              ? ([pTxt("À la charge de LafargeHolcim Maroc :", { bold: true }), ...bulletsFromStrings(it.chargeFournisseurDiff)] as DocChild[])
+              ? ([pTxt("À la charge de LafargeHolcim Maroc :", { bold: true, after: AFTER_SUBTITLE }), ...bulletsFromStrings(it.chargeFournisseurDiff)] as DocChild[])
               : ([] as DocChild[])),
 
             ...(it.chargeClientDiff.length
               ? ([
-                  ...(it.chargeFournisseurDiff.length ? blank(1) : []),
-                  pTxt("À la charge du client :", { bold: true }),
+                  pTxt("À la charge du client :", { bold: true, after: AFTER_SUBTITLE }),
                   ...bulletsFromStrings(it.chargeClientDiff),
                 ] as DocChild[])
               : ([] as DocChild[])),
-
-            ...blank(1),
           ] as DocChild[])
         : ([] as DocChild[])),
 
       sectionTitle("Prix :"),
       it.table,
 
-      // ✅ Prix complémentaires :
-      // - si commun => NE PAS l'afficher par proposition (il sera en bas)
-      // - si non commun => afficher seulement s'il y en a
       ...(hasCommonPc
         ? ([] as DocChild[])
         : it.prixComplementaires.length
-          ? ([
-              ...blank(1),
-              sectionTitle("Prix complémentaires :"),
-              ...bulletsFromStrings(it.prixComplementaires),
-            ] as DocChild[])
+          ? ([sectionTitle("Prix complémentaires :"), ...bulletsFromStrings(it.prixComplementaires)] as DocChild[])
           : ([] as DocChild[])),
 
-      ...(hasCommonDQ
-        ? []
-        : ([
-            ...blank(1),
-            sectionTitle("Durée - Quantité :"),
-            pTxt(it.dureeQuantiteTexte),
-          ] as DocChild[])),
+      ...(hasCommonDQ ? [] : ([sectionTitle("Durée - Quantité :"), pTxt(it.dureeQuantiteTexte)] as DocChild[])),
 
       ...(hasCommonPen || !((it.penalitesLines ?? []).some((s) => norm(s)))
         ? []
         : ([
-            ...blank(1),
             sectionTitle("Pénalités :"),
             ...(it.penalitesLines.length > 1 ? bulletsFromStrings(it.penalitesLines) : [pTxt(it.penalitesLines[0] ?? "—")]),
           ] as DocChild[]))
     );
   }
 
-  // ===== ✅ Prix complémentaires communs EN BAS (avant Textes/Durée-Quantité)
   if (hasAnyPc && hasCommonPc && pcFirst) {
-    docChildren.push(...blank(2), sectionTitle("Prix complémentaires :"), ...bulletsFromStrings(pcFirst.prixComplementaires));
+    docChildren.push(sectionTitle("Prix complémentaires :"), ...bulletsFromStrings(pcFirst.prixComplementaires));
   }
 
-  // ===== Textes communs en bas (si identiques)
   if (hasCommonDQ || hasCommonPen) {
-    docChildren.push(...blank(2), sectionTitle("Textes :"));
+    docChildren.push(sectionTitle("Textes :"));
 
     if (hasCommonDQ) {
       docChildren.push(sectionTitle("Durée - Quantité :"), pTxt(cFirst.dureeQuantiteTexte));
@@ -1048,20 +1030,17 @@ export async function buildDevisMultiWordBuffer(variantIds: string[], opts?: Bui
     if (hasCommonPen) {
       const lines = cFirst.penalitesLines ?? [];
       docChildren.push(
-        ...blank(1),
         sectionTitle("Pénalités :"),
         ...(lines.length > 1 ? bulletsFromStrings(lines) : [pTxt(lines[0] ?? "—")])
       );
     }
   }
 
-  // ===== Validité + signature
   docChildren.push(
-    ...blank(2),
     sectionTitle("Validité de l’offre :"),
     pTxt(validiteTexte),
 
-    ...blank(4),
+    ...blank(3),
 
     new Paragraph({
       alignment: AlignmentType.LEFT,

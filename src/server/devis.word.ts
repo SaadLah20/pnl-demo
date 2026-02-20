@@ -64,12 +64,6 @@ function safeJsonParse(raw: any, fallback: any) {
   }
 }
 
-function roundTo5(x: number): number {
-  const v = n(x);
-  if (!Number.isFinite(v)) return 0;
-  return Math.round(v / 5) * 5;
-}
-
 function pricePerKg(prixTonne: number): number {
   const p = n(prixTonne);
   if (p <= 0) return 0;
@@ -252,7 +246,6 @@ function normalizeExtraArticles(raw: any): ExtraArticleNorm[] {
     const pu = n((it as any).puM3 ?? (it as any).pu ?? (it as any).prix ?? (it as any).price ?? 0);
     const qty = n((it as any).qtyM3 ?? (it as any).qty ?? (it as any).volume ?? (it as any).qte ?? 0);
 
-    // si pu=0 on garde quand même (tu peux vouloir une ligne visible), mais total sera "-"
     out.push({ label, pu, qty });
   }
 
@@ -315,9 +308,17 @@ function cell(
   return new TableCell({
     children,
     columnSpan: opts?.columnSpan,
-    verticalAlign: VerticalAlign.CENTER, // ✅ centrage vertical
+    verticalAlign: VerticalAlign.CENTER,
     borders: opts?.borders,
   });
+}
+
+function parseIsoDateToFr(x: any): string | null {
+  const s = String(x ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return fmtDateFr(d);
 }
 
 export async function buildDevisWordBuffer(variantId: string, opts?: BuildOptions): Promise<Buffer> {
@@ -342,34 +343,45 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const p: any = c?.pnl;
 
   const now = new Date();
-  const date = fmtDateFr(now);
-
-  const ville = String(p?.city ?? "");
-  const pnlTitle = String(p?.title ?? "Offre de prix");
-  const client = String(p?.client ?? "");
-
-  const demarrage = p?.startDate ? fmtDateFr(new Date(p.startDate)) : "";
-  const dureeMois = n(c?.dureeMois ?? 0);
-
-  const rows = (v?.variantFormules ?? []) as any[];
-  const volumeTotal = rows.reduce((s, r) => s + n(r?.volumeM3), 0);
+  const dateNowFr = fmtDateFr(now);
 
   const devisMeta = safeJsonParse((v?.devis as any)?.meta, {});
+
+  // ✅ meta overrides si présents
+  const ville = String(devisMeta?.ville ?? p?.city ?? "");
+  const pnlTitle = String(devisMeta?.titreProjet ?? p?.title ?? "Offre de prix");
+  const client = String(devisMeta?.client ?? p?.client ?? "");
+
+  const metaDateFr = parseIsoDateToFr(devisMeta?.date);
+  const dateFr = metaDateFr ?? dateNowFr;
+
+  const demarrage =
+    String(safeJsonParse((v?.devis as any)?.rappel, {})?.demarrage ?? "").trim() ||
+    (p?.startDate ? fmtDateFr(new Date(p.startDate)) : "");
+
+  const dureeMois = n(c?.dureeMois ?? safeJsonParse((v?.devis as any)?.rappel, {})?.dureeMois ?? 0);
+
+  const rows = (v?.variantFormules ?? []) as any[];
+  const volumeTotalFormules = rows.reduce((s, r) => s + n(r?.volumeM3), 0);
+
   const intro =
-    typeof (v?.devis as any)?.intro === "string" && (v.devis as any).intro.trim()
+    typeof (v?.devis as any)?.intro === "string" && String((v.devis as any).intro).trim()
       ? String((v.devis as any).intro)
-      : `Nous vous prions de trouver ci-dessous les détails de notre offre de prix pour "${pnlTitle}".`;
+      : `Nous vous prions de trouver ci-dessous les détails de notre offre de prix de fourniture des bétons prêts à l’emploi pour les travaux de construction des "${pnlTitle}".`;
 
   const rappel = safeJsonParse((v?.devis as any)?.rappel, {});
+  const quantiteProjet = n(rappel?.quantiteM3) > 0 ? n(rappel?.quantiteM3) : volumeTotalFormules;
+
+  // ✅ IMPORTANT: ces textes sont à la racine (comme ton saveDevis)
   const dureeQuantiteTexte =
-    typeof rappel?.dureeQuantiteTexte === "string" && rappel.dureeQuantiteTexte.trim()
-      ? rappel.dureeQuantiteTexte
-      : `Les prix sont donnés pour un volume de ${fmtMoney0(volumeTotal)} m3 et une durée de ${fmtMoney0(
+    typeof (v?.devis as any)?.dureeQuantiteTexte === "string" && String((v.devis as any).dureeQuantiteTexte).trim()
+      ? String((v.devis as any).dureeQuantiteTexte)
+      : `Les prix sont donnés pour un volume de ${fmtMoney0(quantiteProjet)} m3 et une durée de ${fmtMoney0(
           dureeMois
         )} mois. En aucun cas les volumes réalisés ne devront être inférieurs de plus de 90% du volume susmentionné.`;
 
   const validiteTexte =
-    typeof (v?.devis as any)?.validiteTexte === "string" && (v.devis as any).validiteTexte.trim()
+    typeof (v?.devis as any)?.validiteTexte === "string" && String((v.devis as any).validiteTexte).trim()
       ? String((v.devis as any).validiteTexte)
       : "Offre valable pour une durée d’un mois à partir de sa date d’envoi.";
 
@@ -385,6 +397,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   // ✅ Extra articles: priorité à devis.extraArticles sinon fallback meta.extraArticles
   const extraArticles = normalizeExtraArticles((v?.devis as any)?.extraArticles ?? devisMeta?.extraArticles ?? []);
 
+  // (Optionnel) ancien hydrofuge legacy via meta
   const hydroPu = n(devisMeta?.hydrofugePuM3 ?? 0);
   const hydroQty = n(devisMeta?.hydrofugeQtyM3 ?? 0);
 
@@ -398,7 +411,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     if (found?.prixOverride != null) return n(found.prixOverride);
     if (found?.prix != null) return n(found.prix);
     return n(found?.mp?.prix);
-    }
+  }
 
   function cmpFormuleM3(formule: any): number {
     const compo = formule?.items ?? [];
@@ -418,27 +431,32 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const transportBase = n(v?.transport?.prixMoyen ?? 0);
   const transportUsed = useMajorations ? applyMaj(transportBase, getMajPct("transport.prixMoyen", maj)) : transportBase;
 
-  // ✅ qty===0 => afficher "-" sur volume/montant et ne pas compter dans totalHT
-  const tableLines: Array<{ label: string; pu: number; vol: number; total: number; isDash?: boolean }> = rows.map(
+  // =========================
+  // LIGNES TABLE
+  // ✅ PV NON PONDÉRÉ: PV déf = PV base + surcharge (PAS d'arrondi au 5)
+  // =========================
+  const formuleLines: Array<{ label: string; pu: number; vol: number; total: number; isDash?: boolean }> = rows.map(
     (r: any) => {
       const label = String(r?.formule?.label ?? "—");
       const vol = n(r?.volumeM3);
       const momd = n(r?.momd ?? 0);
       const cmp = cmpFormuleM3(r?.formule);
 
-      const pv = cmp + transportUsed + momd;
-      const pvArr = roundTo5(pv);
-
+      const pvBase = cmp + transportUsed + momd;
       const surcharge = useDevisSurcharges ? getSurchargeM3(r, surMap) : 0;
-      const pu = pvArr + surcharge;
 
+      const pu = pvBase + surcharge;
       return { label, pu, vol, total: pu * vol, isDash: false };
     }
   );
 
-  // (Optionnel) ancienne hydrofuge via meta (si tu le gardes)
+  // ✅ Tri DU TABLEAU DES PRIX sur les formules uniquement (PU décroissant)
+  formuleLines.sort((a, b) => n(b.pu) - n(a.pu));
+
+  const tableLines = [...formuleLines];
+
+  // legacy hydrofuge (si gardé)
   if (hydroPu > 0) {
-    // si hydroQty <= 0 => dash (comme ton exemple)
     const isDash = !(hydroQty > 0);
     tableLines.push({
       label: "Plus value Hydrofuge",
@@ -449,7 +467,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     });
   }
 
-  // ✅ injection extra articles (hors formules)
+  // ✅ extras (hors formules)
   for (const x of extraArticles) {
     const isDash = !(x.qty > 0);
     tableLines.push({
@@ -463,6 +481,8 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
   // ✅ totaux uniquement sur lignes "réelles" (vol>0)
   const totalHT = tableLines.reduce((s, x) => s + (x.vol > 0 ? n(x.total) : 0), 0);
+  const totalVolumeShown = tableLines.reduce((s, x) => s + (x.vol > 0 ? n(x.vol) : 0), 0);
+
   const tva = totalHT * 0.2;
   const totalTTC = totalHT + tva;
 
@@ -499,7 +519,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
       cell([pTxtBody("Total :", { bold: true, align: AlignmentType.CENTER })], { columnSpan: 2 }),
-      cell([pTxtBody(fmtMoney2(volumeTotal), { bold: false, align: AlignmentType.RIGHT })]),
+      cell([pTxtBody(fmtMoney2(totalVolumeShown), { bold: false, align: AlignmentType.RIGHT })]),
       cell([pTxtBody(fmtMoney2(totalHT), { bold: false, align: AlignmentType.RIGHT })]),
     ],
   });
@@ -530,11 +550,10 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     borders: TABLE_BORDERS,
   });
 
-  const footerLine = `${pnlTitle} - offre de prix - ${date}`;
+  const footerLine = `${pnlTitle} - offre de prix - ${dateFr}`;
   const logoHeader = buildLogoHeader();
 
   const doc = new Document({
-    // ✅ numbering "cercle vide" avec indent stable (pas de décalage à droite)
     numbering: {
       config: [
         {
@@ -547,7 +566,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
               alignment: AlignmentType.LEFT,
               style: {
                 paragraph: {
-                  indent: { left: 360, hanging: 360 }, // ✅ indent stable (~0,63cm)
+                  indent: { left: 360, hanging: 360 },
                 },
               },
             },
@@ -577,7 +596,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
         children: [
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: `${ville}, le ${date}`, font: FONT, size: SIZE_9 })],
+            children: [new TextRun({ text: `${ville}, le ${dateFr}`, font: FONT, size: SIZE_9 })],
           }),
 
           ...blank(3),
@@ -612,10 +631,10 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           sectionTitle("Rappel des données du projet :"),
           ...bulletsFromStrings([
-            `Quantité : ${fmtMoney0(volumeTotal)} m3`,
+            `Quantité : ${fmtMoney0(quantiteProjet)} m3`,
             `Délai : ${fmtMoney0(dureeMois)} mois`,
             ...(demarrage ? [`Démarrage : ${demarrage}`] : []),
-            ...(ville ? [`Lieu : ${ville}`] : []),
+            ...(String(rappel?.lieu ?? "").trim() ? [`Lieu : ${String(rappel?.lieu).trim()}`] : ville ? [`Lieu : ${ville}`] : []),
           ]),
 
           ...blank(1),
@@ -630,7 +649,6 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(1),
 
-          // ✅ Titre du tableau des prix
           sectionTitle("Prix :"),
           ...blank(1),
 

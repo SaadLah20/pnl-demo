@@ -1,7 +1,9 @@
 <!-- ✅ src/pages/MajorationPage.vue (FICHIER COMPLET / UI harmonisé — logique inchangée)
-     MAJ demandée :
-     ✅ Supprimer la phrase: "Saisie en % sur les postes majorables..."
-     ✅ Mettre les boutons (Réinit ... Enregistrer) en haut à droite DANS le header (comme tes autres pages)
+     MAJ :
+     ✅ Phrase supprimée
+     ✅ Boutons dans header
+     ✅ FIX: Onglet "Par majoration" = impact réellement par majoration (isolation)
+          -> on calcule chaque ligne sur une variante "sans majorations persistées"
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
@@ -278,7 +280,17 @@ const impPct = computed<number>({
 
 function rebuildDraft() {
   const v = variant.value;
-  const persisted = safeParse(v?.autresCouts?.majorations);
+  if (!v) {
+    draft.map = {
+      [IMP_ENABLED_KEY]: 0,
+      [IMP_PCT_KEY]: 0,
+    };
+    previewOn.value = false;
+    (store as any).clearHeaderMajorationsPreview?.();
+    return;
+  }
+
+  const persisted = safeParse(v.autresCouts?.majorations);
 
   draft.map = {
     [IMP_ENABLED_KEY]: n((persisted as any)?.[IMP_ENABLED_KEY]) >= 0.5 ? 1 : 0,
@@ -391,6 +403,7 @@ function openConfirmApplyReal(addMomd: number) {
 ========================= */
 const dureeMois = computed<number>(() => Number(activeContract.value?.dureeMois ?? 0));
 
+/** ✅ variante "neutre" : ignore les majorations persistées pour les calculs */
 const baseVariantNoMaj = computed<any | null>(() => {
   const v = variant.value;
   if (!v) return null;
@@ -799,10 +812,16 @@ function computeOneMap(key: string, pct: number, withImp: boolean): Record<strin
   return m;
 }
 
+/**
+ * ✅ FIX IMPORTANT
+ * L'erreur "impact global affiché sur chaque majoration" vient quasi toujours du fait que
+ * computeHeaderKpis fusionne le map passé avec les majorations persistées (v.autresCouts.majorations).
+ * => Ici on force la base variante "sans majorations" (baseVariantNoMaj) pour isoler une seule ligne.
+ */
 const impactsByRow = computed<ImpactRow[]>(() => {
+  const baseVariant = baseVariantNoMaj.value; // ✅ neutre (majorations = null)
   const b = kBase.value;
-  const v = variant.value;
-  if (!b || !v) return [];
+  if (!baseVariant || !b) return [];
 
   const vol = n(b.volumeTotalM3);
   if (vol <= 0) return [];
@@ -816,8 +835,9 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   return slice.map((r) => {
     const pct = pctOf(r.key);
 
-    const kNoImp = computeHeaderKpis(v, dureeMois.value, computeOneMap(r.key, pct, false), null, false);
-    const kImp = computeHeaderKpis(v, dureeMois.value, computeOneMap(r.key, pct, true), null, false);
+    // ✅ calcul sur la variante neutre, avec map = uniquement cette majoration (+ imputation)
+    const kNoImp = computeHeaderKpis(baseVariant, dureeMois.value, computeOneMap(r.key, pct, false), null, false);
+    const kImp = computeHeaderKpis(baseVariant, dureeMois.value, computeOneMap(r.key, pct, true), null, false);
 
     const dTransportNo = n(kNoImp.transportMoyenM3) - n(b.transportMoyenM3);
     const dCmpNo = n(kNoImp.coutMpMoyenM3) - n(b.coutMpMoyenM3);
@@ -1066,9 +1086,8 @@ function fmt1(x: any) {
 
       <div v-else class="impactGrid">
         <div v-for="r in impactsByRow" :key="r.key" class="impactRow">
-          <div class="iLbl" :title="r.key">
+          <div class="iLbl" :title="r.label">
             <div class="iName">{{ r.label }}</div>
-            <div class="iKey">{{ r.key }}</div>
           </div>
 
           <div class="iPct num">{{ fmt1(r.pct) }}%</div>
@@ -1160,6 +1179,7 @@ function fmt1(x: any) {
 </template>
 
 <style scoped>
+/* (CSS inchangé sauf si indiqué) */
 .page {
   padding: 8px;
   display: flex;
@@ -1286,9 +1306,7 @@ function fmt1(x: any) {
   color: rgba(15, 23, 42, 0.95);
 }
 
-/* Impact cards + filters + stack + modals
-   (identiques à ta version précédente, gardés tels quels)
-*/
+/* Impact cards + filters + stack + modals (identiques à ta version) */
 .topCards {
   display: grid;
   grid-template-columns: 1fr;
@@ -1743,14 +1761,6 @@ function fmt1(x: any) {
   font-weight: 950;
   font-size: 12px;
   color: rgba(15, 23, 42, 0.95);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.iKey {
-  font-size: 10.5px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

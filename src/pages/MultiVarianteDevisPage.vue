@@ -1,9 +1,4 @@
-<!-- ✅ src/pages/MultiVarianteDevisPage.vue (FICHIER COMPLET — refonte demandée)
-  Changements :
-  ✅ Supprime l’affichage des 4 données projet (ville/client/projet/date) dans le header
-  ✅ Corrige superpositions/débordements des champs Introduction / Validité / Signature (grid robuste + minmax + box-sizing)
-  ✅ Cards variantes : affiche EBIT & PMV moyen (au lieu du message "Inclure dans l’export")
--->
+<!-- ✅ src/pages/MultiVarianteDevisPage.vue (FICHIER COMPLET — refonte demandée + guards) -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -77,9 +72,7 @@ const exportOpts = reactive({
 });
 
 /* =========================
-   Meta doc (ville/date/client/projet = read-only source PnL)
-   ⚠️ On ne les affiche plus dans le header (demandé),
-   mais on les garde pour l’export.
+   Meta doc (export only)
 ========================= */
 const meta = reactive({
   ville: "",
@@ -137,7 +130,6 @@ const selectedContractsCount = computed(() => {
 const canExport = computed(() => selectedVariantIds.value.length > 0);
 
 const headerFacts = computed(() => {
-  // conservé pour export only
   return {
     ville: String(pnl.value?.city ?? meta.ville ?? ""),
     date: meta.date,
@@ -165,6 +157,9 @@ const filteredContracts = computed(() => {
 });
 
 function initState() {
+  // ✅ refresh date pour export (utile si page reste ouverte)
+  meta.date = todayISO();
+
   const cs = contracts.value ?? [];
   const activeVid = String((store as any).activeVariant?.id ?? "");
 
@@ -181,7 +176,7 @@ function initState() {
     if (hit && !ensurePick(cid).variantId) ensurePick(cid).variantId = activeVid;
   }
 
-  // ✅ meta read-only depuis pnl (mais pas affiché dans le header)
+  // ✅ meta read-only depuis pnl (export only)
   meta.ville = String(pnl.value?.city ?? meta.ville ?? "");
   meta.client = String(pnl.value?.client ?? meta.client ?? "");
   meta.titreProjet = String(pnl.value?.title ?? meta.titreProjet ?? "");
@@ -194,7 +189,7 @@ function initState() {
 }
 
 /* =========================
-   ✅ KPI helpers (EBIT / PMV moyen par variante)
+   KPI helpers (EBIT / PMV moyen par variante)
 ========================= */
 const variantKpisMap = computed(() => {
   const map: Record<string, { ebit: number; pmv: number; ebitPct: number }> = {};
@@ -206,6 +201,7 @@ const variantKpisMap = computed(() => {
       if (map[vid]) continue;
 
       try {
+        // ⚠️ si computeHeaderKpis dépend du contexte, adapte ici.
         const k = computeHeaderKpis(v, d, null, null, false);
         map[vid] = {
           ebit: n((k as any)?.ebitTotal),
@@ -259,7 +255,6 @@ async function exportWordMulti() {
     await (store as any).exportDevisMultiWord({
       variantIds: selectedVariantIds.value,
       options: {
-        // ✅ la page ne gère pas majorations (elles doivent être appliquées réellement)
         useMajorations: false,
         useDevisSurcharges: Boolean(exportOpts.useDevisSurcharges),
       },
@@ -284,13 +279,21 @@ onMounted(async () => {
   await reload();
 });
 
+// ✅ quand on change de PnL
 watch(
   () => pnl.value?.id,
+  () => initState()
+);
+
+// ✅ quand les contrats/variantes arrivent ou changent (important)
+watch(
+  () => (contracts.value ?? []).length,
   () => initState()
 );
 </script>
 
 <template>
+  <!-- ✅ template inchangé -->
   <div class="page">
     <!-- TOP BAR (✅ sans les 4 facts projet) -->
     <div class="top">
@@ -363,7 +366,7 @@ watch(
       </div>
     </div>
 
-    <!-- GLOBAL TEXTS (✅ layout robuste, pas de débordement) -->
+    <!-- GLOBAL TEXTS -->
     <div class="card wide">
       <div class="cardHead">
         <div class="lbl">Contenu document</div>
@@ -422,7 +425,6 @@ watch(
         Aucun contrat ne correspond au filtre.
       </div>
 
-      <!-- Contracts list -->
       <div class="contracts">
         <div v-for="c in filteredContracts" :key="String(c?.id ?? '')" class="contractRow">
           <div
@@ -454,7 +456,6 @@ watch(
 
           <div v-show="!isCollapsed(c?.id)" class="rowBody">
             <div class="pickGrid">
-              <!-- Aucune -->
               <button
                 class="pickCard none"
                 type="button"
@@ -465,7 +466,6 @@ watch(
                 <div class="pcSub muted">Ne pas inclure ce contrat</div>
               </button>
 
-              <!-- Variantes (✅ EBIT + PMV moyen) -->
               <button
                 v-for="v in (c?.variants ?? [])"
                 :key="String(v?.id ?? '')"

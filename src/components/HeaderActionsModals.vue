@@ -20,7 +20,7 @@ import VariantWizardModal, {
   type ComposePayload,
   type InitieePayload,
   type VariantCreateMode,
-} from "@/components/VariantWizardModal.vue";
+} from "@/components/variantWizard/VariantWizardModal.vue";
 
 /* =========================================================
    API
@@ -1115,14 +1115,15 @@ defineExpose({
       @next="handleCreateNext"
     />
 
-    <VariantWizardModal
-      :open="wizardOpen"
-      :mode="wizardMode"
-      :all-variants="allVariantsFlat"
-      @close="closeWizardModal"
-      @submit-initiee="handleSaveInitiee"
-      @submit-composee="handleSaveComposee"
-    />
+<VariantWizardModal
+  :open="wizardOpen"
+  :mode="wizardMode"
+  :contract="activeContract"
+  :all-variants="allVariantsFlat"
+  @close="closeWizardModal"
+  @submit-initiee="handleSaveInitiee"
+  @submit-composee="handleSaveComposee"
+/>
   </Teleport>
 </template>
 

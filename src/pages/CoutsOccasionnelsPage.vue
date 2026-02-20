@@ -217,8 +217,7 @@ function loadFromVariant() {
 
   // ✅ nouveaux
   draft.branchementEau = clamp(s.branchementEau);
-  draft.branchementElec = clamp(s.branchementElec);
-
+draft.branchementElec = clamp(s.branchementElec ?? s.branchementElectricite);
   enforceLocks();
 
   if (!hideZerosUserToggled.value) {
@@ -384,8 +383,7 @@ function buildPayload() {
 
     // ✅ nouveaux
     branchementEau: Number(lockBranchementEau.value ? 0 : clamp(draft.branchementEau)),
-    branchementElec: Number(lockBranchementElec.value ? 0 : clamp(draft.branchementElec)),
-  };
+branchementElectricite: Number(lockBranchementElec.value ? 0 : clamp(draft.branchementElec)),  };
 }
 
 async function save() {
@@ -453,8 +451,7 @@ function applyFromVariant(srcVariant: any) {
 
   // ✅ nouveaux
   draft.branchementEau = clamp(s.branchementEau);
-  draft.branchementElec = clamp(s.branchementElec);
-
+draft.branchementElec = clamp(s.branchementElec ?? s.branchementElectricite);
   enforceLocks();
 
   if (!hideZerosUserToggled.value) {

@@ -11,6 +11,7 @@ import {
 } from "vue";
 
 import { usePnlStore } from "@/stores/pnl.store";
+const activeContract = computed<any | null>(() => (store as any).activeContract ?? null);
 import { contractUiTitle } from "@/services/contractTitle";
 import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
 import { API_BASE, apiGet } from "@/api/http";
@@ -23,7 +24,7 @@ import VariantWizardModal, {
   type ComposePayload,
   type InitieePayload,
   type VariantCreateMode,
-} from "@/components/VariantWizardModal.vue";
+} from "@/components/variantWizard/VariantWizardModal.vue";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 
@@ -1670,14 +1671,15 @@ onBeforeUnmount(() => {
       @next="handleCreateNext"
     />
 
-    <VariantWizardModal
-      :open="wizardOpen"
-      :mode="wizardMode"
-      :all-variants="allVariantsFlat"
-      @close="closeWizardModal"
-      @submit-initiee="handleSaveInitiee"
-      @submit-composee="handleSaveComposee"
-    />
+<VariantWizardModal
+  :open="wizardOpen"
+  :mode="wizardMode"
+  :contract="activeContract"
+  :all-variants="allVariantsFlat"
+  @close="closeWizardModal"
+  @submit-initiee="handleSaveInitiee"
+  @submit-composee="handleSaveComposee"
+/>
   </div>
 </template>
 

@@ -42,6 +42,14 @@ function moneyNum(v: number, digits = 2) {
   }).format(toNum(v));
 }
 
+/* ✅ Round up to step (1DH / 5DH), keep 2 decimals */
+function roundUpToStep(val: any, step: number) {
+  const v = round2(clamp(val, 0, 1e12));
+  const s = Math.max(0.01, toNum(step));
+  const up = Math.ceil(v / s) * s;
+  return round2(up);
+}
+
 /* =========================
    ACTIVE
 ========================= */
@@ -245,6 +253,74 @@ function momdIsLowPositive(m: number) {
 function onMomdBlur(id: string) {
   const d = getDraft(String(id));
   d.momd = round2(clamp(d.momd, 0, 1e12));
+}
+
+/* =========================
+   ✅ BULK TOOLS: ARRONDI + REMISE (DH)
+========================= */
+const roundMode = ref<1 | 5>(1);
+const remiseDh = ref<number>(0); // ✅ DH/m³ soustrait sur tous les PV
+const bulkBusy = ref(false);
+
+function getDisplayedPv(id: string) {
+  const key = String(id);
+  return pvTouched[key] ? toNum(pvDrafts[key]) : computedPvFor(key);
+}
+
+function bulkApplyPvTransform(fn: (pv: number, rowId: string) => number, successMsg: string) {
+  if (!variant.value) return;
+  bulkBusy.value = true;
+
+  let touched = 0;
+  let rejected = 0;
+
+  try {
+    for (const r of rows.value) {
+      const id = String(r.id);
+      const base = round2(getDisplayedPv(id));
+      const next = round2(clamp(fn(base, id), 0, 1e12));
+
+      // set draft as user edit then reuse existing onPvBlur() validation + MOMD recalc
+      pvTouched[id] = true;
+      pvDrafts[id] = next;
+      pvErr[id] = false;
+
+      const beforeErr = !!pvErr[id];
+      onPvBlur(id);
+      const afterErr = !!pvErr[id];
+
+      if (!beforeErr && afterErr) rejected++;
+      else touched++;
+    }
+
+    if (rejected > 0) {
+      showToast(`Appliqué sur ${touched} lignes. ${rejected} rejetées (PV trop bas).`, "err");
+    } else {
+      showToast(successMsg, "ok");
+    }
+  } finally {
+    bulkBusy.value = false;
+  }
+}
+
+function applyRounding() {
+  const step = roundMode.value === 5 ? 5 : 1;
+  bulkApplyPvTransform(
+    (pv) => roundUpToStep(pv, step),
+    step === 1 ? "PV arrondis au +1 DH (vers le haut)." : "PV arrondis au +5 DH (multiple de 5, vers le haut)."
+  );
+}
+
+function applyRemise() {
+  const dh = round2(clamp(remiseDh.value, 0, 1e12));
+  remiseDh.value = dh;
+
+  if (dh <= 0) {
+    showToast("Remise = 0 DH (aucun changement).", "ok");
+    return;
+  }
+
+  bulkApplyPvTransform((pv) => round2(pv - dh), `Remise ${n(dh, 2)} DH appliquée sur tous les PV.`);
 }
 
 /* =========================
@@ -479,17 +555,50 @@ onMounted(async () => {
         </div>
 
         <div class="actions" v-if="variant">
-          <button class="btn" :disabled="saving || genBusy" @click="askReset()">
+          <!-- ✅ mini tools -->
+          <div class="miniTools">
+            <div class="miniGroup">
+              <div class="miniLbl">Arrondi PV</div>
+              <select class="miniSel" v-model.number="roundMode" :disabled="saving || genBusy || bulkBusy">
+                <option :value="1">+1 DH</option>
+                <option :value="5">+5 DH</option>
+              </select>
+              <button class="btn sm" :disabled="saving || genBusy || bulkBusy" @click="applyRounding()">
+                Arrondir
+              </button>
+            </div>
+
+            <div class="miniGroup">
+              <div class="miniLbl">Remise</div>
+              <div class="miniIn">
+                <input
+                  class="miniInp num"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  v-model.number="remiseDh"
+                  :disabled="saving || genBusy || bulkBusy"
+                />
+                <span class="miniUnit">DH</span>
+              </div>
+              <button class="btn sm" :disabled="saving || genBusy || bulkBusy" @click="applyRemise()">
+                Appliquer
+              </button>
+            </div>
+          </div>
+
+          <!-- existing actions -->
+          <button class="btn" :disabled="saving || genBusy || bulkBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
           </button>
 
-          <button class="btn" :disabled="saving || genBusy" @click="genOpen = true">
+          <button class="btn" :disabled="saving || genBusy || bulkBusy" @click="genOpen = true">
             <Squares2X2Icon class="ic" />
             {{ genBusy ? "…" : "Généraliser" }}
           </button>
 
-          <button class="btn pri" :disabled="saving || genBusy" @click="askSave()">
+          <button class="btn pri" :disabled="saving || genBusy || bulkBusy" @click="askSave()">
             <CheckCircleIcon class="ic" />
             {{ saving ? "…" : "Enregistrer" }}
           </button>
@@ -743,6 +852,64 @@ onMounted(async () => {
   gap: 6px;
   flex-wrap: wrap;
 }
+
+/* ✅ mini tools (arrondi/remise) */
+.miniTools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-right: 4px;
+}
+.miniGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.02);
+}
+.miniLbl {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.miniSel {
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(2, 132, 199, 0.22);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 8px;
+  font-weight: 900;
+  font-size: 12px;
+  outline: none;
+}
+.miniIn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.miniInp {
+  height: 28px;
+  width: 92px;
+  border-radius: 10px;
+  border: 1px solid rgba(2, 132, 199, 0.22);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 8px;
+  font-weight: 950;
+  font-size: 12px;
+  outline: none;
+}
+.miniUnit {
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+/* base btn */
 .btn {
   height: 30px;
   border-radius: 12px;
@@ -756,6 +923,12 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+.btn.sm {
+  height: 28px;
+  border-radius: 10px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 .btn:hover {
   background: rgba(2, 132, 199, 0.06);
