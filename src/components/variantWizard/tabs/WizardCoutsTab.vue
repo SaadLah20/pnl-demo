@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, toRaw } from "vue";
+import { computed, onMounted, toRaw, ref, watchEffect } from "vue";
 import type { WizardCoutsState } from "../composables/useInitieeWizardState";
 
 const props = defineProps<{
   modelValue: WizardCoutsState;
-  /** locks par path ex: "coutMensuel.electricite": true */
   locks?: Record<string, boolean>;
   volumeTotalM3?: number;
   dureeMois?: number;
@@ -78,24 +77,17 @@ function fmt2(x: number) {
 
 /* =========================
    DEFAULTS (one-shot init)
-   - terrain: 45 000
-   - chargeur: 22 000
-   - 3G: 500 (autres 0)
-   - maintenance: 3000 sauf bassins & chargeur = 0
 ========================= */
 onMounted(() => {
   const mv = props.modelValue;
   const next = deepClone(mv);
 
-  // Mensuels defaults
-  if (!isLocked("coutMensuel.locationTerrain") && n(next.coutMensuel.locationTerrain) === 0) next.coutMensuel.locationTerrain = 45000;
-  if (!isLocked("coutMensuel.locationChargeur") && n(next.coutMensuel.locationChargeur) === 0) next.coutMensuel.locationChargeur = 22000;
-
-  // 3G default 500
+  if (!isLocked("coutMensuel.locationTerrain") && n(next.coutMensuel.locationTerrain) === 0)
+    next.coutMensuel.locationTerrain = 45000;
+  if (!isLocked("coutMensuel.locationChargeur") && n(next.coutMensuel.locationChargeur) === 0)
+    next.coutMensuel.locationChargeur = 22000;
   if (!isLocked("coutMensuel.troisG") && n(next.coutMensuel.troisG) === 0) next.coutMensuel.troisG = 500;
 
-  // Maintenance defaults: base 3000, but bassins & chargeur = 0
-  // (On applique uniquement si valeur actuelle = 0 pour éviter de réécraser)
   const m = next.maintenance;
   if (!isLocked("maintenance.cab") && n(m.cab) === 0) m.cab = 3000;
   if (!isLocked("maintenance.elec") && n(m.elec) === 0) m.elec = 3000;
@@ -105,27 +97,23 @@ onMounted(() => {
   if (!isLocked("maintenance.chargeur")) m.chargeur = 0;
   if (!isLocked("maintenance.bassins")) m.bassins = 0;
 
-  // Si quelque chose a changé, on patch
   const changed = JSON.stringify(mv) !== JSON.stringify(next);
   if (changed) emit("update:modelValue", next);
 });
 
 /* =========================
-   Gasoil: auto vs manuel
-   - Auto value depends on "groupe électrogène verrouillé" (ici: lock électricité)
-     rate = 1.5 si locked, sinon 1.8
-     auto = rate * volumeTotal * 12 / dureeMois
+   Gasoil auto
 ========================= */
-const elecGroupLocked = computed(() => isLocked("coutMensuel.electricite") || isLocked("coutMensuel.location"));
-
+const elecGroupLocked = computed(
+  () => isLocked("coutMensuel.electricite") || isLocked("coutMensuel.location")
+);
 const volTotal = computed(() => Math.max(0, n(props.volumeTotalM3)));
 const duree = computed(() => Math.max(1, Math.trunc(n(props.dureeMois) || 1)));
-
 const gasoilAutoRate = computed(() => (elecGroupLocked.value ? 1.5 : 1.8));
 const gasoilAutoValue = computed(() => (gasoilAutoRate.value * volTotal.value * 12) / duree.value);
 
 /* =========================
-   Totaux (compact KPIs)
+   Totaux
 ========================= */
 const totalCoutM3 = computed(() => {
   const c = props.modelValue.coutM3;
@@ -170,30 +158,27 @@ const totalOccasionnel = computed(() => {
 });
 
 /* =========================
-   RANGES (selon tes specs)
+   RANGES
 ========================= */
 const itemsM3 = [
-  { label: "Eau", path: "coutM3.eau", min: 0, max: 10, step: 0.25, kind: "m3" },
-  { label: "Qualité", path: "coutM3.qualite", min: 0, max: 10, step: 0.25, kind: "m3" },
-  { label: "Déchets", path: "coutM3.dechets", min: 0, max: 10, step: 0.25, kind: "m3" },
+  { label: "Eau", path: "coutM3.eau", min: 0, max: 10, step: 0.25 },
+  { label: "Qualité", path: "coutM3.qualite", min: 0, max: 10, step: 0.25 },
+  { label: "Déchets", path: "coutM3.dechets", min: 0, max: 10, step: 0.25 },
 ] as const;
 
 const itemsMensuels = [
-  { label: "Électricité", path: "coutMensuel.electricite", min: 0, max: 80000, step: 100, kind: "dhm" },
-  // ✅ Gasoil : case spéciale (auto/manu) => pas dans cette liste
-  { label: "Location groupes", path: "coutMensuel.location", min: 0, max: 50000, step: 100, kind: "dhm" },
-  { label: "Sécurité", path: "coutMensuel.securite", min: 0, max: 10000, step: 50, kind: "dhm" },
-  { label: "Hébergements", path: "coutMensuel.hebergements", min: 0, max: 20000, step: 50, kind: "dhm" },
-  { label: "Location terrain", path: "coutMensuel.locationTerrain", min: 0, max: 100000, step: 100, kind: "dhm" },
-
-  { label: "Téléphone", path: "coutMensuel.telephone", min: 0, max: 5000, step: 10, kind: "dhm" },
-  { label: "3G", path: "coutMensuel.troisG", min: 0, max: 5000, step: 10, kind: "dhm" },
-  { label: "Taxe pro", path: "coutMensuel.taxeProfessionnelle", min: 0, max: 5000, step: 10, kind: "dhm" },
-
-  { label: "Location véhicule", path: "coutMensuel.locationVehicule", min: 0, max: 40000, step: 100, kind: "dhm" },
-  { label: "Location chargeur", path: "coutMensuel.locationChargeur", min: 0, max: 50000, step: 100, kind: "dhm" },
-  { label: "Bungalows", path: "coutMensuel.locationBungalows", min: 0, max: 10000, step: 50, kind: "dhm" },
-  { label: "EPI", path: "coutMensuel.epi", min: 0, max: 2000, step: 10, kind: "dhm" },
+  { label: "Électricité", path: "coutMensuel.electricite", min: 0, max: 80000, step: 100 },
+  { label: "Location groupes", path: "coutMensuel.location", min: 0, max: 50000, step: 100 },
+  { label: "Sécurité", path: "coutMensuel.securite", min: 0, max: 10000, step: 50 },
+  { label: "Hébergements", path: "coutMensuel.hebergements", min: 0, max: 20000, step: 50 },
+  { label: "Location terrain", path: "coutMensuel.locationTerrain", min: 0, max: 100000, step: 100 },
+  { label: "Téléphone", path: "coutMensuel.telephone", min: 0, max: 5000, step: 10 },
+  { label: "3G", path: "coutMensuel.troisG", min: 0, max: 5000, step: 10 },
+  { label: "Taxe pro", path: "coutMensuel.taxeProfessionnelle", min: 0, max: 5000, step: 10 },
+  { label: "Location véhicule", path: "coutMensuel.locationVehicule", min: 0, max: 40000, step: 100 },
+  { label: "Location chargeur", path: "coutMensuel.locationChargeur", min: 0, max: 50000, step: 100 },
+  { label: "Bungalows", path: "coutMensuel.locationBungalows", min: 0, max: 10000, step: 50 },
+  { label: "EPI", path: "coutMensuel.epi", min: 0, max: 2000, step: 10 },
 ] as const;
 
 const itemsMaintenance = [
@@ -207,13 +192,9 @@ const itemsMaintenance = [
 
 const itemsOccasionnels = computed(() => {
   const o: any = props.modelValue.coutOccasionnel as any;
-  const hasElec = o?.branchementElec !== undefined;
-  const hasEau = o?.branchementEau !== undefined;
-
   const rows: Array<{ label: string; path: string; min: number; max: number; step: number }> = [
     { label: "Génie civil", path: "coutOccasionnel.genieCivil", min: 0, max: 2_000_000, step: 1000 },
     { label: "Installation", path: "coutOccasionnel.installation", min: 0, max: 2_000_000, step: 1000 },
-
     { label: "Transport", path: "coutOccasionnel.transport", min: 0, max: 500_000, step: 500 },
     { label: "Démontage", path: "coutOccasionnel.demontage", min: 0, max: 500_000, step: 500 },
     { label: "Remise point centrale", path: "coutOccasionnel.remisePointCentrale", min: 0, max: 500_000, step: 500 },
@@ -221,15 +202,15 @@ const itemsOccasionnels = computed(() => {
     { label: "Local adjuvant", path: "coutOccasionnel.localAdjuvant", min: 0, max: 500_000, step: 500 },
     { label: "Bungalows", path: "coutOccasionnel.bungalows", min: 0, max: 500_000, step: 500 },
   ];
-
-  if (hasEau) rows.push({ label: "Branchement eau", path: "coutOccasionnel.branchementEau", min: 0, max: 500_000, step: 500 });
-  if (hasElec) rows.push({ label: "Branchement électricité", path: "coutOccasionnel.branchementElec", min: 0, max: 500_000, step: 500 });
-
+  if (o?.branchementEau !== undefined)
+    rows.push({ label: "Branchement eau", path: "coutOccasionnel.branchementEau", min: 0, max: 500_000, step: 500 });
+  if (o?.branchementElec !== undefined)
+    rows.push({ label: "Branchement électricité", path: "coutOccasionnel.branchementElec", min: 0, max: 500_000, step: 500 });
   return rows;
 });
 
 /* =========================
-   Handlers
+   Events
 ========================= */
 function onSlide(path: string, min: number, max: number, raw: any) {
   if (isLocked(path)) return;
@@ -245,379 +226,409 @@ function onInput(path: string, min: number, max: number, raw: any) {
 ========================= */
 const gasoilPath = "coutMensuel.gasoil";
 const gasoilLinkedPath = "coutMensuel.gasoilLinked";
-
 const gasoilIsAuto = computed(() => !!(props.modelValue as any)?.coutMensuel?.gasoilLinked);
 
 function toggleGasoilAuto(v: boolean) {
   patchDeep(gasoilLinkedPath, !!v);
-  if (v) {
-    // quand on réactive auto, on applique la valeur auto
-    patchDeep(gasoilPath, gasoilAutoValue.value);
-  }
+  if (v) patchDeep(gasoilPath, gasoilAutoValue.value);
 }
+const gasoilDisplay = computed(() => (gasoilIsAuto.value ? gasoilAutoValue.value : getByPath(gasoilPath)));
 
-const gasoilDisplay = computed(() => {
-  if (gasoilIsAuto.value) return gasoilAutoValue.value;
-  return getByPath(gasoilPath);
-});
-
-/**
- * Si auto actif: on force la valeur à suivre l’auto (volume/durée)
- * sans empêcher un passage en manuel.
- */
-function syncGasoilAuto() {
+watchEffect(() => {
   if (!gasoilIsAuto.value) return;
   if (isLocked(gasoilPath)) return;
-  patchDeep(gasoilPath, gasoilAutoValue.value);
+  const target = gasoilAutoValue.value;
+  const cur = getByPath(gasoilPath);
+  if (Math.abs(cur - target) > 0.5) patchDeep(gasoilPath, target);
+});
+
+/* =========================
+   UI: pliable (tu peux garder)
+========================= */
+const openMens = ref(true);
+const openMaint = ref(true);
+const openM3 = ref(true);
+const openOcc = ref(true);
+
+function valFmt(path: string, mode: "0" | "2") {
+  const v = getByPath(path);
+  return mode === "2" ? fmt2(v) : fmt0(v);
 }
 </script>
 
 <template>
   <div class="wrap">
-    <!-- ✅ Header ultra compact -->
+    <!-- Header -->
     <div class="head">
-      <div class="hTitle">Coûts</div>
-      <div class="hKpis">
-        <span class="pill">/m³ {{ fmt2(totalCoutM3) }}</span>
-        <span class="pill">Mensuel {{ fmt0(totalMensuel) }}</span>
-        <span class="pill">Maint. {{ fmt0(totalMaintenance) }}</span>
-        <span class="pill">Occas. {{ fmt0(totalOccasionnel) }}</span>
+      <div class="hLeft">
+        <div class="hTitle">Coûts</div>
+        <div class="hSub">Blocs distingués · compact · focus valeurs</div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kLab">/m³</div>
+          <div class="kVal mono">{{ fmt2(totalCoutM3) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="kLab">Mensuel</div>
+          <div class="kVal mono">{{ fmt0(totalMensuel) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="kLab">Maint.</div>
+          <div class="kVal mono">{{ fmt0(totalMaintenance) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="kLab">Occas.</div>
+          <div class="kVal mono">{{ fmt0(totalOccasionnel) }}</div>
+        </div>
       </div>
     </div>
 
-    <!-- ✅ Grid 2 colonnes (compact) -->
+    <!-- ✅ Layout demandé -->
     <div class="grid2">
-      <!-- =======================
-           Coûts /m3
-      ======================== -->
-      <section class="sec">
-        <div class="secH">
-          <div class="secT">Coûts / m³</div>
-          <div class="secR mono">{{ fmt2(totalCoutM3) }}</div>
-        </div>
+      <!-- LEFT COLUMN: Mensuel then Maintenance (no vertical gap) -->
+      <div class="col">
+        <!-- Mensuels -->
+        <section class="sec sec--mens sec--top">
+          <button class="secH" type="button" @click="openMens = !openMens" :aria-expanded="openMens">
+            <div class="secT">Coûts mensuels</div>
+            <div class="secR mono">{{ fmt0(totalMensuel) }}</div>
+            <div class="chev">{{ openMens ? "▾" : "▸" }}</div>
+          </button>
 
-        <div class="secB">
-          <div v-for="it in itemsM3" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
-            <div class="rowTop">
-              <div class="lab">
-                <span class="txt">{{ it.label }}</span>
-                <span v-if="isLocked(it.path)" class="lk">contrat</span>
+          <div v-show="openMens" class="secB">
+            <!-- Gasoil -->
+            <div class="row" :class="{ locked: isLocked(gasoilPath) }">
+              <div class="rowTop">
+                <div class="lab">
+                  <span class="txt">Gasoil</span>
+                  <span v-if="isLocked(gasoilPath)" class="lk">contrat</span>
+
+                  <label class="auto">
+                    <input
+                      type="checkbox"
+                      :checked="gasoilIsAuto"
+                      :disabled="isLocked(gasoilPath)"
+                      @change="toggleGasoilAuto(($event.target as HTMLInputElement).checked)"
+                    />
+                    <span>Auto</span>
+                  </label>
+
+                  <span v-if="gasoilIsAuto" class="hint">
+                    {{ elecGroupLocked ? "GE verrouillé" : "GE libre" }} · {{ gasoilAutoRate.toFixed(1) }}DH · vol
+                    {{ fmt0(volTotal) }} · {{ duree }}m
+                  </span>
+                </div>
+
+                <div class="badge mono">{{ fmt0(gasoilDisplay) }}</div>
               </div>
-              <div class="val mono">
-                {{ fmt2(getByPath(it.path)) }}
+
+              <div class="rowBot">
+                <input
+                  class="rng"
+                  type="range"
+                  min="0"
+                  max="200000"
+                  step="100"
+                  :disabled="isLocked(gasoilPath) || gasoilIsAuto"
+                  :value="gasoilDisplay"
+                  @input="onSlide(gasoilPath, 0, 200000, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  class="num"
+                  type="number"
+                  min="0"
+                  max="200000"
+                  step="1"
+                  :disabled="isLocked(gasoilPath) || gasoilIsAuto"
+                  :value="gasoilDisplay"
+                  @input="onInput(gasoilPath, 0, 200000, ($event.target as HTMLInputElement).value)"
+                />
               </div>
             </div>
 
-            <div class="rowBot">
-              <input
-                class="rng"
-                type="range"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
-              <input
-                class="num"
-                type="number"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
+            <div v-for="it in itemsMensuels" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
+              <div class="rowTop">
+                <div class="lab">
+                  <span class="txt">{{ it.label }}</span>
+                  <span v-if="isLocked(it.path)" class="lk">contrat</span>
+                </div>
+                <div class="badge mono">{{ valFmt(it.path, "0") }}</div>
+              </div>
+
+              <div class="rowBot">
+                <input
+                  class="rng"
+                  type="range"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  class="num"
+                  type="number"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- =======================
-           Coûts mensuels
-      ======================== -->
-      <section class="sec">
-        <div class="secH">
-          <div class="secT">Coûts mensuels</div>
-          <div class="secR mono">{{ fmt0(totalMensuel) }}</div>
-        </div>
+        <!-- Maintenance -->
+        <section class="sec sec--maint sec--bottom">
+          <button class="secH" type="button" @click="openMaint = !openMaint" :aria-expanded="openMaint">
+            <div class="secT">Maintenance</div>
+            <div class="secR mono">{{ fmt0(totalMaintenance) }}</div>
+            <div class="chev">{{ openMaint ? "▾" : "▸" }}</div>
+          </button>
 
-        <div class="secB">
-          <!-- ✅ Gasoil spécial: auto/manu -->
-          <div class="row" :class="{ locked: isLocked(gasoilPath) }">
-            <div class="rowTop">
-              <div class="lab">
-                <span class="txt">Gasoil</span>
-                <span v-if="isLocked(gasoilPath)" class="lk">contrat</span>
-
-                <label class="auto">
-                  <input
-                    type="checkbox"
-                    :checked="gasoilIsAuto"
-                    :disabled="isLocked(gasoilPath)"
-                    @change="toggleGasoilAuto(($event.target as HTMLInputElement).checked)"
-                  />
-                  <span>Auto</span>
-                </label>
-
-                <span v-if="gasoilIsAuto" class="hint">
-                  {{ elecGroupLocked ? "GE verrouillé" : "GE libre" }} · {{ gasoilAutoRate.toFixed(1) }}DH · vol {{ fmt0(volTotal) }} · {{ duree }}m
-                </span>
+          <div v-show="openMaint" class="secB">
+            <div v-for="it in itemsMaintenance" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
+              <div class="rowTop">
+                <div class="lab">
+                  <span class="txt">{{ it.label }}</span>
+                  <span v-if="isLocked(it.path)" class="lk">contrat</span>
+                </div>
+                <div class="badge mono">{{ valFmt(it.path, "0") }}</div>
               </div>
 
-              <div class="val mono">
-                {{ fmt0(gasoilDisplay) }}
+              <div class="rowBot">
+                <input
+                  class="rng"
+                  type="range"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  class="num"
+                  type="number"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
               </div>
-            </div>
-
-            <div class="rowBot">
-              <input
-                class="rng"
-                type="range"
-                min="0"
-                max="200000"
-                step="100"
-                :disabled="isLocked(gasoilPath) || gasoilIsAuto"
-                :value="gasoilDisplay"
-                @input="onSlide(gasoilPath, 0, 200000, ($event.target as HTMLInputElement).value)"
-              />
-              <input
-                class="num"
-                type="number"
-                min="0"
-                max="200000"
-                step="1"
-                :disabled="isLocked(gasoilPath) || gasoilIsAuto"
-                :value="gasoilDisplay"
-                @input="onInput(gasoilPath, 0, 200000, ($event.target as HTMLInputElement).value)"
-              />
-              <button
-                v-if="gasoilIsAuto && !isLocked(gasoilPath)"
-                class="miniBtn"
-                type="button"
-                @click="syncGasoilAuto()"
-                title="Recalculer selon volume/durée"
-              >
-                ↻
-              </button>
             </div>
           </div>
+        </section>
+      </div>
 
-          <!-- ✅ autres mensuels -->
-          <div v-for="it in itemsMensuels" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
-            <div class="rowTop">
-              <div class="lab">
-                <span class="txt">{{ it.label }}</span>
-                <span v-if="isLocked(it.path)" class="lk">contrat</span>
+      <!-- RIGHT COLUMN: /m3 then Occasionnels (no vertical gap) -->
+      <div class="col">
+        <!-- /m3 -->
+        <section class="sec sec--m3 sec--top">
+          <button class="secH" type="button" @click="openM3 = !openM3" :aria-expanded="openM3">
+            <div class="secT">Coûts / m³</div>
+            <div class="secR mono">{{ fmt2(totalCoutM3) }}</div>
+            <div class="chev">{{ openM3 ? "▾" : "▸" }}</div>
+          </button>
+
+          <div v-show="openM3" class="secB">
+            <div v-for="it in itemsM3" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
+              <div class="rowTop">
+                <div class="lab">
+                  <span class="txt">{{ it.label }}</span>
+                  <span v-if="isLocked(it.path)" class="lk">contrat</span>
+                </div>
+                <div class="badge mono">{{ valFmt(it.path, "2") }}</div>
               </div>
-              <div class="val mono">{{ fmt0(getByPath(it.path)) }}</div>
-            </div>
 
-            <div class="rowBot">
-              <input
-                class="rng"
-                type="range"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
-              <input
-                class="num"
-                type="number"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
+              <div class="rowBot">
+                <input
+                  class="rng"
+                  type="range"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  class="num"
+                  type="number"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- =======================
-           Maintenance
-      ======================== -->
-      <section class="sec">
-        <div class="secH">
-          <div class="secT">Maintenance</div>
-          <div class="secR mono">{{ fmt0(totalMaintenance) }}</div>
-        </div>
+        <!-- Occasionnels -->
+        <section class="sec sec--occ sec--bottom">
+          <button class="secH" type="button" @click="openOcc = !openOcc" :aria-expanded="openOcc">
+            <div class="secT">Coûts occasionnels</div>
+            <div class="secR mono">{{ fmt0(totalOccasionnel) }}</div>
+            <div class="chev">{{ openOcc ? "▾" : "▸" }}</div>
+          </button>
 
-        <div class="secB">
-          <div v-for="it in itemsMaintenance" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
-            <div class="rowTop">
-              <div class="lab">
-                <span class="txt">{{ it.label }}</span>
-                <span v-if="isLocked(it.path)" class="lk">contrat</span>
+          <div v-show="openOcc" class="secB">
+            <div v-for="it in itemsOccasionnels" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
+              <div class="rowTop">
+                <div class="lab">
+                  <span class="txt">{{ it.label }}</span>
+                  <span v-if="isLocked(it.path)" class="lk">contrat</span>
+                </div>
+                <div class="badge mono">{{ valFmt(it.path, "0") }}</div>
               </div>
-              <div class="val mono">{{ fmt0(getByPath(it.path)) }}</div>
-            </div>
 
-            <div class="rowBot">
-              <input
-                class="rng"
-                type="range"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
-              <input
-                class="num"
-                type="number"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
+              <div class="rowBot">
+                <input
+                  class="rng"
+                  type="range"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  class="num"
+                  type="number"
+                  :min="it.min"
+                  :max="it.max"
+                  :step="it.step"
+                  :disabled="isLocked(it.path)"
+                  :value="getByPath(it.path)"
+                  @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <!-- =======================
-           Occasionnels
-      ======================== -->
-      <section class="sec">
-        <div class="secH">
-          <div class="secT">Coûts occasionnels</div>
-          <div class="secR mono">{{ fmt0(totalOccasionnel) }}</div>
-        </div>
-
-        <div class="secB">
-          <div v-for="it in itemsOccasionnels" :key="it.path" class="row" :class="{ locked: isLocked(it.path) }">
-            <div class="rowTop">
-              <div class="lab">
-                <span class="txt">{{ it.label }}</span>
-                <span v-if="isLocked(it.path)" class="lk">contrat</span>
-              </div>
-              <div class="val mono">{{ fmt0(getByPath(it.path)) }}</div>
-            </div>
-
-            <div class="rowBot">
-              <input
-                class="rng"
-                type="range"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onSlide(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
-              <input
-                class="num"
-                type="number"
-                :min="it.min"
-                :max="it.max"
-                :step="it.step"
-                :disabled="isLocked(it.path)"
-                :value="getByPath(it.path)"
-                @input="onInput(it.path, it.min, it.max, ($event.target as HTMLInputElement).value)"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* =========================
-   Ultra compact UX
-========================= */
-.wrap{display:flex;flex-direction:column;gap:8px}
+.wrap{display:flex;flex-direction:column;gap:10px}
 
+/* header */
 .head{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(255,255,255,.92);
+  backdrop-filter: blur(6px);
+  border:1px solid rgba(16,24,40,.10);
+  border-radius:14px;
+  padding:10px 10px;
   display:flex;
+  gap:10px;
   align-items:center;
   justify-content:space-between;
-  gap:10px;
 }
-.hTitle{
-  font-weight:950;
-  color:#0f172a;
-  font-size:13px;
-  line-height:1;
-}
-.hKpis{
-  display:flex;
-  gap:6px;
-  flex-wrap:wrap;
-  justify-content:flex-end;
-}
-.pill{
-  border:1px solid rgba(16,24,40,.12);
+.hLeft{display:flex;flex-direction:column;gap:2px}
+.hTitle{font-weight:1000;font-size:13px;color:#0f172a;line-height:1}
+.hSub{font-weight:800;font-size:11px;color:rgba(15,23,42,.55)}
+.kpis{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.kpi{
+  border:1px solid rgba(16,24,40,.10);
   background:#fff;
-  border-radius:999px;
-  padding:2px 8px;
-  font-weight:950;
-  font-size:11px;
-  color:rgba(15,23,42,.82);
+  border-radius:12px;
+  padding:6px 8px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:92px;
 }
+.kLab{font-size:10px;font-weight:900;color:rgba(15,23,42,.55)}
+.kVal{font-size:12px;font-weight:1000;color:rgba(15,23,42,.92)}
+.mono{font-variant-numeric:tabular-nums}
 
+/* ✅ two columns, but each column stacks blocks with NO vertical gap */
 .grid2{
   display:grid;
   grid-template-columns: 1fr 1fr;
-  gap:8px;
+  gap:10px; /* only horizontal separation effectively; vertical handled by .col */
 }
 @media (max-width: 980px){
   .grid2{grid-template-columns:1fr}
 }
+.col{
+  display:flex;
+  flex-direction:column;
+  gap:0; /* ✅ NO vertical gap between blocks */
+}
 
+/* blocks */
 .sec{
   border:1px solid rgba(16,24,40,.10);
   background:#fff;
-  border-radius:14px;
   overflow:hidden;
 }
-.secH{
-  padding:7px 9px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  background: rgba(15,23,42,.02);
-  border-bottom:1px solid rgba(16,24,40,.08);
-}
-.secT{
-  font-weight:950;
-  font-size:12px;
-  color:rgba(15,23,42,.88);
-}
-.secR{
-  font-weight:950;
-  font-size:11px;
-  color:rgba(15,23,42,.70);
-}
-.secB{
-  padding:7px 9px;
-  display:flex;
-  flex-direction:column;
-  gap:7px;
-}
 
+/* ✅ make top/bottom stack like one card */
+.sec--top{border-radius:14px 14px 0 0}
+.sec--bottom{
+  border-radius:0 0 14px 14px;
+  border-top:0; /* ✅ no double border line */
+}
+/* in case col has only one block (rare) */
+.col > .sec:only-child{border-radius:14px}
+
+/* section header clickable */
+.secH{
+  width:100%;
+  border:0;
+  border-bottom:1px solid rgba(16,24,40,.08);
+  padding:9px 10px;
+  display:grid;
+  grid-template-columns: 1fr auto auto;
+  gap:8px;
+  align-items:center;
+  cursor:pointer;
+}
+.secT{font-weight:1000;font-size:12px;color:rgba(15,23,42,.88);text-align:left}
+.secR{font-weight:1000;font-size:11px;color:rgba(15,23,42,.65)}
+.chev{font-weight:1000;color:rgba(15,23,42,.55)}
+.secB{padding:10px;display:flex;flex-direction:column;gap:8px}
+
+/* ✅ subtle professional differentiation per block (light tint + accent bar) */
+.sec--mens .secH{background: rgba(24,64,112,.045)}
+.sec--maint .secH{background: rgba(101,129,77,.055)}
+.sec--m3 .secH{background: rgba(32,184,232,.050)}
+.sec--occ .secH{background: rgba(148,163,184,.060)}
+
+.sec--mens{box-shadow: inset 4px 0 0 rgba(24,64,112,.18)}
+.sec--maint{box-shadow: inset 4px 0 0 rgba(101,129,77,.20)}
+.sec--m3{box-shadow: inset 4px 0 0 rgba(32,184,232,.22)}
+.sec--occ{box-shadow: inset 4px 0 0 rgba(148,163,184,.22)}
+
+/* rows */
 .row{
   border:1px solid rgba(16,24,40,.10);
   border-radius:12px;
   background:#fcfcfd;
-  padding:7px 8px;
+  padding:8px 8px;
   display:flex;
   flex-direction:column;
-  gap:6px;
+  gap:7px;
 }
-.row.locked{opacity:.72}
+.row:hover{background:#fff}
+.row.locked{opacity:.70}
 
 .rowTop{
   display:flex;
@@ -625,62 +636,50 @@ function syncGasoilAuto() {
   justify-content:space-between;
   gap:10px;
 }
-.lab{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  min-width:0;
-  flex-wrap:wrap;
-}
+.lab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .txt{
-  font-weight:950;
-  font-size:12px;
-  color:rgba(15,23,42,.84);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  max-width: 220px;
+  font-weight:1000;font-size:12px;color:rgba(15,23,42,.86);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;
 }
 .lk{
-  font-size:10px;
-  font-weight:950;
-  padding:2px 6px;
-  border-radius:999px;
+  font-size:10px;font-weight:1000;
+  padding:2px 7px;border-radius:999px;
   border:1px solid rgba(2,132,199,.22);
   background:rgba(2,132,199,.08);
   color:rgba(2,132,199,.92);
-  white-space:nowrap;
 }
-.hint{
-  font-size:10px;
-  font-weight:900;
-  color:rgba(15,23,42,.55);
-  white-space:nowrap;
-}
+.hint{font-size:10px;font-weight:900;color:rgba(15,23,42,.55);white-space:nowrap}
 
-.val{
-  font-weight:950;
+/* value badge */
+.badge{
+  font-weight:1000;
   font-size:12px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid rgba(16,24,40,.12);
+  background:#fff;
   color:rgba(15,23,42,.92);
   white-space:nowrap;
 }
 
-.rowBot{
-  display:flex;
-  align-items:center;
-  gap:8px;
-}
-.rng{flex:1; min-width: 120px;}
+/* inputs */
+.rowBot{display:flex;align-items:center;gap:10px}
+.rng{flex:1;min-width:120px;height:16px}
 .num{
-  width: 108px;
-  height: 28px;
+  width:112px;
+  height:30px;
   border-radius:10px;
   border:1px solid rgba(16,24,40,.14);
   background:#fff;
-  padding: 0 8px;
-  font-weight:950;
+  padding:0 10px;
+  font-weight:1000;
   color:rgba(15,23,42,.92);
   outline:none;
+  text-align:right;
+}
+.num:focus{
+  border-color: rgba(32,184,232,.45);
+  box-shadow: 0 0 0 3px rgba(32,184,232,.14);
 }
 .num:disabled{
   background: rgba(15,23,42,.03);
@@ -695,27 +694,11 @@ function syncGasoilAuto() {
   font-size:10.5px;
   font-weight:950;
   color:rgba(15,23,42,.70);
-  padding:2px 6px;
+  padding:2px 7px;
   border-radius:999px;
   border:1px solid rgba(16,24,40,.10);
   background: rgba(15,23,42,.02);
   white-space:nowrap;
 }
 .auto input{transform: translateY(1px);}
-
-.miniBtn{
-  height:28px;
-  min-width: 32px;
-  border-radius:10px;
-  border:1px solid rgba(16,24,40,.14);
-  background: rgba(15,23,42,.03);
-  font-weight:950;
-  cursor:pointer;
-}
-.miniBtn:hover{
-  background: rgba(2,132,199,.08);
-  border-color: rgba(2,132,199,.18);
-}
-
-.mono{font-variant-numeric:tabular-nums}
 </style>
