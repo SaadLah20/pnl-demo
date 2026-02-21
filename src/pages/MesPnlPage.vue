@@ -11,7 +11,6 @@ import {
 } from "vue";
 
 import { usePnlStore } from "@/stores/pnl.store";
-const activeContract = computed<any | null>(() => (store as any).activeContract ?? null);
 import { contractUiTitle } from "@/services/contractTitle";
 import { VARIANT_STATUS_OPTS, type VariantStatusUi } from "@/constants/variantStatus";
 import { API_BASE, apiGet } from "@/api/http";
@@ -26,8 +25,13 @@ import VariantWizardModal, {
   type VariantCreateMode,
 } from "@/components/variantWizard/VariantWizardModal.vue";
 
-const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+/** ✅ IMPORTANT: store doit être initialisé AVANT tout computed qui l'utilise */
+const store = usePnlStore();
 
+/** ✅ contrat actif store (fallback) */
+const activeContract = computed<any | null>(() => (store as any).activeContract ?? null);
+
+const API = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 
 async function apiJson(url: string, opts?: RequestInit) {
   const res = await fetch(API + url, {
@@ -52,8 +56,6 @@ async function apiJson(url: string, opts?: RequestInit) {
 
   return res.json().catch(() => null);
 }
-
-const store = usePnlStore();
 
 const LS_ACTIVE_PNL = "pnl.activePnlId";
 const LS_ACTIVE_VARIANT = "pnl.activeVariantId";
@@ -467,7 +469,6 @@ function clampPage(v: number, max: number) {
 }
 function goPage(p: number) {
   page.value = p;
-  // (optionnel) scroll doux vers le haut de la liste
   try {
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch {
@@ -509,7 +510,6 @@ const filteredPnls = computed<any[]>(() => {
     return av.localeCompare(bv, "fr") * dir;
   });
 
-  // ✅ garder le P&L actif en premier (utile avec pagination)
   const ap = activePnlId.value;
   if (ap) {
     const idx = rows.findIndex((x) => String(x.id) === String(ap));
@@ -533,7 +533,6 @@ const pagedPnls = computed(() => {
 });
 
 const pageWindow = computed(() => {
-  // fenêtre courte (max 7 pages affichées)
   const max = totalPages.value;
   const cur = clampPage(page.value, max);
   const span = 7;
@@ -546,7 +545,6 @@ const pageWindow = computed(() => {
   return out;
 });
 
-// reset page quand filtres/recherche changent
 watch(
   () => [
     q.value,
@@ -1033,6 +1031,18 @@ function findPnlIdByContractId(contractId: string): string | null {
   return null;
 }
 
+/** ✅ NEW: trouver le contrat exact (pour passer au wizard) */
+function findContractById(contractId: string): any | null {
+  const cid = String(contractId ?? "");
+  if (!cid) return null;
+  for (const p of pnls.value) {
+    for (const c of p.contracts ?? []) {
+      if (String(c.id) === cid) return c;
+    }
+  }
+  return null;
+}
+
 const allVariantsFlat = computed(() => {
   const out: Array<{ id: string; title: string; contractTitle?: string | null; pnlTitle?: string | null }> = [];
   for (const p of pnls.value) {
@@ -1071,7 +1081,18 @@ const createBase = reactive<{
   createMode: "ZERO",
 });
 
+/** ✅ NEW: le wizard doit recevoir le contrat cliqué (sinon locks KO) */
+const wizardContract = computed<any | null>(() => {
+  const cid = createBase.contractId || createContractId.value;
+  return cid ? findContractById(cid) : activeContract.value;
+});
+
 function openCreateVariant(contractId: string) {
+  // ✅ NEW: forcer activeContract/activePnl AVANT d'ouvrir le modal
+  const pnlId = findPnlIdByContractId(contractId);
+  if (pnlId) openPnl[String(pnlId)] = true;
+  setActiveIds(pnlId, contractId, null);
+
   createContractId.value = contractId;
   createDefaultTitle.value = "Variante";
   createOpen.value = true;
@@ -1118,6 +1139,10 @@ function handleCreateNext(payload: VariantCreateNextPayload) {
   createBase.description = payload.description;
   createBase.status = payload.status;
   createBase.createMode = payload.createMode;
+
+  // ✅ NEW: forcer activeContract aussi ici (cas où l’utilisateur arrive via autre chemin)
+  const pnlId = findPnlIdByContractId(payload.contractId);
+  setActiveIds(pnlId, payload.contractId, null);
 
   wizardMode.value = payload.createMode;
   createOpen.value = false;
@@ -1671,15 +1696,16 @@ onBeforeUnmount(() => {
       @next="handleCreateNext"
     />
 
-<VariantWizardModal
-  :open="wizardOpen"
-  :mode="wizardMode"
-  :contract="activeContract"
-  :all-variants="allVariantsFlat"
-  @close="closeWizardModal"
-  @submit-initiee="handleSaveInitiee"
-  @submit-composee="handleSaveComposee"
-/>
+    <!-- ✅ FIX LOCK: passer le contrat du wizard (pas juste activeContract) -->
+    <VariantWizardModal
+      :open="wizardOpen"
+      :mode="wizardMode"
+      :contract="wizardContract"
+      :all-variants="allVariantsFlat"
+      @close="closeWizardModal"
+      @submit-initiee="handleSaveInitiee"
+      @submit-composee="handleSaveComposee"
+    />
   </div>
 </template>
 
@@ -1983,7 +2009,7 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.92);
 }
 .name--pnl {
-  font-size: 14px; /* ✅ titre P&L plus visible */
+  font-size: 14px;
   font-weight: 1000;
   letter-spacing: 0.15px;
 }
@@ -2158,7 +2184,7 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-/* ✅ Active variante = vrai BG vert “ouvert” (plus lisible que ton actuel) */
+/* ✅ Active variante */
 .variantRow.activeVariant {
   background: linear-gradient(180deg, rgba(34, 197, 94, 0.16) 0%, rgba(34, 197, 94, 0.10) 100%) !important;
   border-color: rgba(34, 197, 94, 0.55) !important;
