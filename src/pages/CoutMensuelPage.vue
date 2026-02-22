@@ -3,10 +3,13 @@
      ✅ Masquer 0 auto
      ✅ Locks contrat (charge client) appliqués (+ Location chargeur)
      ✅ Modals au-dessus HeaderDashboard (z-index)
+     ✅ Apply preview + quitter sans enregistrer (Unsaved) comme Transport/MOMD
+     ✅ Hint "Modifié" ORANGE (comme TransportPage + CoutM3)
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
@@ -20,9 +23,11 @@ import {
   ArrowDownTrayIcon,
   LockClosedIcon,
   InformationCircleIcon,
+  EyeIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
@@ -53,7 +58,14 @@ function clamp(v: any, min = 0, max = 1e15) {
   return Math.max(min, Math.min(max, x));
 }
 function isZero(v: any) {
-  return Math.abs(toNum(v)) <= 0;
+  return Math.abs(toNum(v)) <= 1e-12;
+}
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 // same logic family as backend
@@ -66,21 +78,18 @@ function norm(s: any): string {
 }
 function isChargeClient(v: any): boolean {
   const t = norm(v);
-  return t.includes("client"); // "à la charge du client", "charge client", etc.
+  return t.includes("client");
 }
 
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => (store as any).activeVariant);
-const contract = computed<any>(() => (store as any).activeContract);
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
 
 /* =========================
    ✅ CONTRAT → LOCK FLAGS
-   - consoElec à charge client => electricite + locationGroupes (legacy: location) forcés à 0
-   - terrain à charge client => locationTerrain forcé à 0
-   - chargeuse à charge client => locationChargeur forcé à 0
 ========================= */
 const lockElecAndGroups = computed<boolean>(() => isChargeClient((contract.value ?? {})?.consoElec));
 const lockTerrain = computed<boolean>(() => isChargeClient((contract.value ?? {})?.terrain));
@@ -153,7 +162,7 @@ type Draft = {
   locationChargeur: number;
   locationBungalows: number;
   epi: number;
-  // legacy (utilisé comme "Location groupes")
+  // legacy = Location groupes
   location: number;
 };
 
@@ -187,22 +196,22 @@ function applyFromVariant(v: any) {
   draft.locationChargeur = clamp(s.locationChargeur);
   draft.locationBungalows = clamp(s.locationBungalows);
   draft.epi = clamp(s.epi);
-  draft.location = clamp(s.location); // legacy: "Location groupes"
+  draft.location = clamp(s.location); // legacy
 }
 
-/** ✅ enforce contract rules on draft (immediate KPI correctness) */
+/** ✅ enforce contract rules on draft */
 function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
   let changed = false;
   const notes: string[] = [];
 
   if (lockElecAndGroups.value) {
     let any = false;
-    if (clamp(draft.electricite) !== 0) {
+    if (!isZero(draft.electricite)) {
       draft.electricite = 0;
       changed = true;
       any = true;
     }
-    if (clamp(draft.location) !== 0) {
+    if (!isZero(draft.location)) {
       draft.location = 0;
       changed = true;
       any = true;
@@ -211,7 +220,7 @@ function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
   }
 
   if (lockTerrain.value) {
-    if (clamp(draft.locationTerrain) !== 0) {
+    if (!isZero(draft.locationTerrain)) {
       draft.locationTerrain = 0;
       changed = true;
       notes.push("Location terrain forcée à 0 (charge client).");
@@ -219,7 +228,7 @@ function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
   }
 
   if (lockChargeur.value) {
-    if (clamp(draft.locationChargeur) !== 0) {
+    if (!isZero(draft.locationChargeur)) {
       draft.locationChargeur = 0;
       changed = true;
       notes.push("Location chargeur forcée à 0 (charge client).");
@@ -230,12 +239,12 @@ function enforceContractLocksOnDraft(): { changed: boolean; notes: string[] } {
 }
 
 /* =========================
-   ✅ EFFECTIVE VALUES (for KPI + save + rows)
+   ✅ EFFECTIVE VALUES
 ========================= */
 const effective = computed(() => {
   return {
     electricite: lockElecAndGroups.value ? 0 : clamp(draft.electricite),
-    location: lockElecAndGroups.value ? 0 : clamp(draft.location), // location groupes
+    location: lockElecAndGroups.value ? 0 : clamp(draft.location),
     locationTerrain: lockTerrain.value ? 0 : clamp(draft.locationTerrain),
     locationChargeur: lockChargeur.value ? 0 : clamp(draft.locationChargeur),
 
@@ -253,8 +262,7 @@ const effective = computed(() => {
 
 function anyEffectiveNonZero(): boolean {
   const e: any = effective.value as any;
-  const keys = Object.keys(e);
-  for (const k of keys) if (!isZero(e[k])) return true;
+  for (const k of Object.keys(e)) if (!isZero(e[k])) return true;
   return false;
 }
 
@@ -281,7 +289,7 @@ function toggleHideZeros() {
 }
 
 /* =========================
-   LOAD & AUTO (page access)
+   LOAD (page access)
 ========================= */
 function loadFromVariant() {
   applyFromVariant(variant.value);
@@ -290,22 +298,6 @@ function loadFromVariant() {
   hideZerosUserToggled.value = false;
   syncHideZerosAuto();
 }
-
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
-
-watch(
-  () => [lockElecAndGroups.value, lockTerrain.value, lockChargeur.value],
-  () => {
-    enforceContractLocksOnDraft();
-    syncHideZerosAuto();
-  },
-  { immediate: true }
-);
-
-watch(
-  () => ({ ...effective.value }),
-  () => syncHideZerosAuto()
-);
 
 /* =========================
    KPI (global)
@@ -321,7 +313,7 @@ const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 
 /* =========================
    LINES
 ========================= */
-type LineKey = keyof Draft; // inclut "location" legacy
+type LineKey = keyof Draft;
 type Line = {
   key: LineKey;
   label: string;
@@ -370,8 +362,6 @@ const lines = computed<Line[]>(() => {
 const visibleLines = computed(() => {
   const arr = lines.value ?? [];
   if (!hideZeros.value) return arr;
-
-  // ✅ garder visibles les lignes verrouillées même à 0
   return arr.filter((ln) => !isZero(ln.mensuel) || ln.locked);
 });
 
@@ -475,19 +465,19 @@ function closeModal() {
 }
 
 /* =========================
-   SAVE / RESET
+   SAVE
 ========================= */
 const saving = ref(false);
 const err = ref<string | null>(null);
 
-function buildPayload() {
+function buildPayloadEffective() {
   const existing: any = (variant.value as any)?.coutMensuel ?? {};
   const e = effective.value;
 
   return {
     category: existing.category ?? "COUTS_CHARGES",
     electricite: Number(e.electricite),
-    location: Number(e.location), // legacy = Location groupes
+    location: Number(e.location),
     gasoil: Number(e.gasoil),
     hebergements: Number(e.hebergements),
     locationTerrain: Number(e.locationTerrain),
@@ -502,31 +492,50 @@ function buildPayload() {
   };
 }
 
-async function save() {
-  if (!variant.value) return;
+/** baseline = valeurs “référence” venant de la variante, MAIS avec locks appliqués */
+function buildPayloadFromVariantEffective() {
+  const v: any = variant.value ?? {};
+  const s: any = v?.coutMensuel ?? {};
+  return {
+    category: s.category ?? "COUTS_CHARGES",
+    electricite: lockElecAndGroups.value ? 0 : Number(clamp(s.electricite)),
+    location: lockElecAndGroups.value ? 0 : Number(clamp(s.location)),
+    gasoil: Number(clamp(s.gasoil)),
+    hebergements: Number(clamp(s.hebergements)),
+    locationTerrain: lockTerrain.value ? 0 : Number(clamp(s.locationTerrain)),
+    telephone: Number(clamp(s.telephone)),
+    troisG: Number(clamp(s.troisG)),
+    taxeProfessionnelle: Number(clamp(s.taxeProfessionnelle)),
+    securite: Number(clamp(s.securite)),
+    locationVehicule: Number(clamp(s.locationVehicule)),
+    locationChargeur: lockChargeur.value ? 0 : Number(clamp(s.locationChargeur)),
+    locationBungalows: Number(clamp(s.locationBungalows)),
+    epi: Number(clamp(s.epi)),
+  };
+}
+
+async function save(): Promise<boolean> {
+  if (!variant.value) return false;
   err.value = null;
   saving.value = true;
   try {
-    await (store as any).updateVariant(variant.value.id, { coutMensuel: buildPayload() });
+    await (store as any).updateVariant(variant.value.id, { coutMensuel: buildPayloadEffective() });
     showToast("Coûts mensuels enregistrés.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
+    return false;
   } finally {
     saving.value = false;
   }
 }
+
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts mensuels ?", async () => {
     closeModal();
-    await save();
-  });
-}
-function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
-    closeModal();
-    loadFromVariant();
-    showToast("Valeurs restaurées.", "ok");
+    const ok = await save();
+    if (ok) setBaselineFromVariant();
   });
 }
 
@@ -584,7 +593,7 @@ async function generalizeTo(variantIds: string[]) {
   const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceId) return;
 
-  const payload = buildPayload();
+  const payload = buildPayloadEffective();
 
   genErr.value = null;
   genBusy.value = true;
@@ -607,7 +616,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
   if (!ids.length) return;
 
-  const data = buildPayload();
+  const data = buildPayloadEffective();
   const impacted = impactedByContractOnTargets(ids, data);
 
   let warn = "";
@@ -647,6 +656,134 @@ function setDraft(key: LineKey, value: any) {
 
   (draft as any)[key] = v;
 }
+
+/* =========================
+   ✅ UNSAVED + APPLY PREVIEW
+========================= */
+const PAGE_KEY = "COUT_MENSUEL";
+
+const baselineJson = ref<string>("");
+const baselineVariantSnapshot = ref<any | null>(null);
+const previewApplied = ref(false);
+
+function setBaselineFromVariant() {
+  // snapshot complet (pour annuler un preview)
+  try {
+    baselineVariantSnapshot.value = structuredClone((store as any).activeVariant ?? variant.value);
+  } catch {
+    baselineVariantSnapshot.value = JSON.parse(JSON.stringify((store as any).activeVariant ?? variant.value ?? null));
+  }
+
+  baselineJson.value = stableJson(buildPayloadFromVariantEffective());
+  previewApplied.value = false;
+}
+
+const currentJson = computed(() => stableJson(buildPayloadEffective()));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  return currentJson.value !== baselineJson.value;
+});
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState !== "function") {
+    showToast("Preview non supportée (replaceActiveVariantInState absent).", "err");
+    return;
+  }
+
+  let next: any;
+  try {
+    next = structuredClone(s.activeVariant ?? variant.value);
+  } catch {
+    next = JSON.parse(JSON.stringify(s.activeVariant ?? variant.value ?? null));
+  }
+  if (!next?.id) return;
+
+  next.coutMensuel = buildPayloadEffective();
+  s.replaceActiveVariantInState(next);
+
+  previewApplied.value = true;
+  showToast("Prévisualisation appliquée (non enregistrée).", "ok");
+}
+
+function restoreFromBaselineSnapshot() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap);
+  }
+  previewApplied.value = false;
+}
+
+async function discardLocalChanges() {
+  if (previewApplied.value) restoreFromBaselineSnapshot();
+
+  loadFromVariant();
+  baselineJson.value = stableJson(buildPayloadFromVariantEffective());
+
+  showToast("Valeurs restaurées.", "ok");
+}
+
+function askReset() {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", async () => {
+    closeModal();
+    await discardLocalChanges();
+  });
+}
+
+function syncUnsaved() {
+  const u: any = unsaved as any;
+  u.setDirty?.(Boolean(dirty.value));
+
+  u.registerPage?.({
+    pageKey: PAGE_KEY,
+    save: async () => {
+      const ok = await save();
+      if (ok) setBaselineFromVariant();
+      return ok;
+    },
+    discard: async () => {
+      await discardLocalChanges();
+    },
+  });
+}
+
+/* =========================
+   WATCHERS INIT
+========================= */
+watch(dirty, () => syncUnsaved(), { immediate: true });
+
+watch(
+  () => variant.value?.id,
+  () => {
+    loadFromVariant();
+    setBaselineFromVariant();
+    syncUnsaved();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [lockElecAndGroups.value, lockTerrain.value, lockChargeur.value],
+  () => {
+    // locks changent => draft forcé + baseline recalculée (car la “référence” visuelle change)
+    enforceContractLocksOnDraft();
+    syncHideZerosAuto();
+    setBaselineFromVariant();
+  }
+);
+
+watch(
+  () => ({ ...effective.value }),
+  () => syncHideZerosAuto()
+);
+
+onBeforeUnmount(() => {
+  (unsaved as any).unregisterPage?.(PAGE_KEY);
+});
 </script>
 
 <template>
@@ -654,10 +791,35 @@ function setDraft(key: LineKey, value: any) {
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttl">Coûts mensuels</div>
+          <div class="ttl">
+            Coûts mensuels
+
+            <!-- ✅ Modifié ORANGE (comme TransportPage + CoutM3) -->
+            <span v-if="dirty" class="modifiedHint" title="Modifications non enregistrées">
+              <span class="modifiedDot" aria-hidden="true"></span>
+              Modifié
+            </span>
+
+            <!-- ✅ Preview -->
+            <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée (non enregistrée)">
+              <EyeIcon class="icSm" />
+              Preview
+            </span>
+          </div>
         </div>
 
         <div class="actions">
+          <!-- ✅ Apply preview -->
+          <button
+            class="btn"
+            :disabled="!variant || saving || genBusy || impBusy || !dirty"
+            @click="applyPreviewToHeader()"
+            title="Appliquer au header (sans enregistrer)"
+          >
+            <EyeIcon class="ic" />
+            Appliquer
+          </button>
+
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZeros()" :class="{ on: hideZeros }">
             <span class="dot" aria-hidden="true"></span>
             {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
@@ -926,6 +1088,49 @@ function setDraft(key: LineKey, value: any) {
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ✅ MODIFIÉ (ORANGE) — aligné TransportPage + CoutM3 */
+.modifiedHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(194, 65, 12, 1); /* orange-700 */
+  background: rgba(251, 146, 60, 0.14);
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  white-space: nowrap;
+}
+.modifiedDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 1); /* orange-500 */
+}
+
+/* preview badge */
+.prevBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  background: rgba(2, 132, 199, 0.08);
+  color: rgba(2, 132, 199, 0.95);
+  white-space: nowrap;
+}
+.icSm {
+  width: 14px;
+  height: 14px;
 }
 
 /* actions */

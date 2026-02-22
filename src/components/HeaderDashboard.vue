@@ -4,7 +4,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { usePnlStore } from "@/stores/pnl.store";
 import HeaderActionsModals from "@/components/HeaderActionsModals.vue";
 import { contractUiTitle } from "@/services/contractTitle";
-
+import { useUnsavedStore } from "@/stores/unsaved.store";
+const unsaved = useUnsavedStore();
+const contractSelectKey = ref(0);
+const variantSelectKey = ref(0);
 const actionsRef = ref<InstanceType<typeof HeaderActionsModals> | null>(null);
 
 // Heroicons
@@ -202,35 +205,67 @@ function firstVariantIdOfContract(contract: any): string | null {
 }
 
 function onPickPnl(pnlId: string) {
-  pnlOpen.value = false;
-  pnlQuery.value = "";
+  unsaved.requestNavigation({
+    label: "Header: pick P&L",
+    run: async () => {
+      pnlOpen.value = false;
+      pnlQuery.value = "";
 
-  const pnl = pnls.value.find((p: any) => String(p.id) === String(pnlId));
-  if (!pnl) return;
+      const pnl = pnls.value.find((p: any) => String(p.id) === String(pnlId));
+      if (!pnl) return;
 
-  setActivePnlId(String(pnl.id));
+      setActivePnlId(String(pnl.id));
 
-  const c0 = (pnl.contracts ?? [])[0];
-  if (c0?.id) setActiveContractId(String(c0.id));
+      const c0 = (pnl.contracts ?? [])[0];
+      if (c0?.id) setActiveContractId(String(c0.id));
 
-  const v0 = firstVariantIdOfContract(c0);
-  if (v0) setActiveVariantId(v0);
+      const v0 = firstVariantIdOfContract(c0);
+      if (v0) setActiveVariantId(v0);
+    },
+  });
 }
 
 function onPickContract(contractId: string) {
-  const c = contractsOfActivePnl.value.find((x: any) => String(x.id) === String(contractId));
-  if (!c) return;
+  // ✅ reset visuel immédiat si "Rester" (select overlay garde la valeur DOM sinon)
+  contractSelectKey.value++;
 
-  setActiveContractId(String(c.id));
+  const nextId = String(contractId ?? "").trim();
+  const curId = activeContract.value?.id ? String(activeContract.value.id) : "";
 
-  const v0 = firstVariantIdOfContract(c);
-  if (v0) setActiveVariantId(v0);
+  if (!nextId || nextId === curId) return;
+
+  unsaved.requestNavigation({
+    label: "Header: pick Contrat",
+    run: async () => {
+      const c = contractsOfActivePnl.value.find((x: any) => String(x.id) === nextId);
+      if (!c) return;
+
+      setActiveContractId(String(c.id));
+
+      const v0 = firstVariantIdOfContract(c);
+      if (v0) setActiveVariantId(v0);
+    },
+  });
 }
 
 function onPickVariant(variantId: string) {
-  const v = variantsOfActiveContract.value.find((x: any) => String(x.id) === String(variantId));
-  if (!v) return;
-  setActiveVariantId(String(v.id));
+  // ✅ reset visuel immédiat si "Rester"
+  variantSelectKey.value++;
+
+  const nextId = String(variantId ?? "").trim();
+  const curId = activeVariant.value?.id ? String(activeVariant.value.id) : "";
+
+  if (!nextId || nextId === curId) return;
+
+  unsaved.requestNavigation({
+    label: "Header: pick Variante",
+    run: async () => {
+      const v = variantsOfActiveContract.value.find((x: any) => String(x.id) === nextId);
+      if (!v) return;
+
+      setActiveVariantId(String(v.id));
+    },
+  });
 }
 
 /* =========================
@@ -460,68 +495,73 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Contrat selector -->
-      <div class="pill contract control">
-        <div class="pill__head contractHead">
-          <span class="pill__label">Contrat</span>
-          <span class="pill__value" :title="contractName">{{ contractName }}</span>
-          <ChevronDownIcon class="pill__chev" />
+<!-- Contrat selector -->
+<div class="pill contract control">
+  <div class="pill__head contractHead">
+    <span class="pill__label">Contrat</span>
+    <span class="pill__value" :title="contractName">{{ contractName }}</span>
+    <ChevronDownIcon class="pill__chev" />
 
-          <select
-            class="pill__selectOverlay"
-            :value="activeContract?.id ? String(activeContract.id) : ''"
-            @change="onPickContract(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="" disabled>—</option>
-            <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
-              {{ contractUiTitle(c) }}
-            </option>
-          </select>
-        </div>
+    <!-- ✅ IMPORTANT: c'est bien le select CONTRAT -->
+    <select
+      :key="contractSelectKey"
+      class="pill__selectOverlay"
+      :value="activeContract?.id ? String(activeContract.id) : ''"
+      @change="onPickContract(($event.target as HTMLSelectElement).value)"
+    >
+      <option value="" disabled>—</option>
+      <option v-for="c in contractsOfActivePnl" :key="c.id" :value="String(c.id)">
+        {{ contractUiTitle(c) }}
+      </option>
+    </select>
+  </div>
 
-        <div class="pill__actions">
-          <button class="iconbtn" title="Voir" @click.stop="viewContract"><EyeIcon class="ic" /></button>
-          <button
-            class="iconbtn"
-            :title="editContractTooltip"
-            @click.stop="canEditContract ? editContract() : showToast('Contrat verrouillé pour les P&L CAB FIXE.')"
-          >
-            <PencilSquareIcon class="ic" />
-          </button>
-        </div>
-      </div>
+  <div class="pill__actions">
+    <button class="iconbtn" title="Voir" @click.stop="viewContract"><EyeIcon class="ic" /></button>
+    <button
+      class="iconbtn"
+      :title="editContractTooltip"
+      @click.stop="canEditContract ? editContract() : showToast('Contrat verrouillé pour les P&L CAB FIXE.')"
+    >
+      <PencilSquareIcon class="ic" />
+    </button>
+  </div>
+</div>
 
-      <!-- Variante selector -->
-      <div class="pill variant control">
-        <div class="pill__head contractHead">
-          <Squares2X2Icon class="pill__miniic" />
-          <span class="pill__label">Variante</span>
-          <span class="pill__value" :title="variantName">{{ variantName }}</span>
-          <ChevronDownIcon class="pill__chev" />
+<!-- Variante selector -->
+<div class="pill variant control">
+  <div class="pill__head contractHead">
+    <Squares2X2Icon class="pill__miniic" />
+    <span class="pill__label">Variante</span>
+    <span class="pill__value" :title="variantName">{{ variantName }}</span>
+    <ChevronDownIcon class="pill__chev" />
 
-          <select
-            class="pill__selectOverlay"
-            :value="activeVariant?.id ? String(activeVariant.id) : ''"
-            @change="onPickVariant(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="" disabled>—</option>
-            <option v-for="v in variantsOfActiveContract" :key="v.id" :value="String(v.id)">
-              {{ v.title ? String(v.title) : `Variante ${String(v.id).slice(0, 6)}` }}
-            </option>
-          </select>
-        </div>
+    <!-- ✅ IMPORTANT: c'est bien le select VARIANTE -->
+    <select
+      :key="variantSelectKey"
+      class="pill__selectOverlay"
+      :value="activeVariant?.id ? String(activeVariant.id) : ''"
+      @change="onPickVariant(($event.target as HTMLSelectElement).value)"
+    >
+      <option value="" disabled>—</option>
+      <option v-for="v in variantsOfActiveContract" :key="v.id" :value="String(v.id)">
+        {{ v.title ? String(v.title) : `Variante ${String(v.id).slice(0, 6)}` }}
+      </option>
+    </select>
+  </div>
 
-        <div class="pill__actions">
-          <button class="iconbtn" title="Dupliquer" @click.stop="duplicateVariant">
-            <DocumentDuplicateIcon class="ic" />
-          </button>
-          <button class="iconbtn" title="Nouvelle variante" @click.stop="newVariant">
-            <PlusCircleIcon class="ic" />
-          </button>
-          <button class="iconbtn" title="Éditer variante" @click.stop="editVariant">
-            <PencilSquareIcon class="ic" />
-          </button>
-        </div>
-      </div>
+  <div class="pill__actions">
+    <button class="iconbtn" title="Dupliquer" @click.stop="duplicateVariant">
+      <DocumentDuplicateIcon class="ic" />
+    </button>
+    <button class="iconbtn" title="Nouvelle variante" @click.stop="newVariant">
+      <PlusCircleIcon class="ic" />
+    </button>
+    <button class="iconbtn" title="Éditer variante" @click.stop="editVariant">
+      <PencilSquareIcon class="ic" />
+    </button>
+  </div>
+</div>
 
       <!-- Fold button (2-step) -->
       <button class="foldBtn" type="button" @click="cycleFold" title="Pliage: 0/1/2 lignes">

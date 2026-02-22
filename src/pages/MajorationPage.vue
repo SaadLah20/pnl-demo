@@ -3,16 +3,20 @@
      ✅ Phrase supprimée
      ✅ Boutons dans header
      ✅ FIX: Onglet "Par majoration" = impact réellement par majoration (isolation)
-          -> on calcule chaque ligne sur une variante "sans majorations persistées"
+     ✅ UNSAVED + Hint "Modifié" ORANGE (comme tes autres pages)
+     ✅ Preview badge quand Appliquer (preview header) est actif
+     ✅ Suppression libellé "Annuler" -> "Fermer" (cohérence)
 -->
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, onBeforeUnmount as _onBeforeUnmount, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import { computeHeaderKpis } from "@/services/kpis/headerkpis";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 /* =========================
    STORE / STATE
@@ -220,6 +224,7 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 
     draft.map = { ...remapped };
     (store as any).clearHeaderMajorationsPreview?.();
+    previewOn.value = false;
     impOpen.value = false;
   } catch (e: any) {
     impErr.value = e?.message ?? String(e);
@@ -311,9 +316,18 @@ onMounted(async () => {
     loading.value = false;
   }
   rebuildDraft();
+  setBaselineFromVariant();
+  syncUnsaved();
 });
 
-watch(() => variant.value?.id, () => rebuildDraft());
+watch(
+  () => variant.value?.id,
+  () => {
+    rebuildDraft();
+    setBaselineFromVariant();
+    syncUnsaved();
+  }
+);
 
 onBeforeUnmount(() => {
   (store as any).clearHeaderMajorationsPreview?.();
@@ -345,8 +359,8 @@ function applyPreview() {
   (store as any).setHeaderMajorationsPreview?.({ ...draft.map });
 }
 
-async function save() {
-  if (!variant.value?.id) return;
+async function save(): Promise<boolean> {
+  if (!variant.value?.id) return false;
 
   saving.value = true;
   error.value = null;
@@ -355,8 +369,14 @@ async function save() {
     await (store as any).saveMajorations(String(variant.value.id), { ...draft.map });
     (store as any).clearHeaderMajorationsPreview?.();
     previewOn.value = false;
+    await refreshActiveVariant(String(variant.value.id));
+    rebuildDraft();
+    setBaselineFromVariant();
+    syncUnsaved();
+    return true;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
+    return false;
   } finally {
     saving.value = false;
   }
@@ -447,7 +467,18 @@ const impactSummary = computed(() => {
   const vol = n(b?.volumeTotalM3 ?? a?.volumeTotalM3 ?? i?.volumeTotalM3);
 
   if (!b || !a || !i || vol <= 0) {
-    return { vol, dpvNoImp: 0, dpvImp: 0, debitNoImp: 0, debitImp: 0, addMomdM3: 0, surcoutNoImp: 0, surcoutImp: 0, fgNoImp: 0, fgImp: 0 };
+    return {
+      vol,
+      dpvNoImp: 0,
+      dpvImp: 0,
+      debitNoImp: 0,
+      debitImp: 0,
+      addMomdM3: 0,
+      surcoutNoImp: 0,
+      surcoutImp: 0,
+      fgNoImp: 0,
+      fgImp: 0,
+    };
   }
 
   const dpvNoImp = n(a.prixMoyenM3) - n(b.prixMoyenM3);
@@ -494,6 +525,8 @@ async function confirmApplyRealNow() {
 
     await refreshActiveVariant(variantId);
     rebuildDraft();
+    setBaselineFromVariant();
+    syncUnsaved();
 
     confirmOpen.value = false;
   } catch (e: any) {
@@ -517,8 +550,8 @@ function applyReal() {
 
 function resetAll() {
   draft.map = { [IMP_ENABLED_KEY]: 0, [IMP_PCT_KEY]: 0 };
-  (store as any).setHeaderMajorationsPreview?.({});
   previewOn.value = true;
+  (store as any).setHeaderMajorationsPreview?.({ ...draft.map });
 }
 
 /* =========================
@@ -814,12 +847,10 @@ function computeOneMap(key: string, pct: number, withImp: boolean): Record<strin
 
 /**
  * ✅ FIX IMPORTANT
- * L'erreur "impact global affiché sur chaque majoration" vient quasi toujours du fait que
- * computeHeaderKpis fusionne le map passé avec les majorations persistées (v.autresCouts.majorations).
- * => Ici on force la base variante "sans majorations" (baseVariantNoMaj) pour isoler une seule ligne.
+ * => On force la variante "sans majorations persistées" (baseVariantNoMaj) pour isoler une seule ligne.
  */
 const impactsByRow = computed<ImpactRow[]>(() => {
-  const baseVariant = baseVariantNoMaj.value; // ✅ neutre (majorations = null)
+  const baseVariant = baseVariantNoMaj.value;
   const b = kBase.value;
   if (!baseVariant || !b) return [];
 
@@ -835,7 +866,6 @@ const impactsByRow = computed<ImpactRow[]>(() => {
   return slice.map((r) => {
     const pct = pctOf(r.key);
 
-    // ✅ calcul sur la variante neutre, avec map = uniquement cette majoration (+ imputation)
     const kNoImp = computeHeaderKpis(baseVariant, dureeMois.value, computeOneMap(r.key, pct, false), null, false);
     const kImp = computeHeaderKpis(baseVariant, dureeMois.value, computeOneMap(r.key, pct, true), null, false);
 
@@ -875,14 +905,90 @@ function fmt2(x: any) {
 function fmt1(x: any) {
   return n(x).toFixed(1);
 }
+
+/* =========================
+   ✅ UNSAVED + MODIFIÉ
+========================= */
+const PAGE_KEY = "MAJORATIONS";
+
+function stableStringifyMap(m: Record<string, number>) {
+  const keys = Object.keys(m ?? {}).sort((a, b) => a.localeCompare(b));
+  const obj: Record<string, number> = {};
+  for (const k of keys) obj[k] = Number(m[k] ?? 0);
+  return JSON.stringify(obj);
+}
+
+const baselineJson = ref<string>("");
+
+function setBaselineFromVariant() {
+  const v = variant.value;
+  const persisted = safeParse(v?.autresCouts?.majorations);
+
+  // baseline = persisted normalisé + clés imp présentes
+  const baseMap: Record<string, number> = {
+    [IMP_ENABLED_KEY]: n((persisted as any)?.[IMP_ENABLED_KEY]) >= 0.5 ? 1 : 0,
+    [IMP_PCT_KEY]: Math.max(0, Math.min(100, n((persisted as any)?.[IMP_PCT_KEY]))),
+    ...persisted,
+  };
+
+  baselineJson.value = stableStringifyMap(baseMap);
+}
+
+const currentJson = computed(() => stableStringifyMap(draft.map ?? {}));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  return currentJson.value !== baselineJson.value;
+});
+
+function syncUnsaved() {
+  const u: any = unsaved as any;
+  u.setDirty?.(Boolean(dirty.value));
+
+  u.registerPage?.({
+    pageKey: PAGE_KEY,
+    save: async () => {
+      const ok = await save();
+      if (ok) setBaselineFromVariant();
+      return ok;
+    },
+    discard: async () => {
+      (store as any).clearHeaderMajorationsPreview?.();
+      previewOn.value = false;
+      rebuildDraft();
+      setBaselineFromVariant();
+    },
+  });
+}
+
+watch(() => dirty.value, () => syncUnsaved());
+watch(() => currentJson.value, () => syncUnsaved());
+
+_onBeforeUnmount(() => {
+  (unsaved as any).unregisterPage?.(PAGE_KEY);
+});
 </script>
 
 <template>
   <div class="page">
-    <!-- ✅ Header : titre à gauche, actions à droite (comme autres pages) -->
+    <!-- ✅ Header : titre à gauche, actions à droite -->
     <div class="subhdr">
       <div class="hdrRow">
-        <div class="ttl">Majorations</div>
+        <div class="ttlWrap">
+          <div class="ttl">
+            Majorations
+
+            <!-- ✅ Modifié ORANGE -->
+            <span v-if="dirty" class="modifiedHint" title="Modifications non enregistrées">
+              <span class="modifiedDot" aria-hidden="true"></span>
+              Modifié
+            </span>
+
+            <!-- ✅ Preview -->
+            <span v-if="previewOn" class="prevBadge" title="Prévisualisation appliquée (Header)">
+              Preview
+            </span>
+          </div>
+        </div>
 
         <div class="actions">
           <button class="btn ghost" type="button" @click="resetAll" :disabled="saving || loading || genBusy || impBusy">
@@ -1131,7 +1237,8 @@ function fmt1(x: any) {
           </div>
 
           <div class="dlgFtr">
-            <button class="btn2 ghost" type="button" @click="closeUiModal()" :disabled="uiModal.busy">Annuler</button>
+            <!-- ✅ pas "Annuler" : Fermer -->
+            <button class="btn2 ghost" type="button" @click="closeUiModal()" :disabled="uiModal.busy">Fermer</button>
             <button
               v-if="uiModal.mode === 'confirm'"
               class="btn2 pri"
@@ -1168,7 +1275,8 @@ function fmt1(x: any) {
         </div>
 
         <div class="mFoot">
-          <button class="btn ghost" type="button" @click="confirmOpen = false" :disabled="confirmBusy">Annuler</button>
+          <!-- ✅ pas "Annuler" : Fermer -->
+          <button class="btn ghost" type="button" @click="confirmOpen = false" :disabled="confirmBusy">Fermer</button>
           <button class="btn warn" type="button" @click="confirmApplyRealNow" :disabled="confirmBusy">
             {{ confirmBusy ? "..." : "Confirmer" }}
           </button>
@@ -1179,7 +1287,7 @@ function fmt1(x: any) {
 </template>
 
 <style scoped>
-/* (CSS inchangé sauf si indiqué) */
+/* CSS de ta version + ajouts (modifié/preview) */
 .page {
   padding: 8px;
   display: flex;
@@ -1206,7 +1314,6 @@ function fmt1(x: any) {
   border-radius: 14px;
   padding: 8px 10px;
 }
-
 .hdrRow {
   display: flex;
   align-items: center;
@@ -1215,10 +1322,53 @@ function fmt1(x: any) {
   flex-wrap: wrap;
 }
 
+/* title wrap */
+.ttlWrap {
+  min-width: 240px;
+}
 .ttl {
   font-size: 14px;
   font-weight: 950;
   color: rgba(15, 23, 42, 0.95);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ✅ MODIFIÉ (ORANGE) */
+.modifiedHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(194, 65, 12, 1);
+  background: rgba(251, 146, 60, 0.14);
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  white-space: nowrap;
+}
+.modifiedDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 1);
+}
+
+/* preview badge */
+.prevBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  background: rgba(2, 132, 199, 0.08);
+  color: rgba(2, 132, 199, 0.95);
+  white-space: nowrap;
 }
 
 .actions {
@@ -1227,7 +1377,6 @@ function fmt1(x: any) {
   flex-wrap: wrap;
   align-items: center;
 }
-
 .btn {
   height: 30px;
   border-radius: 12px;
@@ -1793,7 +1942,7 @@ function fmt1(x: any) {
   color: rgba(15, 23, 42, 0.55);
 }
 
-/* Modals (inchangés) */
+/* Modals */
 .ovl {
   position: fixed;
   inset: 0;

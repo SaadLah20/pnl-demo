@@ -4,10 +4,12 @@
      ✅ Import + Généraliser + Toast + Modal confirm
      ✅ Chiffres en police NORMALE via .num (tabulaires)
      ✅ NEW: Eau liée au contrat consoEau => forcée à 0 + verrouillée UI
+     ✅ NEW: Apply preview + Unsaved quit handling (comme MOMD/Transport)
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
 
@@ -19,9 +21,11 @@ import {
   Squares2X2Icon,
   ArrowDownTrayIcon,
   InformationCircleIcon,
+  EyeIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
@@ -54,7 +58,14 @@ function clamp(x: any, min = 0, max = 1e15) {
   return Math.max(min, Math.min(max, v));
 }
 function isZero(v: any) {
-  return Math.abs(toNum(v)) <= 0;
+  return Math.abs(toNum(v)) <= 1e-12;
+}
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 /** ✅ même règle que backend: "charge client" si contient 'client' */
@@ -72,13 +83,15 @@ function isChargeClient(v: any) {
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => (store as any).activeVariant);
-const contract = computed<any>(() => (store as any).activeContract);
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 1e9));
 
 /* =========================
    ✅ LOCKS (contrat-managed)
 ========================= */
+type LineKey = "eau" | "qualite" | "dechets";
+
 const eauLocked = computed<boolean>(() => isChargeClient(contract.value?.consoEau));
 const lockReason = computed(() => `Géré par contrat (Consommation d’eau = charge client)`);
 function isLockedKey(key: LineKey) {
@@ -101,7 +114,6 @@ const hideZerosUserToggled = ref(false);
 function anyNonZero(): boolean {
   return !isZero(draft.eau) || !isZero(draft.qualite) || !isZero(draft.dechets);
 }
-
 function syncHideZerosAuto() {
   const anyNZ = anyNonZero();
 
@@ -115,26 +127,28 @@ function syncHideZerosAuto() {
   // si l'user n'a pas touché => auto ON
   if (!hideZerosUserToggled.value) hideZeros.value = true;
 }
-
 function toggleHideZeros() {
   hideZerosUserToggled.value = true;
   hideZeros.value = !hideZeros.value;
 }
 
 /* =========================
-   LOAD
+   LOAD / APPLY LOCKS
 ========================= */
+function applyContractLocksToDraft() {
+  if (eauLocked.value) draft.eau = 0;
+}
+
 function loadDraftFromVariant() {
   const v: any = variant.value ?? {};
   const c: any = v?.coutM3 ?? {};
+
   draft.eau = clamp(c?.eau, 0, 1e12);
   draft.qualite = clamp(c?.qualite, 0, 1e12);
   draft.dechets = clamp(c?.dechets, 0, 1e12);
 
-  // ✅ contrat-managed: forcer eau à 0 si verrouillé
-  if (eauLocked.value) draft.eau = 0;
+  applyContractLocksToDraft();
 
-  // "à chaque accès" : on repart en auto
   hideZerosUserToggled.value = false;
   syncHideZerosAuto();
 }
@@ -145,7 +159,6 @@ watch(
   { immediate: true }
 );
 
-// si le contrat change / verrouillage change, on force à 0
 watch(
   () => eauLocked.value,
   (locked) => {
@@ -210,7 +223,6 @@ const coutM3Pct = computed(() => (caTotal.value > 0 ? (coutM3Total.value / caTot
 /* =========================
    LINES
 ========================= */
-type LineKey = keyof Draft;
 type Line = {
   key: LineKey;
   label: string;
@@ -234,13 +246,11 @@ const lines = computed<Line[]>(() => {
 const visibleLines = computed(() => {
   const arr = lines.value ?? [];
   if (!hideZeros.value) return arr;
-
   // ✅ On garde visibles les lignes verrouillées même à 0 (pour expliquer le 0)
   return arr.filter((ln) => !isZero(ln.value) || isLockedKey(ln.key));
 });
 
 function setDraft(key: LineKey, value: any) {
-  // ✅ empêcher l'édition si verrouillé
   if (isLockedKey(key)) return;
   (draft as any)[key] = clamp(value, 0, 1e12);
 }
@@ -293,38 +303,40 @@ function buildPayload() {
   const existing: any = (variant.value as any)?.coutM3 ?? {};
   return {
     category: existing?.category ?? "COUTS_CHARGES",
-    // ✅ contrat-managed: eau forcée à 0
     eau: eauLocked.value ? 0 : Number(clamp(draft.eau, 0, 1e12)),
     qualite: Number(clamp(draft.qualite, 0, 1e12)),
     dechets: Number(clamp(draft.dechets, 0, 1e12)),
   };
 }
 
-async function save() {
-  if (!variant.value) return;
+async function save(): Promise<boolean> {
+  if (!variant.value) return false;
   err.value = null;
   saving.value = true;
   try {
     await (store as any).updateVariant(variant.value.id, { coutM3: buildPayload() });
     showToast("Coût au m³ enregistré.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
+    return false;
   } finally {
     saving.value = false;
   }
 }
+
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement du coût au m³ ?", async () => {
     closeModal();
     await save();
   });
 }
+
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", async () => {
     closeModal();
-    loadDraftFromVariant();
-    showToast("Valeurs restaurées.", "ok");
+    await discardLocalChanges(); // ✅ reset = discard (comme logique pages)
   });
 }
 
@@ -355,8 +367,7 @@ function applyCoutM3FromVariant(srcVariant: any) {
   draft.qualite = clamp(c?.qualite, 0, 1e12);
   draft.dechets = clamp(c?.dechets, 0, 1e12);
 
-  // ✅ contrat-managed: eau forcée à 0
-  if (eauLocked.value) draft.eau = 0;
+  applyContractLocksToDraft();
 
   hideZerosUserToggled.value = false;
   syncHideZerosAuto();
@@ -442,6 +453,125 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     if (!genErr.value) genOpen.value = false;
   });
 }
+
+/* =========================
+   ✅ UNSAVED + PREVIEW APPLY (comme MOMD/Transport)
+========================= */
+const PAGE_KEY = "COUT_M3";
+
+function buildPayloadFromVariant() {
+  const v: any = variant.value ?? {};
+  const c: any = v?.coutM3 ?? {};
+  return {
+    category: c?.category ?? "COUTS_CHARGES",
+    eau: eauLocked.value ? 0 : Number(clamp(c?.eau, 0, 1e12)),
+    qualite: Number(clamp(c?.qualite, 0, 1e12)),
+    dechets: Number(clamp(c?.dechets, 0, 1e12)),
+  };
+}
+function buildPayloadEffective() {
+  return buildPayload();
+}
+
+const baselineJson = ref<string>("");
+const baselineVariantSnapshot = ref<any | null>(null);
+const previewApplied = ref(false);
+
+function setBaselineFromVariant() {
+  try {
+    baselineVariantSnapshot.value = structuredClone(variant.value);
+  } catch {
+    baselineVariantSnapshot.value = JSON.parse(JSON.stringify(variant.value ?? null));
+  }
+  baselineJson.value = stableJson(buildPayloadFromVariant());
+  previewApplied.value = false;
+}
+
+const currentJson = computed(() => stableJson(buildPayloadEffective()));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  return currentJson.value !== baselineJson.value;
+});
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState !== "function") {
+    showToast("Preview non supportée (replaceActiveVariantInState absent).", "err");
+    return;
+  }
+
+  // ✅ cloner variante complète et patch uniquement coutM3
+  let next: any;
+  try {
+    next = structuredClone(s.activeVariant ?? variant.value);
+  } catch {
+    next = JSON.parse(JSON.stringify(s.activeVariant ?? variant.value ?? null));
+  }
+  if (!next?.id) return;
+
+  next.coutM3 = buildPayloadEffective();
+
+  s.replaceActiveVariantInState(next);
+  previewApplied.value = true;
+  showToast("Prévisualisation appliquée au header (non enregistrée).", "ok");
+}
+
+function restoreFromBaselineSnapshot() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap);
+  }
+  previewApplied.value = false;
+}
+
+async function discardLocalChanges() {
+  if (previewApplied.value) restoreFromBaselineSnapshot();
+
+  loadDraftFromVariant();
+  baselineJson.value = stableJson(buildPayloadFromVariant());
+
+  showToast("Valeurs restaurées.", "ok");
+}
+
+function syncUnsaved() {
+  const u: any = unsaved as any;
+  u.setDirty?.(Boolean(dirty.value));
+
+  u.registerPage?.({
+    pageKey: PAGE_KEY,
+    save: async () => {
+      const ok = await save();
+      if (ok) {
+        // après save, baseline doit refléter l'état DB (et preview n'a plus de sens)
+        setBaselineFromVariant();
+      }
+      return ok;
+    },
+    discard: async () => {
+      await discardLocalChanges();
+    },
+  });
+}
+
+watch(dirty, () => syncUnsaved(), { immediate: true });
+
+watch(
+  () => variant.value?.id,
+  () => {
+    loadDraftFromVariant();
+    setBaselineFromVariant();
+    syncUnsaved();
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(() => {
+  (unsaved as any).unregisterPage?.(PAGE_KEY);
+});
 </script>
 
 <template>
@@ -450,10 +580,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttl">Coûts au m³</div>
+          <div class="ttl">
+            Coûts au m³
+            <span v-if="dirty" class="dirtyBadge" title="Modifications non enregistrées">
+              <ExclamationTriangleIcon class="icSm" />
+              Modifié
+            </span>
+            <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée au header">
+              <EyeIcon class="icSm" />
+              Preview
+            </span>
+          </div>
         </div>
 
         <div class="actions">
+          <!-- ✅ Apply preview -->
+          <button
+            class="btn"
+            :disabled="!variant || saving || impBusy || genBusy || !dirty"
+            @click="applyPreviewToHeader()"
+            title="Appliquer au header (sans enregistrer)"
+          >
+            <EyeIcon class="ic" />
+            Appliquer
+          </button>
+
           <button class="btn" :disabled="!variant" @click="toggleHideZeros()" :class="{ on: hideZeros }">
             <span class="dot" aria-hidden="true"></span>
             {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
@@ -707,7 +858,31 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
+
+/* badges (dirty / preview) — EXACT comme TransportPage */
+.dirtyBadge, .prevBadge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(245,158,11,0.28);
+  background: rgba(245,158,11,0.10);
+  color: rgba(146,64,14,0.98);
+}
+.prevBadge{
+  border-color: rgba(59,130,246,0.25);
+  background: rgba(59,130,246,0.10);
+  color: rgba(29,78,216,0.98);
+}
+.icSm{ width: 14px; height: 14px; }
 
 /* actions */
 .actions {

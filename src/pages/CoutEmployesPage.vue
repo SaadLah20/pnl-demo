@@ -2,10 +2,14 @@
      ✅ 0 affiché comme vide (placeholder "Nb"/"Salaire" visible)
      ✅ Save/import/generalize sûrs (0 dans payload)
      ✅ Textes/chiffres par poste un peu plus grands
+     ✅ Hint ORANGE "Modifié"
+     ✅ Bouton "Appliquer" (preview header) SANS casser le reste de la variante
+     ✅ Dirty ne s'affiche pas au chargement
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
@@ -15,6 +19,7 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   ArrowDownTrayIcon,
+  EyeIcon,
   ClipboardDocumentCheckIcon,
   CpuChipIcon,
   BuildingOffice2Icon,
@@ -27,12 +32,9 @@ import {
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
-onMounted(async () => {
-  if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
-    await (store as any).loadPnls();
-  }
-});
+const PAGE_KEY = "COUT_EMPLOYES";
 
 /* =========================
    HELPERS
@@ -59,29 +61,43 @@ function money(v: number, digits = 2) {
 function compact(v: number, digits = 0) {
   return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
 }
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
 
-/* ✅ Affichage inputs: 0 => vide (placeholder), null => vide */
+/* ✅ 0 => vide (placeholder), null => vide */
 function toNullableNumberInput(v: any): number | null {
   if (v === null || v === undefined || v === "") return null;
   const num = Number(v);
   if (!Number.isFinite(num)) return null;
-  if (num === 0) return null; // ✅ 0 => placeholder visible
+  if (num === 0) return null;
   return num;
 }
 function inputToNullable(v: string, min: number, max: number, integers = false): number | null {
   const raw = (v ?? "").trim();
-  if (!raw) return null; // vide => null (donc affichage placeholder)
+  if (!raw) return null;
   const num = Number(raw);
   if (!Number.isFinite(num)) return null;
   const x = Math.max(min, Math.min(max, num));
   const out = integers ? Math.round(x) : x;
-  // ✅ si l'utilisateur tape 0, on l'accepte en data (mais en UI on veut placeholder)
-  // => on garde 0 en draft? non: on le remet à null pour afficher placeholder.
   return out === 0 ? null : out;
 }
 function nz(x: number | null | undefined) {
-  // ✅ au moment des calculs/payload: null => 0
   return Number.isFinite(Number(x)) ? Number(x) : 0;
+}
+
+/* deep clone safe */
+function cloneSafe<T>(v: T): T {
+  try {
+    // @ts-ignore
+    return structuredClone(v);
+  } catch {
+    return JSON.parse(JSON.stringify(v ?? null));
+  }
 }
 
 /* =========================
@@ -90,6 +106,12 @@ function nz(x: number | null | undefined) {
 const variant = computed<any>(() => (store as any).activeVariant ?? null);
 const contract = computed<any>(() => (store as any).activeContract ?? null);
 const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
+
+onMounted(async () => {
+  if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
+    await (store as any).loadPnls();
+  }
+});
 
 /* =========================
    VOLUME + CA (pour /m3 et %)
@@ -102,6 +124,7 @@ function getFormDraft(id: string): DraftForm {
   return formDrafts[k];
 }
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
+
 watch(
   () => variant.value?.id,
   () => {
@@ -208,25 +231,15 @@ function applyAutoHideZeroOnEnter() {
   hideZeroUserToggled.value = false;
   syncHideZeroAuto();
 }
-
-watch(
-  () => variant.value?.id,
-  () => {
-    loadFromVariant();
-    applyAutoHideZeroOnEnter();
-  },
-  { immediate: true }
-);
+function toggleHideZero() {
+  hideZeroUserToggled.value = true;
+  hideZero.value = !hideZero.value;
+}
 
 watch(
   () => EMP_GROUPS.map((g) => [draft[`${g.key}Nb`], draft[`${g.key}Cout`]]),
   () => syncHideZeroAuto()
 );
-
-function toggleHideZero() {
-  hideZeroUserToggled.value = true;
-  hideZero.value = !hideZero.value;
-}
 
 const empGroupsFiltered = computed(() => {
   if (!hideZero.value) return EMP_GROUPS;
@@ -262,6 +275,197 @@ const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
+   PAYLOAD + DIRTY + PREVIEW APPLY
+========================= */
+function buildPayloadFromDraft() {
+  const existing: any = (variant.value as any)?.employes ?? {};
+  const out: any = { category: existing.category ?? "COUTS_CHARGES" };
+  for (const g of EMP_GROUPS) {
+    out[`${g.key}Nb`] = Number(clamp(nz(draft[`${g.key}Nb`]), 0, 9999));
+    out[`${g.key}Cout`] = Number(clamp(nz(draft[`${g.key}Cout`]), 0, 999999999));
+  }
+  return out;
+}
+
+const baselineJson = ref<string>(""); // ✅ baseline initial
+const currentJson = computed(() => stableJson(buildPayloadFromDraft()));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  if (!baselineJson.value) return false; // ✅ tant que baseline pas prête => pas dirty
+  return currentJson.value !== baselineJson.value;
+});
+
+const previewApplied = ref(false);
+const baselineVariantSnapshot = ref<any | null>(null);
+
+function setBaselineNow() {
+  baselineJson.value = stableJson(buildPayloadFromDraft());
+  previewApplied.value = false;
+  unsaved.setDirty(false);
+}
+
+function setBaselineSnapshotFromVariant() {
+  baselineVariantSnapshot.value = cloneSafe(variant.value);
+}
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+
+  const s: any = store as any;
+
+  // ✅ on ne patch PAS un objet partiel: on clone toute la variante et on modifie SEULEMENT employes
+  const full = cloneSafe(variant.value);
+  full.employes = buildPayloadFromDraft();
+
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(full);
+    previewApplied.value = true;
+    showToast("Appliqué au header (prévisualisation, non enregistrée).", "ok");
+  } else {
+    showToast("Appliquer indisponible (replaceActiveVariantInState absent).", "err");
+  }
+}
+
+function restorePreviewBaseline() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap);
+  }
+  previewApplied.value = false;
+}
+
+/* ✅ init baseline : après loadFromVariant (sinon dirty au chargement) */
+watch(
+  () => variant.value?.id,
+  () => {
+    loadFromVariant();
+    applyAutoHideZeroOnEnter();
+
+    // snapshot pour restaurer si preview appliquée
+    setBaselineSnapshotFromVariant();
+
+    // baseline JSON = état initial => pas "Modifié"
+    setBaselineNow();
+  },
+  { immediate: true }
+);
+
+/* push dirty to global unsaved store */
+watch(
+  dirty,
+  (v) => {
+    unsaved.setDirty(Boolean(v));
+  },
+  { immediate: true }
+);
+
+/* =========================
+   TOAST
+========================= */
+const toastOpen = ref(false);
+const toastMsg = ref("");
+const toastKind = ref<"ok" | "err" | "info">("ok");
+function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
+  toastMsg.value = msg;
+  toastKind.value = kind;
+  toastOpen.value = true;
+  window.setTimeout(() => (toastOpen.value = false), 2600);
+}
+
+/* =========================
+   MODAL
+========================= */
+const modal = reactive({
+  open: false,
+  title: "",
+  message: "",
+  mode: "confirm" as "confirm" | "info",
+  onConfirm: null as null | (() => void | Promise<void>),
+});
+function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
+  modal.open = true;
+  modal.title = title;
+  modal.message = message;
+  modal.mode = "confirm";
+  modal.onConfirm = onConfirm;
+}
+function closeModal() {
+  modal.open = false;
+  modal.title = "";
+  modal.message = "";
+  modal.onConfirm = null;
+}
+
+/* =========================
+   SAVE / RESET
+========================= */
+const saving = ref(false);
+const err = ref<string | null>(null);
+
+async function saveDirect(): Promise<boolean> {
+  if (!variant.value) return false;
+  err.value = null;
+  saving.value = true;
+  try {
+    await (store as any).updateVariant(variant.value.id, { employes: buildPayloadFromDraft() });
+
+    // refresh baseline snapshot AFTER save
+    setBaselineSnapshotFromVariant();
+    setBaselineNow();
+
+    showToast("Coûts employés enregistrés.", "ok");
+    return true;
+  } catch (e: any) {
+    err.value = e?.message ?? String(e);
+    showToast(String(err.value), "err");
+    return false;
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function discardDirect() {
+  // si preview appliquée, restaurer l'ancien snapshot (avant preview)
+  if (previewApplied.value) restorePreviewBaseline();
+
+  loadFromVariant();
+  applyAutoHideZeroOnEnter();
+
+  // baseline = état restauré
+  setBaselineSnapshotFromVariant();
+  setBaselineNow();
+}
+
+function askSave() {
+  openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts employés ?", async () => {
+    closeModal();
+    await saveDirect();
+  });
+}
+function askReset() {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", async () => {
+    closeModal();
+    await discardDirect();
+    showToast("Valeurs restaurées.", "ok");
+  });
+}
+
+/* =========================
+   UNSAVED STORE (Enregistrer & quitter)
+========================= */
+unsaved.registerPage({
+  pageKey: PAGE_KEY,
+  save: saveDirect,
+  discard: discardDirect,
+});
+
+onBeforeUnmount(() => {
+  unsaved.unregisterPage(PAGE_KEY);
+});
+
+/* =========================
    ✅ IMPORTER
 ========================= */
 const impOpen = ref(false);
@@ -287,6 +491,7 @@ function applyEmployesFromVariant(srcVariant: any) {
     draft[`${g.key}Cout`] = toNullableNumberInput(s[`${g.key}Cout`]);
   }
 }
+
 async function onApplyImport(payload: { sourceVariantId: string }) {
   if (!variant.value) return;
 
@@ -326,91 +531,6 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
 }
 
 /* =========================
-   TOAST
-========================= */
-const toastOpen = ref(false);
-const toastMsg = ref("");
-const toastKind = ref<"ok" | "err" | "info">("ok");
-
-function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
-  toastMsg.value = msg;
-  toastKind.value = kind;
-  toastOpen.value = true;
-  window.setTimeout(() => (toastOpen.value = false), 2600);
-}
-
-/* =========================
-   MODAL
-========================= */
-const modal = reactive({
-  open: false,
-  title: "",
-  message: "",
-  mode: "confirm" as "confirm" | "info",
-  onConfirm: null as null | (() => void | Promise<void>),
-});
-function openConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "confirm";
-  modal.onConfirm = onConfirm;
-}
-function closeModal() {
-  modal.open = false;
-  modal.title = "";
-  modal.message = "";
-  modal.onConfirm = null;
-}
-
-/* =========================
-   SAVE / RESET
-========================= */
-const saving = ref(false);
-const err = ref<string | null>(null);
-
-function buildPayload() {
-  const existing: any = (variant.value as any)?.employes ?? {};
-  const out: any = { category: existing.category ?? "COUTS_CHARGES" };
-
-  // ✅ null (ou champ vide / 0 affiché) => 0 dans le payload
-  for (const g of EMP_GROUPS) {
-    out[`${g.key}Nb`] = Number(clamp(nz(draft[`${g.key}Nb`]), 0, 9999));
-    out[`${g.key}Cout`] = Number(clamp(nz(draft[`${g.key}Cout`]), 0, 999999999));
-  }
-  return out;
-}
-
-async function save() {
-  if (!variant.value) return;
-  err.value = null;
-  saving.value = true;
-  try {
-    await (store as any).updateVariant(variant.value.id, { employes: buildPayload() });
-    showToast("Coûts employés enregistrés.", "ok");
-  } catch (e: any) {
-    err.value = e?.message ?? String(e);
-    showToast(String(err.value), "err");
-  } finally {
-    saving.value = false;
-  }
-}
-function askSave() {
-  openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts employés ?", async () => {
-    closeModal();
-    await save();
-  });
-}
-function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
-    closeModal();
-    loadFromVariant();
-    applyAutoHideZeroOnEnter();
-    showToast("Valeurs restaurées.", "ok");
-  });
-}
-
-/* =========================
    GENERALISER
 ========================= */
 const genOpen = ref(false);
@@ -421,7 +541,7 @@ async function generalizeEmployesTo(variantIds: string[]) {
   const sourceVariantId = String(variant.value?.id ?? (store as any).activeVariantId ?? "").trim();
   if (!sourceVariantId) return;
 
-  const payload = buildPayload();
+  const payload = buildPayloadFromDraft();
 
   genErr.value = null;
   genBusy.value = true;
@@ -461,13 +581,34 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   <div class="page">
     <div class="subhdr">
       <div class="row">
-        <div class="ttl">Coûts employés</div>
+        <div class="ttl">
+          Coûts employés
+          <span v-if="dirty" class="dirtyBadge" title="Modifications non enregistrées">
+            <ExclamationTriangleIcon class="icSm" />
+            Modifié
+          </span>
+          <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée (non enregistrée)">
+            <EyeIcon class="icSm" />
+            Preview
+          </span>
+        </div>
 
         <div class="actions">
-          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZero()" :class="{ on: hideZero }">
+          <button
+            class="btn"
+            :disabled="!variant || saving || genBusy || impBusy"
+            @click="toggleHideZero()"
+            :class="{ on: hideZero }"
+          >
             <span class="dot" aria-hidden="true"></span>
             {{ hideZero ? "Afficher" : "Masquer 0" }}
             <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
+          </button>
+
+          <!-- ✅ Apply preview -->
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy || !dirty" @click="applyPreviewToHeader()">
+            <EyeIcon class="ic" />
+            Appliquer
           </button>
 
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="askReset()">
@@ -657,6 +798,40 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ✅ badge ORANGE "Modifié" */
+.dirtyBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.1);
+  color: rgba(146, 64, 14, 0.98);
+}
+.prevBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: rgba(59, 130, 246, 0.1);
+  color: rgba(29, 78, 216, 0.98);
+}
+.icSm {
+  width: 14px;
+  height: 14px;
 }
 
 /* actions */
@@ -816,8 +991,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   flex-direction: column;
   gap: 8px;
 }
-
-/* alternance plus visible */
 .rowCard {
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 12px;
@@ -829,16 +1002,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 .rowCard:nth-child(even) {
   background: rgba(15, 23, 42, 0.03);
 }
-
-/* ✅ une seule ligne */
 .line {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
-
-/* poste (un peu plus grand) */
 .poste {
   display: inline-flex;
   align-items: center;
@@ -860,8 +1029,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
-
-/* inputs (un peu plus grands) */
 .inNb,
 .inSalaire {
   height: 26px;
@@ -894,33 +1061,26 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
-
 .unit {
   font-size: 10.5px;
   font-weight: 950;
   color: rgba(2, 132, 199, 0.9);
   white-space: nowrap;
 }
-
-/* KPI poste */
 .kpiInline {
   margin-left: auto;
   flex: 0 1 auto;
   min-width: 0;
-
   display: inline-flex;
   align-items: center;
   gap: 6px;
-
   padding: 3px 7px;
   border-radius: 10px;
   border: 1px solid rgba(15, 23, 42, 0.10);
   background: rgba(255, 255, 255, 0.55);
-
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-
   font-size: 10.5px;
   line-height: 1.1;
 }
@@ -940,8 +1100,6 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   padding: 0 2px;
   font-weight: 900;
 }
-
-/* responsive */
 @media (max-width: 980px) {
   .kpiInline {
     display: none;

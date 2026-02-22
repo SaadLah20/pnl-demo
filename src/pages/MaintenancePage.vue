@@ -1,12 +1,14 @@
 <!-- ✅ src/pages/MaintenancePage.vue (FICHIER COMPLET)
-     ✅ Header compact = style référence (MomdAndQuantity-like)
+     ✅ Header EXACT TransportPage (head/h1/badges)
      ✅ Pas d'infos à côté du titre
-     ✅ Chiffres en police NORMALE via .num (tabulaires)
-     ✅ Lock maintenance (charge client) => tous les champs forcés à 0 + verrouillés
+     ✅ Chiffres tabulaires via .num
+     ✅ Lock maintenance (charge client) => forcé à 0 + verrouillés
+     ✅ + Unsaved global + bouton Appliquer (preview header)
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
 
@@ -20,9 +22,11 @@ import {
   ArrowDownTrayIcon,
   InformationCircleIcon,
   LockClosedIcon,
+  EyeIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
@@ -58,8 +62,13 @@ function clamp(x: any, min: number, max: number) {
 function isZero(v: any) {
   return Math.abs(toNum(v)) <= 0;
 }
-
-// same logic family as backend
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
 function norm(s: any): string {
   return String(s ?? "")
     .trim()
@@ -69,14 +78,14 @@ function norm(s: any): string {
 }
 function isChargeClient(v: any): boolean {
   const t = norm(v);
-  return t.includes("client"); // "à la charge du client", "charge client", etc.
+  return t.includes("client");
 }
 
 /* =========================
    ACTIVE
 ========================= */
-const variant = computed<any>(() => (store as any).activeVariant);
-const contract = computed<any>(() => (store as any).activeContract);
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
 const dureeMois = computed(() => Math.max(0, toNum(contract.value?.dureeMois)));
 
 /* =========================
@@ -152,27 +161,9 @@ function enforceMaintenanceLock(): { changed: boolean; note?: string } {
   };
 }
 
-function loadFromVariant() {
-  applyFromVariant(variant.value);
-  enforceMaintenanceLock();
-}
-
-watch(
-  () => variant.value?.id,
-  () => loadFromVariant(),
-  { immediate: true }
-);
-
-watch(
-  () => lockMaintenance.value,
-  () => {
-    enforceMaintenanceLock();
-  },
-  { immediate: true }
-);
-
 /* =========================
    ✅ EFFECTIVE VALUES (for KPI + save + rows)
+   (⚠️ important: must be defined BEFORE buildPayload)
 ========================= */
 const effective = computed(() => {
   if (lockMaintenance.value) {
@@ -189,21 +180,94 @@ const effective = computed(() => {
 });
 
 /* =========================
+   ✅ PREVIEW + DIRTY (comme Transport/Cab)
+========================= */
+const headerApplied = ref(false);
+const baselineJson = ref<string>("");
+const appliedJson = ref<string>("");
+
+function buildPayload(): any {
+  const existing: any = (variant.value as any)?.maintenance ?? {};
+  const e = effective.value;
+
+  return {
+    category: existing?.category ?? "COUTS_CHARGES",
+    cab: Number(clamp(e.cab, 0, 1e12)),
+    elec: Number(clamp(e.elec, 0, 1e12)),
+    chargeur: Number(clamp(e.chargeur, 0, 1e12)),
+    generale: Number(clamp(e.generale, 0, 1e12)),
+    bassins: Number(clamp(e.bassins, 0, 1e12)),
+    preventive: Number(clamp(e.preventive, 0, 1e12)),
+  };
+}
+
+const currentJson = computed(() => stableJson(buildPayload()));
+const dirty = computed(() => {
+  if (!variant.value) return false;
+  return currentJson.value !== baselineJson.value;
+});
+
+function loadFromVariant() {
+  applyFromVariant(variant.value);
+  enforceMaintenanceLock();
+
+  headerApplied.value = false;
+  appliedJson.value = "";
+
+  (store as any).clearHeaderVariantPreviewPatch?.();
+  baselineJson.value = stableJson(buildPayload());
+}
+
+watch(
+  () => variant.value?.id,
+  () => loadFromVariant(),
+  { immediate: true }
+);
+
+watch(
+  () => lockMaintenance.value,
+  () => {
+    enforceMaintenanceLock();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => currentJson.value,
+  () => {
+    if (headerApplied.value && appliedJson.value && currentJson.value !== appliedJson.value) {
+      headerApplied.value = false;
+    }
+  }
+);
+
+/* =========================
+   ✅ APPLY (Preview header KPIs)
+========================= */
+function applyToHeader() {
+  if (!dirty.value) return;
+
+  (store as any).setHeaderVariantPreviewPatch?.({ maintenance: buildPayload() });
+  appliedJson.value = currentJson.value;
+  headerApplied.value = true;
+  showToast("Changements appliqués au dashboard (preview).", "info");
+}
+
+/* =========================
    METRICS
 ========================= */
 type Line = {
   key: keyof MaintenanceEdit;
   label: string;
   locked: boolean;
-  mensuel: number; // DH/mois
-  total: number; // DH
-  parM3: number; // DH/m3
-  pctCa: number; // %
+  mensuel: number;
+  total: number;
+  parM3: number;
+  pctCa: number;
 };
 
 const formules = computed<any[]>(() => (variant.value as any)?.formules?.items ?? []);
 const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + toNum(vf?.volumeM3), 0));
-
 const transportPrixMoyen = computed(() => toNum((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
@@ -213,14 +277,13 @@ function mpPriceUsed(mpId: string): number {
   if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
   return toNum(vmp?.mp?.prix);
 }
-
 type CompRow = { mpId: string; qty: number; prix: number; coutParM3: number };
 function compositionFor(formule: any): CompRow[] {
   const items = (formule?.items ?? []) as any[];
   return items.map((it: any) => {
     const mpId = String(it.mpId);
-    const qty = toNum(it.qty); // kg/m3
-    const prix = mpPriceUsed(mpId); // DH/tonne
+    const qty = toNum(it.qty);
+    const prix = mpPriceUsed(mpId);
     return { mpId, qty, prix, coutParM3: (qty / 1000) * prix };
   });
 }
@@ -273,8 +336,6 @@ const hideZeros = ref(false);
 const visibleLines = computed(() => {
   const arr = lines.value ?? [];
   if (!hideZeros.value) return arr;
-
-  // ✅ garder visibles les lignes verrouillées même à 0
   return arr.filter((ln) => !isZero(ln.mensuel) || ln.locked);
 });
 
@@ -293,7 +354,7 @@ function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
 }
 
 /* =========================
-   MODAL
+   MODAL confirm/info
 ========================= */
 const modal = reactive({
   open: false,
@@ -310,13 +371,6 @@ function openConfirm(title: string, message: string, onConfirm: () => void | Pro
   modal.mode = "confirm";
   modal.onConfirm = onConfirm;
 }
-function openInfo(title: string, message: string) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "info";
-  modal.onConfirm = null;
-}
 function closeModal() {
   modal.open = false;
   modal.title = "";
@@ -330,25 +384,9 @@ function closeModal() {
 const saving = ref(false);
 const err = ref<string | null>(null);
 
-function buildPayload(): any {
-  const existing: any = (variant.value as any)?.maintenance ?? {};
-  const e = effective.value;
+async function save(): Promise<boolean> {
+  if (!variant.value) return false;
 
-  return {
-    category: existing?.category ?? "COUTS_CHARGES",
-    cab: Number(clamp(e.cab, 0, 1e12)),
-    elec: Number(clamp(e.elec, 0, 1e12)),
-    chargeur: Number(clamp(e.chargeur, 0, 1e12)),
-    generale: Number(clamp(e.generale, 0, 1e12)),
-    bassins: Number(clamp(e.bassins, 0, 1e12)),
-    preventive: Number(clamp(e.preventive, 0, 1e12)),
-  };
-}
-
-async function save() {
-  if (!variant.value) return;
-
-  // ✅ safety: enforce before save
   const { changed, note } = enforceMaintenanceLock();
   if (changed && note) showToast(note, "info");
 
@@ -356,10 +394,19 @@ async function save() {
   saving.value = true;
   try {
     await (store as any).updateVariant(variant.value.id, { maintenance: buildPayload() });
+
+    (store as any).clearHeaderVariantPreviewPatch?.();
+
+    baselineJson.value = stableJson(buildPayload());
+    headerApplied.value = false;
+    appliedJson.value = "";
+
     showToast("Maintenance enregistrée.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
+    return false;
   } finally {
     saving.value = false;
   }
@@ -375,7 +422,7 @@ function askReset() {
   openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
     closeModal();
     loadFromVariant();
-    showToast("Valeurs restaurées.", "ok");
+    showToast("Valeurs restaurées.", "info");
   });
 }
 
@@ -402,6 +449,8 @@ function findVariantById(variantId: string): any | null {
 
 function applyMaintenanceFromVariant(srcVariant: any) {
   applyFromVariant(srcVariant);
+  headerApplied.value = false;
+  appliedJson.value = "";
 }
 
 async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
@@ -430,7 +479,6 @@ async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCop
 
     applyMaintenanceFromVariant(src);
 
-    // ✅ enforce lock after import
     const { changed, note } = enforceMaintenanceLock();
     if (changed && note) showToast(`Import OK. ${note} Pense à enregistrer.`, "info");
     else showToast("Maintenance importée. Pense à enregistrer.", "ok");
@@ -478,7 +526,6 @@ function impactedByMaintenanceLock(targetIds: string[]) {
       impacted.push({ id: tid, label });
     }
   }
-
   return impacted;
 }
 
@@ -486,7 +533,6 @@ async function generalizeTo(variantIds: string[]) {
   const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceId) return;
 
-  // ✅ safety: enforce before build payload
   enforceMaintenanceLock();
   const payload = buildPayload();
 
@@ -496,7 +542,6 @@ async function generalizeTo(variantIds: string[]) {
     for (const targetIdRaw of variantIds ?? []) {
       const targetId = String(targetIdRaw ?? "").trim();
       if (!targetId || targetId === sourceId) continue;
-
       await (store as any).updateVariant(targetId, { maintenance: payload });
     }
     showToast("Section Maintenance généralisée.", "ok");
@@ -543,52 +588,105 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 function setEdit(key: keyof MaintenanceEdit, value: any) {
   if (lockMaintenance.value) return;
   (edit as any)[key] = clamp(value, 0, 1e12);
+  headerApplied.value = false;
 }
+
+/* =========================
+   ✅ UNSAVED GLOBAL INTEGRATION
+========================= */
+const PAGE_KEY = "MAINTENANCE";
+
+async function discardMaintenance() {
+  (store as any).clearHeaderVariantPreviewPatch?.();
+  headerApplied.value = false;
+  appliedJson.value = "";
+  loadFromVariant();
+}
+
+onMounted(() => {
+  unsaved.registerPage({
+    pageKey: PAGE_KEY,
+    save: async () => await save(),
+    discard: async () => await discardMaintenance(),
+  });
+});
+
+watch(dirty, (v) => unsaved.setDirty(Boolean(v)), { immediate: true });
+
+onBeforeUnmount(() => {
+  unsaved.unregisterPage(PAGE_KEY);
+});
 </script>
 
 <template>
   <div class="page">
-    <div class="subhdr">
-      <div class="row">
-        <div class="left">
-          <div class="ttl">Maintenance</div>
-        </div>
+    <!-- ✅ HEADER EXACT TransportPage -->
+    <div class="head">
+      <div class="headL">
+        <div class="h1">
+          Maintenance
 
-        <div class="actions">
-          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="askReset()">
-            <ArrowPathIcon class="ic" />
-            Reset
-          </button>
+          <!-- ✅ badge rouge + icône (TransportPage-like) -->
+          <span v-if="variant && dirty" class="dirtyBadge">
+            <ExclamationTriangleIcon class="icSm" />
+            Modifié
+          </span>
 
-          <button class="btn" :disabled="!variant || saving || impBusy || genBusy" @click="impOpen = true">
-            <ArrowDownTrayIcon class="ic" />
-            {{ impBusy ? "…" : "Importer" }}
-          </button>
-
-          <button class="btn" :disabled="!variant" @click="hideZeros = !hideZeros" :class="{ on: hideZeros }">
-            <span class="dot" aria-hidden="true"></span>
-            {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
-          </button>
-
-          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="genOpen = true">
-            <Squares2X2Icon class="ic" />
-            {{ genBusy ? "…" : "Généraliser" }}
-          </button>
-
-          <button class="btn pri" :disabled="!variant || saving || impBusy || genBusy" @click="askSave()">
-            <CheckCircleIcon class="ic" />
-            {{ saving ? "…" : "Enregistrer" }}
-          </button>
+          <!-- ✅ badge preview (si appliqué) -->
+          <span v-if="variant && dirty && headerApplied" class="prevBadge" title="Appliqué au dashboard (preview)">
+            <EyeIcon class="icSm" />
+            Preview
+          </span>
         </div>
       </div>
 
+      <div class="headR" v-if="variant">
+        <button class="btn" :disabled="saving || impBusy || genBusy" @click="askReset()">
+          <ArrowPathIcon class="ic" />
+          Reset
+        </button>
+
+        <button class="btn" :disabled="!dirty || saving || impBusy || genBusy" @click="applyToHeader()">
+          <EyeIcon class="ic" />
+          Appliquer
+        </button>
+
+        <button class="btn" :disabled="saving || impBusy || genBusy" @click="impOpen = true">
+          <ArrowDownTrayIcon class="ic" />
+          {{ impBusy ? "…" : "Importer" }}
+        </button>
+
+        <button class="btn" :disabled="saving || impBusy || genBusy" @click="hideZeros = !hideZeros" :class="{ on: hideZeros }">
+          <span class="dot" aria-hidden="true"></span>
+          {{ hideZeros ? "Afficher tout" : "Masquer 0" }}
+        </button>
+
+        <button class="btn" :disabled="saving || genBusy || impBusy" @click="genOpen = true">
+          <Squares2X2Icon class="ic" />
+          {{ genBusy ? "…" : "Généraliser" }}
+        </button>
+
+        <button class="btn primary" :disabled="saving || impBusy || genBusy" @click="askSave()">
+          <CheckCircleIcon class="ic" />
+          {{ saving ? "…" : "Enregistrer" }}
+        </button>
+      </div>
+    </div>
+
+    <!-- état no variant -->
+    <div v-if="!variant" class="card">
+      <div class="empty">Sélectionne une variante puis reviens ici.</div>
+    </div>
+
+    <template v-else>
       <!-- ✅ lock info -->
-      <div v-if="variant && lockMaintenance" class="alert lock">
+      <div v-if="lockMaintenance" class="alert lock">
         <LockClosedIcon class="aic" />
         <div><b>Contrat :</b> Maintenance forcée à <b>0</b> (charge client).</div>
       </div>
 
-      <div class="kpis" v-if="variant">
+      <!-- ✅ KPIs -->
+      <div class="kpis">
         <div class="kpi kpiTint">
           <div class="kLbl">
             <CalendarDaysIcon class="ic" />
@@ -638,13 +736,8 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
         <ExclamationTriangleIcon class="aic" />
         <div><b>Erreur :</b> {{ (store as any).error }}</div>
       </div>
-    </div>
 
-    <div v-if="!variant" class="card">
-      <div class="empty">Sélectionne une variante puis reviens ici.</div>
-    </div>
-
-    <template v-else>
+      <!-- ✅ TABLE -->
       <div class="card pad0">
         <div class="tableWrap">
           <table class="table">
@@ -718,9 +811,9 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
     </template>
 
     <SectionImportModal v-model="impOpen" sectionLabel="Maintenance" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
-
     <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Maintenance" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
 
+    <!-- modal -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -728,11 +821,9 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
             <div class="dlgTtl">{{ modal.title }}</div>
             <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
           </div>
-
           <div class="dlgBody">
             <div class="dlgMsg">{{ modal.message }}</div>
           </div>
-
           <div class="dlgFtr">
             <button class="btn2" type="button" @click="closeModal()">Fermer</button>
             <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
@@ -743,10 +834,13 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
       </div>
     </teleport>
 
+    <!-- toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
-        <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
-        <ExclamationTriangleIcon v-else class="tic" />
+      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info', ok: toastKind === 'ok' }" role="status" aria-live="polite">
+        <div class="ticon">
+          <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
+          <ExclamationTriangleIcon v-else class="tic" />
+        </div>
         <div class="tmsg">{{ toastMsg }}</div>
       </div>
     </teleport>
@@ -754,113 +848,80 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
 </template>
 
 <style scoped>
+/* ====== Base Maintenance (inchangé table/kpis/etc) ====== */
 .page {
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.muted {
-  color: rgba(15, 23, 42, 0.55);
-}
-.tiny {
-  font-size: 10.5px;
-}
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
+.muted { color: rgba(15, 23, 42, 0.55); }
+.tiny { font-size: 10.5px; }
+.num { font-variant-numeric: tabular-nums; }
 
-/* ✅ chiffres en police NORMALE (pas monospace), mais tabulaires */
-.num {
-  font-variant-numeric: tabular-nums;
-}
-
-/* sticky subheader */
-.subhdr {
+/* ====== HEADER EXACT TransportPage (styles copiés) ====== */
+.head{
   position: sticky;
-  top: var(--hdrdash-h, -15px);
-  z-index: 50;
-  background: rgba(248, 250, 252, 0.92);
+  top: -15px;
+  z-index: 40;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:10px;
+  padding: 8px 0;
+  background: rgba(248,250,252,0.92);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 14px;
-  padding: 8px 10px;
+  border-bottom: 1px solid rgba(16,24,40,0.08);
 }
-.row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.left {
-  display: flex;
-  align-items: center;
-  min-width: 220px;
-}
-.ttl {
-  font-size: 14px;
-  font-weight: 950;
-  color: #0f172a;
-}
+.headL{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.h1{ font-size:14px; font-weight: 1000; line-height: 1.05; color: #0f172a; display:flex; align-items:center; flex-wrap:wrap; }
+.headR{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-/* actions */
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.btn {
-  height: 30px;
-  border-radius: 12px;
-  padding: 0 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  color: #0f172a;
-  font-weight: 950;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-.btn:hover {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.18);
-}
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.btn.pri {
-  background: rgba(2, 132, 199, 0.12);
-  border-color: rgba(2, 132, 199, 0.28);
-}
-.btn.pri:hover {
-  background: rgba(2, 132, 199, 0.18);
-}
-.ic {
-  width: 16px;
-  height: 16px;
-}
-
-/* masque 0 */
-.btn.on {
-  background: rgba(2, 132, 199, 0.12);
-  border-color: rgba(2, 132, 199, 0.28);
-}
-.dot {
-  width: 8px;
-  height: 8px;
+.dirtyBadge, .prevBadge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-left: 8px;
+  padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.35);
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(239,68,68,0.30);      /* ✅ rouge (Transport-like) */
+  background: rgba(239,68,68,0.10);
+  color: rgba(127,29,29,0.95);
 }
-.btn.on .dot {
-  background: rgba(2, 132, 199, 0.9);
+.prevBadge{
+  border-color: rgba(59,130,246,0.25);
+  background: rgba(59,130,246,0.10);
+  color: rgba(29,78,216,0.98);
 }
+.icSm{ width: 14px; height: 14px; }
 
-/* KPIs */
+.btn{
+  height: 30px;
+  border:1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.84);
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15,23,42,0.86);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(15,23,42,0.06);
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.btn:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.btn.primary{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; box-shadow:none; }
+.btn.primary:hover{ background: rgba(24,64,112,1); }
+.ic { width: 16px; height: 16px; }
+.btn.on .dot { background: rgba(2,132,199,0.9); }
+.dot{ width: 8px; height: 8px; border-radius: 999px; background: rgba(15,23,42,0.35); }
+
+/* ====== Alerts / KPIs / Table (tes styles existants) ====== */
 .kpis {
   margin-top: 8px;
   display: grid;
@@ -868,9 +929,7 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   gap: 8px;
 }
 @media (max-width: 980px) {
-  .kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .kpi {
   background: #fff;
@@ -910,8 +969,6 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   margin-left: 6px;
   font-size: 10px;
 }
-
-/* alerts */
 .alert {
   margin-top: 8px;
   border-radius: 12px;
@@ -924,66 +981,37 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   font-size: 12px;
   font-weight: 800;
 }
-.alert.err {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.22);
-}
-.alert.lock {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.18);
-}
-.aic {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
+.alert.err { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.22); }
+.alert.lock { background: rgba(2, 132, 199, 0.06); border-color: rgba(2, 132, 199, 0.18); }
+.aic { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 1px; }
 
-/* card */
 .card {
   border-radius: 14px;
   border: 1px solid rgba(16, 24, 40, 0.1);
   background: #fff;
   overflow: hidden;
 }
-.card.pad0 {
-  padding: 0;
-}
+.card.pad0 { padding: 0; }
 .empty {
   padding: 12px;
   font-weight: 850;
   color: rgba(15, 23, 42, 0.6);
 }
 
-/* table */
-.tableWrap {
-  overflow: hidden;
-}
+.tableWrap { overflow: hidden; }
 .table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
   table-layout: fixed;
 }
+.colLabel { width: 34%; }
+.colMensuel { width: 20%; }
+.colTotal { width: 18%; }
+.colM3 { width: 14%; }
+.colPct { width: 14%; }
 
-.colLabel {
-  width: 34%;
-}
-.colMensuel {
-  width: 20%;
-}
-.colTotal {
-  width: 18%;
-}
-.colM3 {
-  width: 14%;
-}
-.colPct {
-  width: 14%;
-}
-
-.th,
-.table td {
+.th, .table td {
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
   padding: 10px 10px;
   vertical-align: middle;
@@ -996,24 +1024,10 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   font-weight: 950;
   white-space: nowrap;
 }
-.thL {
-  text-align: left;
-}
-.r {
-  text-align: right;
-}
-
-.val {
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.lblWrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.thL { text-align: left; }
+.r { text-align: right; }
+.val { font-size: 12px; font-weight: 950; }
+.lblWrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .designationText {
   display: block;
   white-space: nowrap;
@@ -1023,7 +1037,6 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   font-size: 12.5px;
   font-weight: 950;
 }
-
 .lockTag {
   display: inline-flex;
   align-items: center;
@@ -1036,11 +1049,7 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   padding: 2px 8px;
   border-radius: 999px;
 }
-.lk {
-  width: 14px;
-  height: 14px;
-}
-
+.lk { width: 14px; height: 14px; }
 .inCell {
   display: inline-flex;
   align-items: center;
@@ -1048,8 +1057,6 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   gap: 8px;
   width: 100%;
 }
-
-/* Inputs */
 .inputLg {
   border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 12px;
@@ -1074,7 +1081,6 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(16, 24, 40, 0.1);
 }
-
 .unit {
   color: rgba(15, 23, 42, 0.55);
   font-size: 11px;
@@ -1082,10 +1088,7 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   text-align: right;
   font-weight: 950;
 }
-.unitEdit {
-  color: rgba(2, 132, 199, 0.95);
-}
-
+.unitEdit { color: rgba(2, 132, 199, 0.95); }
 .foot {
   padding: 8px 10px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
@@ -1116,10 +1119,7 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   justify-content: space-between;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
 }
-.dlgTtl {
-  font-weight: 950;
-  color: #0f172a;
-}
+.dlgTtl { font-weight: 950; color: #0f172a; }
 .x {
   width: 34px;
   height: 34px;
@@ -1128,9 +1128,7 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   background: rgba(15, 23, 42, 0.03);
   cursor: pointer;
 }
-.dlgBody {
-  padding: 12px;
-}
+.dlgBody { padding: 12px; }
 .dlgMsg {
   font-weight: 800;
   color: rgba(15, 23, 42, 0.8);
@@ -1153,36 +1151,27 @@ function setEdit(key: keyof MaintenanceEdit, value: any) {
   font-weight: 950;
   cursor: pointer;
 }
-.btn2.pri {
-  background: rgba(2, 132, 199, 0.12);
-  border-color: rgba(2, 132, 199, 0.28);
-}
+.btn2.pri { background: rgba(2, 132, 199, 0.12); border-color: rgba(2, 132, 199, 0.28); }
 
 /* toast */
-.toast {
+.toast{
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  z-index: 100000;
+  display:flex;
+  gap:10px;
+  align-items:center;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
   padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
+  box-shadow: 0 18px 60px rgba(15,23,42,0.20);
 }
-.toast.err {
-  border-color: rgba(239, 68, 68, 0.22);
-}
-.tic {
-  width: 18px;
-  height: 18px;
-}
-.tmsg {
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.85);
-}
+.toast.ok{ border-color: rgba(34,197,94,0.25); }
+.toast.err{ border-color: rgba(239,68,68,0.28); }
+.toast.info{ border-color: rgba(59,130,246,0.22); }
+.tic { width: 18px; height: 18px; }
+.tmsg { font-size: 12px; font-weight: 950; color: rgba(15,23,42,0.86); }
 </style>

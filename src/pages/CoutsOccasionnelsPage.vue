@@ -1,14 +1,15 @@
 <!-- ✅ src/pages/CoutOccasionnelPage.vue (FICHIER COMPLET)
-     ✅ Titre seul (aucune meta à côté)
-     ✅ Input collé au poste (dans la même cellule)
+     ✅ UI comme tes autres pages (system-ui + tabulaires)
      ✅ Masquer 0 auto + override user
      ✅ Locks contrat + badge (GC/Transport/Installation + Branchement Eau/Elec)
      ✅ Import + Generalize + confirmation variantes impactées
-     ✅ Typo comme les autres pages (system-ui) + chiffres tabulaires (PAS monospace)
+     ✅ Apply preview + quitter sans enregistrer (Unsaved) comme Transport/MOMD/CoutMensuel
+     ✅ Hint "Modifié" ORANGE (comme TransportPage + CoutM3)
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
@@ -19,10 +20,12 @@ import {
   ArrowPathIcon,
   Squares2X2Icon,
   ArrowDownTrayIcon,
+  EyeIcon,
 } from "@heroicons/vue/24/outline";
 import { LockClosedIcon } from "@heroicons/vue/24/solid";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
@@ -52,28 +55,18 @@ function clamp(v: any, min = 0, max = 1e15) {
   const x = toNum(v);
   return Math.max(min, Math.min(max, x));
 }
-
-/* =========================
-   ACTIVE
-========================= */
-const variant = computed<any>(() => (store as any).activeVariant ?? null);
-const contract = computed<any>(() => (store as any).activeContract ?? null);
-const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
-
-/* =========================
-   ✅ Masquer 0 (auto + override user)
-========================= */
-const hideZeros = ref(false);
-const hideZerosUserToggled = ref(false);
-
-function toggleHideZeros() {
-  hideZeros.value = !hideZeros.value;
-  hideZerosUserToggled.value = true;
+function isZero(v: any) {
+  return Math.abs(toNum(v)) <= 1e-12;
+}
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
-/* =========================
-   ✅ VERROUILLAGE (contrat)
-========================= */
+// same logic family as backend
 function norm(s: any): string {
   return String(s ?? "")
     .trim()
@@ -85,11 +78,21 @@ function isChargeClient(v: any): boolean {
   return norm(v).includes("client");
 }
 
+/* =========================
+   ACTIVE
+========================= */
+const variant = computed<any>(() => (store as any).activeVariant ?? null);
+const contract = computed<any>(() => (store as any).activeContract ?? null);
+const dureeMois = computed(() => clamp(contract.value?.dureeMois, 0, 9999));
+
+/* =========================
+   ✅ VERROUILLAGE (contrat)
+========================= */
 const lockInstallation = computed<boolean>(() => isChargeClient(contract.value?.installation));
 const lockGenieCivil = computed<boolean>(() => isChargeClient(contract.value?.genieCivil));
 const lockTransport = computed<boolean>(() => isChargeClient(contract.value?.transport));
 
-// ✅ nouveaux locks (selon Prisma Contract)
+// nouveaux locks
 const lockBranchementEau = computed<boolean>(() => isChargeClient(contract.value?.branchementEau));
 const lockBranchementElec = computed<boolean>(() => isChargeClient(contract.value?.branchementElec));
 
@@ -118,7 +121,9 @@ watch(
   { immediate: true }
 );
 
-const volumeTotal = computed(() => formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0));
+const volumeTotal = computed(() =>
+  formules.value.reduce((s: number, vf: any) => s + clamp(getFormDraft(vf.id).volumeM3), 0)
+);
 const transportPrixMoyen = computed(() => clamp((variant.value as any)?.transport?.prixMoyen));
 
 function mpPriceUsed(mpId: string): number {
@@ -151,23 +156,25 @@ const caTotal = computed(() => {
 ========================= */
 type Draft = {
   genieCivil: number;
-  installationCab: number; // compat
   demontage: number;
   remisePointCentrale: number;
   transport: number;
   silots: number;
   localAdjuvant: number;
   bungalows: number;
+
   installation: number; // legacy = Installation CAB
 
-  // ✅ nouveaux champs
+  // compat (si existe dans la DB)
+  installationCab: number;
+
+  // nouveaux champs
   branchementEau: number;
   branchementElec: number;
 };
 
 const draft = reactive<Draft>({
   genieCivil: 0,
-  installationCab: 0,
   demontage: 0,
   remisePointCentrale: 0,
   transport: 0,
@@ -175,6 +182,7 @@ const draft = reactive<Draft>({
   localAdjuvant: 0,
   bungalows: 0,
   installation: 0,
+  installationCab: 0,
   branchementEau: 0,
   branchementElec: 0,
 });
@@ -188,18 +196,18 @@ function enforceLocks() {
   if (lockBranchementElec.value) draft.branchementElec = 0;
 }
 
-function anyNonZeroDraft() {
+function anyNonZeroDraftEffective() {
   return (
-    clamp(draft.genieCivil) > 0 ||
-    clamp(draft.demontage) > 0 ||
-    clamp(draft.remisePointCentrale) > 0 ||
-    clamp(draft.transport) > 0 ||
-    clamp(draft.silots) > 0 ||
-    clamp(draft.localAdjuvant) > 0 ||
-    clamp(draft.bungalows) > 0 ||
-    clamp(draft.installation) > 0 ||
-    clamp(draft.branchementEau) > 0 ||
-    clamp(draft.branchementElec) > 0
+    (!lockGenieCivil.value && !isZero(draft.genieCivil)) ||
+    !isZero(draft.demontage) ||
+    !isZero(draft.remisePointCentrale) ||
+    (!lockTransport.value && !isZero(draft.transport)) ||
+    !isZero(draft.silots) ||
+    !isZero(draft.localAdjuvant) ||
+    !isZero(draft.bungalows) ||
+    (!lockInstallation.value && !isZero(draft.installation)) ||
+    (!lockBranchementEau.value && !isZero(draft.branchementEau)) ||
+    (!lockBranchementElec.value && !isZero(draft.branchementElec))
   );
 }
 
@@ -213,21 +221,33 @@ function loadFromVariant() {
   draft.silots = clamp(s.silots);
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
-  draft.installation = clamp(s.installation);
+  draft.installation = clamp(s.installation ?? s.installationCab);
 
-  // ✅ nouveaux
   draft.branchementEau = clamp(s.branchementEau);
-draft.branchementElec = clamp(s.branchementElec ?? s.branchementElectricite);
-  enforceLocks();
+  draft.branchementElec = clamp(s.branchementElec ?? s.branchementElectricite ?? s.branchementElectricité);
 
-  if (!hideZerosUserToggled.value) {
-    hideZeros.value = anyNonZeroDraft();
-    if (!anyNonZeroDraft()) hideZeros.value = false;
-  }
+  enforceLocks();
 }
 
-watch(() => variant.value?.id, () => loadFromVariant(), { immediate: true });
-watch(() => contract.value, () => enforceLocks(), { immediate: true });
+/* =========================
+   ✅ Masquer 0 (auto + override user)
+========================= */
+const hideZeros = ref(false);
+const hideZerosUserToggled = ref(false);
+
+function syncHideZerosAuto() {
+  const anyNZ = anyNonZeroDraftEffective();
+  if (!anyNZ) {
+    hideZeros.value = false;
+    hideZerosUserToggled.value = false;
+    return;
+  }
+  if (!hideZerosUserToggled.value) hideZeros.value = true;
+}
+function toggleHideZeros() {
+  hideZerosUserToggled.value = true;
+  hideZeros.value = !hideZeros.value;
+}
 
 /* =========================
    KPI (global)
@@ -277,8 +297,6 @@ const LINES = [
   { key: "localAdjuvant", label: "Local adjuvant" },
   { key: "bungalows", label: "Bungalows" },
   { key: "installation", label: "Installation CAB" },
-
-  // ✅ nouveaux
   { key: "branchementEau", label: "Branchement eau" },
   { key: "branchementElec", label: "Branchement électricité" },
 ] as const;
@@ -320,7 +338,9 @@ const visibleLines = computed(() => {
     };
   });
 
-  return hideZeros.value ? rows.filter((r) => clamp(r.value) !== 0) : rows;
+  // ✅ garder visibles les lignes lockées même si 0
+  if (!hideZeros.value) return rows;
+  return rows.filter((r) => !isZero(r.value) || r.locked);
 });
 
 /* =========================
@@ -362,12 +382,9 @@ function closeModal() {
 }
 
 /* =========================
-   SAVE / RESET
+   PAYLOADS (effective + baseline-from-variant)
 ========================= */
-const saving = ref(false);
-const err = ref<string | null>(null);
-
-function buildPayload() {
+function buildPayloadEffective() {
   const existing: any = (variant.value as any)?.coutOccasionnel ?? {};
   return {
     category: existing.category ?? "COUTS_CHARGES",
@@ -380,23 +397,53 @@ function buildPayload() {
     localAdjuvant: Number(clamp(draft.localAdjuvant)),
     bungalows: Number(clamp(draft.bungalows)),
     installation: Number(lockInstallation.value ? 0 : clamp(draft.installation)),
-
-    // ✅ nouveaux
     branchementEau: Number(lockBranchementEau.value ? 0 : clamp(draft.branchementEau)),
-branchementElectricite: Number(lockBranchementElec.value ? 0 : clamp(draft.branchementElec)),  };
+    // ✅ compat: backend/DB peut utiliser branchementElectricite
+    branchementElectricite: Number(lockBranchementElec.value ? 0 : clamp(draft.branchementElec)),
+  };
 }
 
-async function save() {
-  if (!variant.value) return;
+/** baseline = valeurs “référence” venant de la variante active, avec locks appliqués */
+function buildPayloadFromVariantEffective() {
+  const v: any = variant.value ?? {};
+  const s: any = v?.coutOccasionnel ?? {};
+  return {
+    category: s.category ?? "COUTS_CHARGES",
+    genieCivil: Number(lockGenieCivil.value ? 0 : clamp(s.genieCivil)),
+    installationCab: Number(clamp(s.installationCab)),
+    demontage: Number(clamp(s.demontage)),
+    remisePointCentrale: Number(clamp(s.remisePointCentrale)),
+    transport: Number(lockTransport.value ? 0 : clamp(s.transport)),
+    silots: Number(clamp(s.silots)),
+    localAdjuvant: Number(clamp(s.localAdjuvant)),
+    bungalows: Number(clamp(s.bungalows)),
+    installation: Number(lockInstallation.value ? 0 : clamp(s.installation ?? s.installationCab)),
+    branchementEau: Number(lockBranchementEau.value ? 0 : clamp(s.branchementEau)),
+    branchementElectricite: Number(
+      lockBranchementElec.value ? 0 : clamp(s.branchementElec ?? s.branchementElectricite ?? s.branchementElectricité)
+    ),
+  };
+}
+
+/* =========================
+   SAVE
+========================= */
+const saving = ref(false);
+const err = ref<string | null>(null);
+
+async function save(): Promise<boolean> {
+  if (!variant.value) return false;
   err.value = null;
   saving.value = true;
   try {
     enforceLocks();
-    await (store as any).updateVariant(variant.value.id, { coutOccasionnel: buildPayload() });
+    await (store as any).updateVariant(variant.value.id, { coutOccasionnel: buildPayloadEffective() });
     showToast("Coûts occasionnels enregistrés.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
+    return false;
   } finally {
     saving.value = false;
   }
@@ -405,14 +452,8 @@ async function save() {
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts occasionnels ?", async () => {
     closeModal();
-    await save();
-  });
-}
-function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
-    closeModal();
-    loadFromVariant();
-    showToast("Valeurs restaurées.", "ok");
+    const ok = await save();
+    if (ok) setBaselineFromVariant();
   });
 }
 
@@ -447,17 +488,13 @@ function applyFromVariant(srcVariant: any) {
   draft.silots = clamp(s.silots);
   draft.localAdjuvant = clamp(s.localAdjuvant);
   draft.bungalows = clamp(s.bungalows);
-  draft.installation = clamp(s.installation);
+  draft.installation = clamp(s.installation ?? s.installationCab);
 
-  // ✅ nouveaux
   draft.branchementEau = clamp(s.branchementEau);
-draft.branchementElec = clamp(s.branchementElec ?? s.branchementElectricite);
-  enforceLocks();
+  draft.branchementElec = clamp(s.branchementElec ?? s.branchementElectricite ?? s.branchementElectricité);
 
-  if (!hideZerosUserToggled.value) {
-    hideZeros.value = anyNonZeroDraft();
-    if (!anyNonZeroDraft()) hideZeros.value = false;
-  }
+  enforceLocks();
+  syncHideZerosAuto();
 }
 
 async function onApplyImport(payload: { sourceVariantId: string }) {
@@ -528,9 +565,9 @@ function impactedByContractOnTargets(targetIds: string[], payload: any) {
     if (isChargeClient(c?.transport) && toNum(payload?.transport) !== 0) fields.push("Transport");
     if (isChargeClient(c?.installation) && toNum(payload?.installation) !== 0) fields.push("Installation CAB");
 
-    // ✅ nouveaux
     if (isChargeClient(c?.branchementEau) && toNum(payload?.branchementEau) !== 0) fields.push("Branchement eau");
-    if (isChargeClient(c?.branchementElec) && toNum(payload?.branchementElec) !== 0) fields.push("Branchement électricité");
+    // ✅ payload utilise "branchementElectricite"
+    if (isChargeClient(c?.branchementElec) && toNum(payload?.branchementElectricite) !== 0) fields.push("Branchement électricité");
 
     if (fields.length) {
       const v = findVariantById(tid);
@@ -545,7 +582,7 @@ async function generalizeTo(variantIds: string[]) {
   const sourceId = String((store as any).activeVariantId ?? variant.value?.id ?? "").trim();
   if (!sourceId) return;
 
-  const payload = buildPayload();
+  const payload = buildPayloadEffective();
 
   genErr.value = null;
   genBusy.value = true;
@@ -568,7 +605,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
   if (!ids.length) return;
 
-  const data = buildPayload();
+  const data = buildPayloadEffective();
   const impacted = impactedByContractOnTargets(ids, data);
 
   let warn = "";
@@ -594,16 +631,185 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
     if (!genErr.value) genOpen.value = false;
   });
 }
+
+/* =========================
+   ✅ UNSAVED + APPLY PREVIEW
+========================= */
+const PAGE_KEY = "COUT_OCCASIONNEL";
+
+const baselineJson = ref<string>("");
+const baselineVariantSnapshot = ref<any | null>(null);
+const previewApplied = ref(false);
+
+function setBaselineFromVariant() {
+  try {
+    baselineVariantSnapshot.value = structuredClone((store as any).activeVariant ?? variant.value);
+  } catch {
+    baselineVariantSnapshot.value = JSON.parse(JSON.stringify((store as any).activeVariant ?? variant.value ?? null));
+  }
+  baselineJson.value = stableJson(buildPayloadFromVariantEffective());
+  previewApplied.value = false;
+}
+
+const currentJson = computed(() => stableJson(buildPayloadEffective()));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  return currentJson.value !== baselineJson.value;
+});
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState !== "function") {
+    showToast("Preview non supportée (replaceActiveVariantInState absent).", "err");
+    return;
+  }
+
+  let next: any;
+  try {
+    next = structuredClone(s.activeVariant ?? variant.value);
+  } catch {
+    next = JSON.parse(JSON.stringify(s.activeVariant ?? variant.value ?? null));
+  }
+  if (!next?.id) return;
+
+  next.coutOccasionnel = buildPayloadEffective();
+  s.replaceActiveVariantInState(next);
+
+  previewApplied.value = true;
+  showToast("Prévisualisation appliquée (non enregistrée).", "ok");
+}
+
+function restoreFromBaselineSnapshot() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap);
+  }
+  previewApplied.value = false;
+}
+
+async function discardLocalChanges() {
+  if (previewApplied.value) restoreFromBaselineSnapshot();
+
+  loadFromVariant();
+  enforceLocks();
+
+  baselineJson.value = stableJson(buildPayloadFromVariantEffective());
+  syncHideZerosAuto();
+
+  showToast("Valeurs restaurées.", "ok");
+}
+
+function askReset() {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", async () => {
+    closeModal();
+    await discardLocalChanges();
+  });
+}
+
+function syncUnsaved() {
+  const u: any = unsaved as any;
+  u.setDirty?.(Boolean(dirty.value));
+
+  u.registerPage?.({
+    pageKey: PAGE_KEY,
+    save: async () => {
+      const ok = await save();
+      if (ok) setBaselineFromVariant();
+      return ok;
+    },
+    discard: async () => {
+      await discardLocalChanges();
+    },
+  });
+}
+
+/* =========================
+   WATCHERS INIT
+========================= */
+watch(
+  () => variant.value?.id,
+  () => {
+    loadFromVariant();
+    enforceLocks();
+    syncHideZerosAuto();
+    setBaselineFromVariant();
+    syncUnsaved();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [lockInstallation.value, lockGenieCivil.value, lockTransport.value, lockBranchementEau.value, lockBranchementElec.value],
+  () => {
+    enforceLocks();
+    syncHideZerosAuto();
+    setBaselineFromVariant();
+    syncUnsaved();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => ({
+    genieCivil: draft.genieCivil,
+    demontage: draft.demontage,
+    remisePointCentrale: draft.remisePointCentrale,
+    transport: draft.transport,
+    silots: draft.silots,
+    localAdjuvant: draft.localAdjuvant,
+    bungalows: draft.bungalows,
+    installation: draft.installation,
+    branchementEau: draft.branchementEau,
+    branchementElec: draft.branchementElec,
+  }),
+  () => {
+    syncHideZerosAuto();
+    syncUnsaved();
+  }
+);
+
+onBeforeUnmount(() => {
+  (unsaved as any).unregisterPage?.(PAGE_KEY);
+});
 </script>
 
 <template>
   <div class="page">
-    <!-- ✅ Sticky subheader : titre SEUL + actions -->
     <div class="subhdr">
       <div class="row">
-        <div class="ttl">Coûts occasionnels</div>
+        <div class="left">
+          <div class="ttl">
+            Coûts occasionnels
+
+            <!-- ✅ Modifié ORANGE -->
+            <span v-if="dirty" class="modifiedHint" title="Modifications non enregistrées">
+              <span class="modifiedDot" aria-hidden="true"></span>
+              Modifié
+            </span>
+
+            <!-- ✅ Preview -->
+            <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée (non enregistrée)">
+              <EyeIcon class="icSm" />
+              Preview
+            </span>
+          </div>
+        </div>
 
         <div class="actions">
+          <button
+            class="btn"
+            :disabled="!variant || saving || genBusy || impBusy || !dirty"
+            @click="applyPreviewToHeader()"
+            title="Appliquer au header (sans enregistrer)"
+          >
+            <EyeIcon class="ic" />
+            Appliquer
+          </button>
+
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZeros()" :class="{ on: hideZeros }">
             <span class="dot" aria-hidden="true"></span>
             {{ hideZeros ? "Afficher" : "Masquer 0" }}
@@ -631,7 +837,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
       </div>
 
-      <!-- ✅ KPIs : chiffres tabulaires (pas monospace) -->
+      <!-- KPIs -->
       <div class="kpis" v-if="variant">
         <div class="kpi">
           <div class="kLbl">/ mois</div>
@@ -698,12 +904,14 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 
             <tbody>
               <tr v-for="ln in visibleLines" :key="String(ln.key)">
-                <!-- ✅ Poste + input collé -->
                 <td class="poste">
                   <div class="posteRow">
                     <div class="posteLblWrap">
                       <b class="posteLbl" :title="ln.label">{{ ln.label }}</b>
-                      <span v-if="ln.locked" class="lockTag"><LockClosedIcon class="lk" /> Contrat</span>
+                      <span v-if="ln.locked" class="lockTag" title="Forcé à 0 par le contrat">
+                        <LockClosedIcon class="lk" />
+                        Contrat
+                      </span>
                     </div>
 
                     <div class="inLine">
@@ -741,13 +949,16 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </template>
 
-    <!-- ✅ IMPORT -->
     <SectionImportModal v-model="impOpen" sectionLabel="Coûts occasionnels" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
 
-    <!-- ✅ GENERALISATION -->
-    <SectionTargetsGeneralizeModal v-model="genOpen" sectionLabel="Coûts occasionnels" :sourceVariantId="variant?.id ?? null" @apply="onApplyGeneralize" />
+    <SectionTargetsGeneralizeModal
+      v-model="genOpen"
+      sectionLabel="Coûts occasionnels"
+      :sourceVariantId="variant?.id ?? null"
+      @apply="onApplyGeneralize"
+    />
 
-    <!-- ✅ Modal confirm/info -->
+    <!-- confirm modal -->
     <teleport to="body">
       <div v-if="modal.open" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
         <div class="dlg">
@@ -770,7 +981,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
-    <!-- ✅ Toast -->
+    <!-- toast -->
     <teleport to="body">
       <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
@@ -814,10 +1025,56 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   gap: 8px;
   flex-wrap: wrap;
 }
+.left {
+  min-width: 220px;
+}
 .ttl {
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ✅ MODIFIÉ (ORANGE) — aligné TransportPage + CoutM3 */
+.modifiedHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(194, 65, 12, 1);
+  background: rgba(251, 146, 60, 0.14);
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  white-space: nowrap;
+}
+.modifiedDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 1);
+}
+
+/* preview badge */
+.prevBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  background: rgba(2, 132, 199, 0.08);
+  color: rgba(2, 132, 199, 0.95);
+  white-space: nowrap;
+}
+.icSm {
+  width: 14px;
+  height: 14px;
 }
 
 /* actions */

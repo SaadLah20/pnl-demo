@@ -1,7 +1,8 @@
-<!-- ✅ src/pages/TransportPage.vue (FICHIER COMPLET / moyenne + calculateur zones (UI only) + toast non bloquant + ✅ importer depuis autre variante (save séparé)) -->
+<!-- ✅ src/pages/TransportPage.vue (FICHIER COMPLET / pilot unsaved + preview header + import séparé) -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
@@ -14,9 +15,12 @@ import {
   InformationCircleIcon,
   Squares2X2Icon,
   ArrowDownTrayIcon,
+  EyeIcon,
+  XMarkIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0) await (store as any).loadPnls();
@@ -42,6 +46,13 @@ function clamp(x: any, min: number, max: number) {
 function nearlyEqual(a: number, b: number, eps = 0.001) {
   return Math.abs(a - b) <= eps;
 }
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v, Object.keys(v ?? {}).sort());
+  } catch {
+    return JSON.stringify(v);
+  }
+}
 
 /** ✅ robust: handle boolean | 0/1 | "0/1" | "true/false" */
 function parseBoolLike(v: any): boolean | null {
@@ -54,7 +65,13 @@ function parseBoolLike(v: any): boolean | null {
   }
   return null;
 }
+function onManualPrixMoyenInput(e: Event) {
+  if (ui.calcOn) return;
 
+  const v = toNum((e.target as HTMLInputElement).value);
+  edit.prixMoyen = v;
+  manualPrixMoyen = v; // ✅ simple number
+}
 /* =========================
    ACTIVE VARIANT ONLY
 ========================= */
@@ -94,7 +111,12 @@ const edit = reactive({
   prixVentePompe: 0,
 });
 
-const manualPrixMoyen = ref<number>(0);
+let manualPrixMoyen = 0;
+/* =========================
+   BASELINE (pour dirty + restore)
+========================= */
+const baselineTransportJson = ref<string>(""); // snapshot du payload persisté (transport)
+const baselineVariantSnapshot = ref<any | null>(null); // snapshot variant (avant preview)
 
 /* =========================
    LOAD FROM VARIANT
@@ -103,7 +125,7 @@ function loadFromVariant() {
   const t = variant.value?.transport ?? {};
 
   const pm = toNum((t as any)?.prixMoyen);
-  manualPrixMoyen.value = pm;
+  manualPrixMoyen = pm;
   edit.prixMoyen = pm;
 
   // -------------------------
@@ -127,7 +149,18 @@ function loadFromVariant() {
 
   // reset zones UI (on ne persiste pas)
   edit.zones = DEFAULT_ZONES.map((z) => ({ ...z }));
+
+  // ✅ baseline variant snapshot (pour restore si preview)
+  try {
+    baselineVariantSnapshot.value = structuredClone(variant.value);
+  } catch {
+    baselineVariantSnapshot.value = JSON.parse(JSON.stringify(variant.value ?? null));
+  }
+
+  // ✅ baseline transport payload (persisté)
+  baselineTransportJson.value = stableJson(buildPayloadPersistedFromVariant());
 }
+
 watch(
   () => variant.value?.id,
   () => loadFromVariant(),
@@ -153,7 +186,7 @@ watch(
   () => ui.calcOn,
   (on) => {
     if (on) edit.prixMoyen = Number(prixMoyenParZone.value.toFixed(2));
-    else edit.prixMoyen = manualPrixMoyen.value;
+    else edit.prixMoyen = manualPrixMoyen;
   }
 );
 
@@ -177,6 +210,142 @@ const canSave = computed(() => {
   if (ui.calcOn && !pctOk.value) return false; // bloquant uniquement si calculateur actif
   return true;
 });
+
+/* =========================
+   BUILD PAYLOADS
+========================= */
+function buildPayload(): any {
+  const tExisting: any = variant.value?.transport ?? {};
+  return {
+    category: tExisting.category ?? "LOGISTIQUE_APPRO",
+    type: "MOYENNE",
+    prixMoyen: Number(toNum(prixMoyenUsed.value)),
+    zones: [],
+
+    includePompage: Boolean(edit.includePompage),
+    volumePompePct: Number(clamp(edit.volumePompePct, 0, 100)),
+    prixAchatPompe: Number(clamp(edit.prixAchatPompe, 0, 1e9)),
+    prixVentePompe: Number(clamp(edit.prixVentePompe, 0, 1e9)),
+  };
+}
+
+// baseline strict = depuis variant transport (pas depuis UI calc)
+function buildPayloadPersistedFromVariant(): any {
+  const tExisting: any = variant.value?.transport ?? {};
+  const rawPct = clamp((tExisting as any)?.volumePompePct, 0, 100);
+  const rawPA = clamp((tExisting as any)?.prixAchatPompe, 0, 1e9);
+  const rawPV = clamp((tExisting as any)?.prixVentePompe, 0, 1e9);
+  const incParsed = parseBoolLike((tExisting as any)?.includePompage);
+  const hasPompe = rawPct > 0 || rawPA > 0 || rawPV > 0;
+  const includePompage = incParsed !== null ? incParsed : hasPompe;
+
+  return {
+    category: tExisting.category ?? "LOGISTIQUE_APPRO",
+    type: "MOYENNE",
+    prixMoyen: Number(toNum((tExisting as any)?.prixMoyen)),
+    zones: [],
+    includePompage: Boolean(includePompage),
+    volumePompePct: Number(rawPct),
+    prixAchatPompe: Number(rawPA),
+    prixVentePompe: Number(rawPV),
+  };
+}
+
+/* =========================
+   DIRTY (diff vs baseline)
+========================= */
+const currentTransportJson = computed(() => stableJson(buildPayload()));
+const dirty = computed<boolean>(() => {
+  // no variant -> no dirty
+  if (!variant.value?.id) return false;
+  return currentTransportJson.value !== baselineTransportJson.value;
+});
+
+/* =========================
+   PREVIEW / RESTORE HEADER
+   - Appliquer: patch en mémoire uniquement (store.replaceActiveVariantInState)
+   - Annuler: restore snapshot baselineVariantSnapshot
+========================= */
+const previewApplied = ref(false);
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+  if (!canSave.value) return;
+
+  const patch = { id: variant.value.id, transport: buildPayload() };
+  const s: any = store as any;
+
+  // ✅ patch uniquement en mémoire (header KPIs)
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(patch);
+  } else {
+    // fallback: updateVariant optimistic (mais ATTENTION: ça appelle API). Donc on n'utilise pas.
+    // On ne fait rien si helper absent.
+  }
+
+  previewApplied.value = true;
+  showToast("info", "Prévisualisation appliquée au header (non enregistrée).");
+}
+
+function restoreFromBaselineSnapshot() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap);
+  }
+  previewApplied.value = false;
+}
+
+async function discardLocalChanges() {
+  // 1) restore header variant si preview
+  if (previewApplied.value) restoreFromBaselineSnapshot();
+
+  // 2) restore form local depuis variant (persisté)
+  ui.calcOn = false;
+  loadFromVariant();
+
+  showToast("info", "Modifications annulées.");
+}
+
+/* =========================
+   UNSAVED STORE (registerPage / setDirty)
+   ✅ Fix: Enregistrer&Quitter + Quitter sans enregistrer
+========================= */
+const PAGE_KEY = "TRANSPORT";
+
+function registerUnsavedHandlers() {
+  (unsaved as any).registerPage?.({
+    pageKey: PAGE_KEY,
+
+    // appelé par "Enregistrer et quitter"
+    save: async () => {
+      if (!canSave.value) {
+        showToast("err", "Somme des % zones doit être exactement 100% (calculateur actif).");
+        return false; // bloque la navigation
+      }
+      await save(); // ton save() existant (API)
+      return true;
+    },
+
+    // appelé par "Quitter sans enregistrer"
+    discard: async () => {
+      discardLocalChanges(); // restore preview + reload form
+    },
+  });
+}
+
+onMounted(() => registerUnsavedHandlers());
+onBeforeUnmount(() => (unsaved as any).unregisterPage?.(PAGE_KEY));
+
+watch(
+  dirty,
+  (v) => {
+    (unsaved as any).setDirty?.(Boolean(v));
+  },
+  { immediate: true }
+);
 
 /* =========================
    ZONES UX (table compacte)
@@ -316,22 +485,6 @@ function closeConfirm() {
 const saving = ref(false);
 const err = ref<string | null>(null);
 
-function buildPayload(): any {
-  const tExisting: any = variant.value?.transport ?? {};
-  return {
-    category: tExisting.category ?? "LOGISTIQUE_APPRO",
-    type: "MOYENNE",
-    prixMoyen: Number(toNum(prixMoyenUsed.value)),
-    zones: [],
-
-    // ✅ persiste le flag + conserve valeurs (ne force plus à 0)
-    includePompage: Boolean(edit.includePompage),
-    volumePompePct: Number(clamp(edit.volumePompePct, 0, 100)),
-    prixAchatPompe: Number(clamp(edit.prixAchatPompe, 0, 1e9)),
-    prixVentePompe: Number(clamp(edit.prixVentePompe, 0, 1e9)),
-  };
-}
-
 async function save() {
   if (!variant.value) return;
 
@@ -345,9 +498,20 @@ async function save() {
   try {
     await (store as any).updateVariant(variant.value.id, { transport: buildPayload() });
 
+    // ✅ après save: baseline = nouvelle version persistée
+    try {
+      baselineVariantSnapshot.value = structuredClone((store as any).activeVariant);
+    } catch {
+      baselineVariantSnapshot.value = JSON.parse(JSON.stringify((store as any).activeVariant ?? null));
+    }
+    baselineTransportJson.value = stableJson(buildPayloadPersistedFromVariant());
+
+    // ✅ reset preview state (le header est désormais "vrai")
+    previewApplied.value = false;
+
     const t = (store as any).activeVariant?.transport ?? {};
-    manualPrixMoyen.value = toNum(t?.prixMoyen);
-    if (!ui.calcOn) edit.prixMoyen = manualPrixMoyen.value;
+manualPrixMoyen = toNum(t?.prixMoyen);
+if (!ui.calcOn) edit.prixMoyen = manualPrixMoyen;
 
     showToast("ok", "Transport mis à jour.");
   } catch (e: any) {
@@ -387,10 +551,9 @@ function applyTransportFromVariant(srcVariant: any) {
   // ✅ Importer copie la section "persistée": moyenne + pompage (zones UI reset)
   ui.calcOn = false;
 
-  manualPrixMoyen.value = pm;
+  manualPrixMoyen = pm;
   edit.prixMoyen = pm;
 
-  // ✅ IMPORTANT: respecter includePompage s'il existe (sinon fallback ancien)
   const rawPct = clamp((t as any)?.volumePompePct, 0, 100);
   const rawPA = clamp((t as any)?.prixAchatPompe, 0, 1e9);
   const rawPV = clamp((t as any)?.prixVentePompe, 0, 1e9);
@@ -425,7 +588,6 @@ async function onApplyImport(payload: { sourceVariantId: string }) {
     const src = findVariantById(sourceId);
 
     if (!src) {
-      // ✅ si jamais pas chargé (rare), on tente de recharger tout
       await (store as any).loadPnls?.();
     }
 
@@ -487,8 +649,7 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
    RESET
 ========================= */
 function reset() {
-  loadFromVariant();
-  showToast("info", "Valeurs rechargées.");
+  discardLocalChanges();
 }
 </script>
 
@@ -497,9 +658,21 @@ function reset() {
     <!-- ✅ Header sticky sous HeaderDashboard -->
     <div class="head">
       <div class="headL">
-        <div class="h1">Transport</div>
+        <div class="h1">
+          Transport
+          <span v-if="dirty" class="dirtyBadge" title="Modifications non enregistrées">
+            <ExclamationTriangleIcon class="icSm" />
+            Modifié
+          </span>
+          <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée au header">
+            <EyeIcon class="icSm" />
+            Preview
+          </span>
+        </div>
+
         <div class="sub muted" v-if="variant">
-          Variante active : <b class="ell">{{ variant?.title ?? String(variant?.id ?? "").slice(0, 6) }}</b>
+          Variante active :
+          <b class="ell">{{ variant?.title ?? String(variant?.id ?? "").slice(0, 6) }}</b>
           <span v-if="dureeMois" class="dot">•</span>
           <span v-if="dureeMois" class="pill">{{ dureeMois }} mois</span>
         </div>
@@ -507,12 +680,35 @@ function reset() {
       </div>
 
       <div class="headR">
+        <!-- ✅ Pilot buttons -->
+        <button
+          class="btn"
+          type="button"
+          :disabled="!variant || saving || !dirty || !canSave"
+          @click="applyPreviewToHeader()"
+          title="Appliquer au header (sans enregistrer)"
+        >
+          <EyeIcon class="ic" />
+          Appliquer
+        </button>
+
+        <button
+          class="btn ghost"
+          type="button"
+          :disabled="!variant || saving || (!dirty && !previewApplied)"
+          @click="discardLocalChanges()"
+          title="Annuler les modifications"
+        >
+          <XMarkIcon class="ic" />
+          Annuler
+        </button>
+
         <button class="btn" type="button" :disabled="!variant || saving" @click="reset" title="Réinitialiser">
           <ArrowPathIcon class="ic" />
           Réinitialiser
         </button>
 
-        <!-- ✅ NEW: Importer -->
+        <!-- ✅ Importer -->
         <button class="btn" type="button" :disabled="!variant || impBusy || saving || genBusy" @click="impOpen = true" title="Importer">
           <ArrowDownTrayIcon class="ic" />
           {{ impBusy ? "..." : "Importer" }}
@@ -523,7 +719,7 @@ function reset() {
           Généraliser
         </button>
 
-        <!-- ✅ CHANGEMENT: Appliquer => Enregistrer -->
+        <!-- ✅ Enregistrer DB -->
         <button class="btn primary" type="button" :disabled="!canSave || saving" @click="openConfirm()" title="Enregistrer">
           <CheckIcon class="ic" />
           {{ saving ? "..." : "Enregistrer" }}
@@ -565,15 +761,7 @@ function reset() {
                     step="0.01"
                     :disabled="ui.calcOn"
                     :value="Number(toNum(edit.prixMoyen).toFixed(2))"
-                    @input="
-                      (e) => {
-                        if (!ui.calcOn) {
-                          edit.prixMoyen = toNum((e.target as HTMLInputElement).value);
-                          manualPrixMoyen = toNum(edit.prixMoyen); /* ✅ FIX */
-                        }
-                      }
-                    "
-                  />
+@input="onManualPrixMoyenInput"                  />
                   <span class="unit">MAD/m³</span>
                 </div>
                 <div class="hint muted">
@@ -596,12 +784,8 @@ function reset() {
               <div class="calcHead">
                 <div class="calcTitle">Zonning</div>
                 <div class="calcActions">
-                  <button class="btn" type="button" @click="openStair()">
-                    Répartition égale
-                  </button>
-                  <button class="btn" type="button" @click="splitEqual()">
-                    % égaux
-                  </button>
+                  <button class="btn" type="button" @click="openStair()">Répartition égale</button>
+                  <button class="btn" type="button" @click="splitEqual()">% égaux</button>
                 </div>
               </div>
 
@@ -730,9 +914,7 @@ function reset() {
 
               <div v-if="ui.calcOn && !pctOk" class="warnBox">
                 <ExclamationTriangleIcon class="ic" />
-                <div>
-                  Somme des % doit être <b>100%</b> pour pouvoir enregistrer.
-                </div>
+                <div>Somme des % doit être <b>100%</b> pour pouvoir enregistrer.</div>
               </div>
 
               <div class="sideHint muted">
@@ -767,9 +949,7 @@ function reset() {
           <div class="mtitle">Confirmer</div>
           <button class="x" @click="closeConfirm()" title="Fermer">×</button>
         </div>
-        <div class="mbody">
-          {{ confirm.msg }}
-        </div>
+        <div class="mbody">{{ confirm.msg }}</div>
         <div class="mact">
           <button class="btn ghost" @click="closeConfirm()">Annuler</button>
           <button class="btn primary" :disabled="saving || !canSave" @click="closeConfirm(); save();">
@@ -856,7 +1036,26 @@ function reset() {
 .ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .r{ text-align:right; }
 .mono{ font-variant-numeric: tabular-nums; }
-/* ... le reste de ton CSS est identique à ton fichier ... */
+
+.dirtyBadge, .prevBadge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(245,158,11,0.28);
+  background: rgba(245,158,11,0.10);
+  color: rgba(146,64,14,0.98);
+}
+.prevBadge{
+  border-color: rgba(59,130,246,0.25);
+  background: rgba(59,130,246,0.10);
+  color: rgba(29,78,216,0.98);
+}
+.icSm{ width: 14px; height: 14px; }
 
 /* =========================
    STICKY HEADER
@@ -875,7 +1074,7 @@ function reset() {
   border-bottom: 1px solid rgba(16,24,40,0.08);
 }
 .headL{ display:flex; flex-direction:column; gap:3px; min-width:0; }
-.h1{ font-size:14px; font-weight: 1000; line-height: 1.05; color: var(--text); }
+.h1{ font-size:14px; font-weight: 1000; line-height: 1.05; color: var(--text); display:flex; align-items:center; flex-wrap:wrap; }
 .sub{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size: 11.5px; min-width:0; }
 .pill{
   border:1px solid rgba(16,24,40,0.10);

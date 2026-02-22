@@ -1,12 +1,11 @@
 <!-- ✅ src/pages/CabPage.vue (FICHIER COMPLET)
-     ✅ Contrat: CAB à charge client => amortMois forcé à 0 (UI + auto-fix backend),
-     ✅ page reste active, seul champ amortissement verrouillé
-     ✅ Header calqué sur MomdAndQuantityPage (positions/tailles/boutons) + aucune info à côté du titre
-     ✅ Police chiffres: normale (pas monospace), comme FormulesCataloguePage
+     ✅ + Système global "unsaved changes" + bouton Appliquer (preview header)
+     🎨 UI harmonisée sur TransportPage (head/buttons/badges/alerts/typo) — logique inchangée
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal, { type ImportCopyPreset } from "@/components/SectionImportModal.vue";
 
@@ -19,9 +18,12 @@ import {
   TruckIcon,
   ArrowDownTrayIcon,
   LockClosedIcon,
+  EyeIcon,
+  XMarkIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
@@ -72,14 +74,13 @@ const cab = computed<any>(() => (variant.value as any)?.cab ?? null);
 
 /**
  * ✅ CAB à la charge du client ?
- * -> aligné avec ton backend: contract.cab (string contenant "client" ou boolean)
  */
 const cabChargeClient = computed<boolean>(() => {
   const c: any = contract.value ?? {};
   const v: any = variant.value ?? {};
 
   const candidates = [
-    c.cab, // ✅ backend
+    c.cab,
     c.cabChargeClient,
     c.cabAChargeClient,
     c.cabPrisEnChargeParClient,
@@ -124,18 +125,23 @@ const draft = reactive<CabDraft>({
 
 const activeField = ref<keyof CabDraft | null>(null);
 const dirty = ref(false);
+const headerApplied = ref(false);
 
 function resetFromVariant() {
   const c: any = cab.value ?? {};
   draft.etat = String(c.etat ?? "NEUVE");
   draft.mode = String(c.mode ?? "ACHAT");
   draft.capaciteM3 = toNum(c.capaciteM3);
-
-  // ✅ si charge client => draft amort = 0 (UI)
   draft.amortMois = cabChargeClient.value ? 0 : toNum(c.amortMois);
 
   activeField.value = null;
   dirty.value = false;
+
+  // ✅ reset local "applied"
+  headerApplied.value = false;
+
+  // ✅ on purge le preview header (sécurité)
+  (store as any).clearHeaderVariantPreviewPatch?.();
 }
 
 watch(
@@ -145,7 +151,6 @@ watch(
 );
 
 function startEdit(k: keyof CabDraft) {
-  // ✅ seul amortissement est verrouillé
   if (k === "amortMois" && cabChargeClient.value) return;
   activeField.value = k;
 }
@@ -153,9 +158,9 @@ function stopEdit() {
   activeField.value = null;
 }
 function markDirty(field?: keyof CabDraft) {
-  // ✅ si contrat charge client => amort verrouillé, pas de dirty sur amort
   if (field === "amortMois" && cabChargeClient.value) return;
   dirty.value = true;
+  headerApplied.value = false; // ✅ modifs ont changé après apply
 }
 
 /* click ailleurs => déverrouille */
@@ -180,13 +185,18 @@ onBeforeUnmount(() => {
 const toastOpen = ref(false);
 const toastMsg = ref("");
 const toastKind = ref<"ok" | "err" | "info">("ok");
+let toastT: any = null;
 
 function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
   toastMsg.value = msg;
   toastKind.value = kind;
   toastOpen.value = true;
-  window.setTimeout(() => (toastOpen.value = false), 2600);
+  if (toastT) clearTimeout(toastT);
+  toastT = window.setTimeout(() => (toastOpen.value = false), 2400);
 }
+onBeforeUnmount(() => {
+  if (toastT) clearTimeout(toastT);
+});
 
 /* =========================
    MODAL confirm/info
@@ -205,13 +215,6 @@ function openConfirm(title: string, message: string, onConfirm: () => void | Pro
   modal.mode = "confirm";
   modal.onConfirm = onConfirm;
 }
-function openInfo(title: string, message: string) {
-  modal.open = true;
-  modal.title = title;
-  modal.message = message;
-  modal.mode = "info";
-  modal.onConfirm = null;
-}
 function closeModal() {
   modal.open = false;
   modal.title = "";
@@ -220,7 +223,7 @@ function closeModal() {
 }
 
 /* =========================
-   ✅ AUTO-FIX BACKEND (important pour dashboard)
+   ✅ AUTO-FIX BACKEND
 ========================= */
 const fixBusy = ref(false);
 const fixErr = ref<string | null>(null);
@@ -241,6 +244,7 @@ async function ensureAmortZeroIfChargeClient() {
     await (store as any).updateVariant(vId, { cab: { amortMois: 0 } });
     draft.amortMois = 0;
     dirty.value = false;
+    headerApplied.value = false;
     showToast("Amortissement forcé à 0 (contrat: charge client).", "info");
   } catch (e: any) {
     fixErr.value = e?.message ?? String(e);
@@ -257,11 +261,8 @@ watch(
 );
 
 /* =========================
-   SAVE CAB
+   BUILD PAYLOAD
 ========================= */
-const saving = ref(false);
-const err = ref<string | null>(null);
-
 function buildCabPayload() {
   const existing: any = cab.value ?? {};
   return {
@@ -273,20 +274,45 @@ function buildCabPayload() {
   };
 }
 
-async function saveCab() {
+/* =========================
+   ✅ APPLY (Preview header KPIs)
+========================= */
+function applyToHeader() {
+  if (!dirty.value) return;
+
+  // preview patch header uniquement
+  (store as any).setHeaderVariantPreviewPatch?.({ cab: buildCabPayload() });
+  headerApplied.value = true;
+  showToast("Changements appliqués au dashboard (preview).", "info");
+}
+
+/* =========================
+   SAVE CAB
+========================= */
+const saving = ref(false);
+const err = ref<string | null>(null);
+
+async function saveCab(): Promise<boolean> {
   const variantId = String(variant.value?.id ?? (store as any).activeVariantId ?? "").trim();
-  if (!variantId) return;
+  if (!variantId) return false;
 
   err.value = null;
   saving.value = true;
   try {
     await (store as any).updateVariant(variantId, { cab: buildCabPayload() });
+
+    // ✅ on purge le preview (le header doit refléter le "naturel" persisté)
+    (store as any).clearHeaderVariantPreviewPatch?.();
+
     activeField.value = null;
     dirty.value = false;
+    headerApplied.value = false;
     showToast("CAB enregistrée.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
+    return false;
   } finally {
     saving.value = false;
   }
@@ -303,6 +329,13 @@ function askReset() {
     closeModal();
     resetFromVariant();
     showToast("Valeurs restaurées.", "info");
+  });
+}
+function askDiscard() {
+  openConfirm("Annuler", "Annuler les modifications non enregistrées ?", async () => {
+    closeModal();
+    await discardCab();
+    showToast("Modifications annulées.", "info");
   });
 }
 
@@ -333,11 +366,11 @@ function applyCabFromVariant(srcVariant: any) {
   draft.etat = String(c?.etat ?? "NEUVE");
   draft.mode = String(c?.mode ?? "ACHAT");
   draft.capaciteM3 = toNum(c?.capaciteM3);
-
   draft.amortMois = cabChargeClient.value ? 0 : toNum(c?.amortMois);
 
   activeField.value = null;
   dirty.value = true;
+  headerApplied.value = false;
 }
 
 async function onApplyImport(payload: { sourceVariantId: string; copy: ImportCopyPreset }) {
@@ -434,7 +467,7 @@ const dureeMois = computed<number>(() => Math.max(1, toNum(contract.value?.duree
 const amortMoisEff = computed<number>(() => (cabChargeClient.value ? 0 : toNum(draft.amortMois)));
 const amortTotal = computed<number>(() => amortMoisEff.value * dureeMois.value);
 
-/* % du CA (si dispo via formules/transport/mp synchronisés) */
+/* % du CA */
 const formules = computed<any[]>(() => (variant.value?.formules?.items ?? []) as any[]);
 const volumeTotal = computed<number>(() => formules.value.reduce((s, vf) => s + toNum(vf?.volumeM3), 0));
 const transportPrixMoyen = computed<number>(() => toNum(variant.value?.transport?.prixMoyen));
@@ -442,10 +475,8 @@ const transportPrixMoyen = computed<number>(() => toNum(variant.value?.transport
 function mpPriceUsed(mpId: string): number {
   const vmp = (variant.value?.mp?.items ?? []).find((x: any) => String(x.mpId) === String(mpId));
   if (!vmp) return 0;
-
   if (vmp?.prix != null) return toNum(vmp.prix);
   if (vmp?.prixOverride != null) return toNum(vmp.prixOverride);
-
   return toNum(vmp?.mp?.prix);
 }
 function cmpParM3For(vf: any): number {
@@ -471,217 +502,321 @@ const amortPctCa = computed<number>(() => {
   if (ca <= 0) return 0;
   return (amortTotal.value / ca) * 100;
 });
+
+/* =========================
+   ✅ UNSAVED GLOBAL INTEGRATION
+========================= */
+const PAGE_KEY = "CAB";
+
+async function discardCab() {
+  // revert header preview
+  (store as any).clearHeaderVariantPreviewPatch?.();
+  headerApplied.value = false;
+
+  // optionnel: reset draft (cohérent "quitter sans enregistrer")
+  resetFromVariant();
+}
+
+onMounted(() => {
+  unsaved.registerPage({
+    pageKey: PAGE_KEY,
+    save: async () => await saveCab(),
+    discard: async () => await discardCab(),
+  });
+});
+
+watch(dirty, (v) => unsaved.setDirty(Boolean(v)), { immediate: true });
+
+onBeforeUnmount(() => {
+  unsaved.unregisterPage(PAGE_KEY);
+});
 </script>
 
 <template>
   <div class="page">
-    <!-- ✅ Header calqué sur MomdAndQuantityPage -->
-    <div class="subhdr">
-      <div class="row">
-        <div class="left">
-          <div class="ttl">CAB</div>
+    <!-- ✅ Header sticky (aligné TransportPage) -->
+    <div class="head">
+      <div class="headL">
+        <div class="h1">
+          CAB
+          <span v-if="variant && dirty" class="dirtyBadge" title="Modifications non enregistrées">
+            <ExclamationTriangleIcon class="icSm" />
+            Modifié
+          </span>
+          <span v-if="variant && headerApplied" class="prevBadge" title="Prévisualisation appliquée au header">
+            <EyeIcon class="icSm" />
+            Preview
+          </span>
         </div>
 
-        <div class="actions" v-if="variant">
-          <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="askReset()">
-            <ArrowPathIcon class="ic" />
-            Reset
-          </button>
+        <div class="sub muted" v-if="variant">
+          Variante active :
+          <b class="ell">{{ variant?.title ?? String(variant?.id ?? "").slice(0, 6) }}</b>
+          <span v-if="dureeMois" class="dot">•</span>
+          <span v-if="dureeMois" class="pill">{{ n(dureeMois, 0) }} mois</span>
 
-          <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="impOpen = true">
-            <ArrowDownTrayIcon class="ic" />
-            {{ impBusy ? "…" : "Importer" }}
-          </button>
-
-          <button class="btn" :disabled="saving || genBusy || impBusy || fixBusy" @click="genOpen = true">
-            <Squares2X2Icon class="ic" />
-            {{ genBusy ? "…" : "Généraliser" }}
-          </button>
-
-          <button class="btn pri" :disabled="saving || !dirty || impBusy || fixBusy" @click="askSave()">
-            <CheckCircleIcon class="ic" />
-            {{ saving ? "…" : "Enregistrer" }}
-          </button>
+          <span v-if="cabChargeClient" class="dot">•</span>
+          <span v-if="cabChargeClient" class="pill pill-warn" title="Amortissement verrouillé par contrat">
+            <LockClosedIcon class="icSm" />
+            Charge client
+          </span>
         </div>
+        <div class="sub muted" v-else>Aucune variante active.</div>
       </div>
 
-      <!-- ✅ Indication discrète (pas à côté du titre) -->
-      <div v-if="variant && cabChargeClient" class="hintLock">
-        <LockClosedIcon class="lic" />
-        Amortissement verrouillé (contrat à charge client) — valeur forcée à 0.
-      </div>
+      <div class="headR">
+        <button
+          class="btn"
+          type="button"
+          :disabled="!variant || saving || genBusy || impBusy || fixBusy || !dirty"
+          @click="applyToHeader()"
+          title="Appliquer au header (sans enregistrer)"
+        >
+          <EyeIcon class="ic" />
+          Appliquer
+        </button>
 
+        <button
+          class="btn ghost"
+          type="button"
+          :disabled="!variant || saving || genBusy || impBusy || fixBusy || (!dirty && !headerApplied)"
+          @click="askDiscard()"
+          title="Annuler les modifications"
+        >
+          <XMarkIcon class="ic" />
+          Annuler
+        </button>
+
+        <button
+          class="btn"
+          type="button"
+          :disabled="!variant || saving || genBusy || impBusy || fixBusy"
+          @click="askReset()"
+          title="Réinitialiser"
+        >
+          <ArrowPathIcon class="ic" />
+          Réinitialiser
+        </button>
+
+        <button
+          class="btn"
+          type="button"
+          :disabled="!variant || saving || genBusy || impBusy || fixBusy"
+          @click="impOpen = true"
+          title="Importer"
+        >
+          <ArrowDownTrayIcon class="ic" />
+          {{ impBusy ? "..." : "Importer" }}
+        </button>
+
+        <button
+          class="btn"
+          type="button"
+          :disabled="!variant || saving || genBusy || impBusy || fixBusy"
+          @click="genOpen = true"
+          title="Généraliser"
+        >
+          <Squares2X2Icon class="ic" />
+          {{ genBusy ? "..." : "Généraliser" }}
+        </button>
+
+        <button
+          class="btn primary"
+          type="button"
+          :disabled="!variant || saving || !dirty || impBusy || fixBusy"
+          @click="askSave()"
+          title="Enregistrer"
+        >
+          <CheckCircleIcon class="ic" />
+          {{ saving ? "..." : "Enregistrer" }}
+        </button>
+      </div>
+    </div>
+
+    <div v-if="(store as any).loading" class="alert info">
+      <ArrowPathIcon class="ic spin" />
+      Chargement…
+    </div>
+    <div v-else-if="(store as any).error" class="alert err">
+      <ExclamationTriangleIcon class="ic" />
+      <div><b>Erreur :</b> {{ (store as any).error }}</div>
+    </div>
+
+    <template v-else>
       <div v-if="err" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
+        <ExclamationTriangleIcon class="ic" />
         <div><b>Erreur :</b> {{ err }}</div>
       </div>
 
       <div v-if="fixErr" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
+        <ExclamationTriangleIcon class="ic" />
         <div><b>Contrat → Fix amortissement :</b> {{ fixErr }}</div>
       </div>
 
       <div v-if="genErr" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
+        <ExclamationTriangleIcon class="ic" />
         <div><b>Généralisation :</b> {{ genErr }}</div>
       </div>
 
       <div v-if="impErr" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
+        <ExclamationTriangleIcon class="ic" />
         <div><b>Import :</b> {{ impErr }}</div>
       </div>
 
-      <div v-if="(store as any).loading" class="alert">
-        <div>Chargement…</div>
+      <div v-if="!variant" class="card muted">
+        Sélectionne une variante (via Mes P&L) puis reviens ici.
       </div>
 
-      <div v-else-if="(store as any).error" class="alert err">
-        <ExclamationTriangleIcon class="aic" />
-        <div><b>Erreur :</b> {{ (store as any).error }}</div>
-      </div>
-    </div>
-
-    <div v-if="!variant" class="card">
-      <div class="empty">Sélectionne une variante puis reviens ici.</div>
-    </div>
-
-    <template v-else>
-      <div class="grid">
-        <div class="card">
-          <div class="cardHdr">
-            <div class="cardTtl">
-              <TruckIcon class="ic3" />
-              <div>
-                <div class="h">Données CAB</div>
-                <div class="p">
-                  Clique sur une valeur pour modifier.
-                  <span class="muted">Seul l’amortissement est verrouillé si charge client.</span>
+      <template v-else>
+        <div class="grid">
+          <!-- LEFT -->
+          <div class="card">
+            <div class="cardHdr">
+              <div class="cardTtl">
+                <TruckIcon class="ic3" />
+                <div class="twrap">
+                  <div class="h">Données CAB</div>
+                  <div class="p muted">
+                    Clique sur une valeur pour modifier.
+                    <span class="muted">Seul l’amortissement est verrouillé si charge client.</span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <div class="rows">
-            <div class="rrow">
-              <div class="lab">État</div>
-              <div class="val">
-                <template v-if="activeField === 'etat'">
-                  <select class="inSel" v-model="draft.etat" @change="markDirty('etat')" data-editor="1">
-                    <option value="NEUVE">NEUVE</option>
-                    <option value="OCCASION">OCCASION</option>
-                  </select>
-                </template>
-                <template v-else>
-                  <span class="click" @click="startEdit('etat')">{{ draft.etat }}</span>
-                </template>
-              </div>
-            </div>
-
-            <div class="rrow">
-              <div class="lab">Mode</div>
-              <div class="val">
-                <template v-if="activeField === 'mode'">
-                  <select class="inSel" v-model="draft.mode" @change="markDirty('mode')" data-editor="1">
-                    <option value="ACHAT">ACHAT</option>
-                    <option value="LOCATION">LOCATION</option>
-                    <option value="LEASING">LEASING</option>
-                  </select>
-                </template>
-                <template v-else>
-                  <span class="click" @click="startEdit('mode')">{{ draft.mode }}</span>
-                </template>
-              </div>
-            </div>
-
-            <div class="rrow">
-              <div class="lab">Capacité (m³)</div>
-              <div class="val">
-                <template v-if="activeField === 'capaciteM3'">
-                  <input
-                    class="inNum mono"
-                    type="number"
-                    step="0.1"
-                    v-model.number="draft.capaciteM3"
-                    @input="markDirty('capaciteM3')"
-                    data-editor="1"
-                  />
-                </template>
-                <template v-else>
-                  <span class="click mono" @click="startEdit('capaciteM3')">{{ n(draft.capaciteM3, 1) }}</span>
-                </template>
-              </div>
-            </div>
-
-            <div class="rrow">
-              <div class="lab">
-                Amortissement / mois
-                <span v-if="cabChargeClient" class="lockPill">
-                  <LockClosedIcon class="lic2" />
-                  Contrat
-                </span>
+            <div class="rows">
+              <div class="rrow">
+                <div class="lab">État</div>
+                <div class="val">
+                  <template v-if="activeField === 'etat'">
+                    <select class="inSel" v-model="draft.etat" @change="markDirty('etat')" data-editor="1">
+                      <option value="NEUVE">NEUVE</option>
+                      <option value="OCCASION">OCCASION</option>
+                    </select>
+                  </template>
+                  <template v-else>
+                    <span class="click" @click="startEdit('etat')">{{ draft.etat }}</span>
+                  </template>
+                </div>
               </div>
 
-              <div class="val">
-                <template v-if="cabChargeClient">
-                  <span class="click mono lockedVal" title="Verrouillé par contrat">
-                    <b>{{ money(0, 2) }}</b>
-                  </span>
-                </template>
+              <div class="rrow">
+                <div class="lab">Mode</div>
+                <div class="val">
+                  <template v-if="activeField === 'mode'">
+                    <select class="inSel" v-model="draft.mode" @change="markDirty('mode')" data-editor="1">
+                      <option value="ACHAT">ACHAT</option>
+                      <option value="LOCATION">LOCATION</option>
+                      <option value="LEASING">LEASING</option>
+                    </select>
+                  </template>
+                  <template v-else>
+                    <span class="click" @click="startEdit('mode')">{{ draft.mode }}</span>
+                  </template>
+                </div>
+              </div>
 
-                <template v-else>
-                  <template v-if="activeField === 'amortMois'">
+              <div class="rrow">
+                <div class="lab">Capacité (m³)</div>
+                <div class="val">
+                  <template v-if="activeField === 'capaciteM3'">
                     <input
                       class="inNum mono"
                       type="number"
-                      step="0.01"
-                      v-model.number="draft.amortMois"
-                      @input="markDirty('amortMois')"
+                      step="0.1"
+                      v-model.number="draft.capaciteM3"
+                      @input="markDirty('capaciteM3')"
                       data-editor="1"
                     />
                   </template>
                   <template v-else>
-                    <span class="click mono" @click="startEdit('amortMois')">
-                      <b>{{ money(draft.amortMois, 2) }}</b>
+                    <span class="click mono" @click="startEdit('capaciteM3')">{{ n(draft.capaciteM3, 1) }}</span>
+                  </template>
+                </div>
+              </div>
+
+              <div class="rrow">
+                <div class="lab">
+                  Amortissement / mois
+                  <span v-if="cabChargeClient" class="pill pill-warn" title="Verrouillé par contrat">
+                    <LockClosedIcon class="icSm" />
+                    Contrat
+                  </span>
+                </div>
+
+                <div class="val">
+                  <template v-if="cabChargeClient">
+                    <span class="click mono lockedVal" title="Verrouillé par contrat">
+                      <b>{{ money(0, 2) }}</b>
                     </span>
                   </template>
-                </template>
+
+                  <template v-else>
+                    <template v-if="activeField === 'amortMois'">
+                      <input
+                        class="inNum mono"
+                        type="number"
+                        step="0.01"
+                        v-model.number="draft.amortMois"
+                        @input="markDirty('amortMois')"
+                        data-editor="1"
+                      />
+                    </template>
+                    <template v-else>
+                      <span class="click mono" @click="startEdit('amortMois')">
+                        <b>{{ money(draft.amortMois, 2) }}</b>
+                      </span>
+                    </template>
+                  </template>
+                </div>
               </div>
+            </div>
+
+            <div class="note">
+              Amortissement total = amort./mois × durée.
+              <b v-if="cabChargeClient"> Contrat charge client ⇒ amortissement = 0.</b>
             </div>
           </div>
 
-          <div class="note">
-            Amortissement total = amort./mois × durée.
-            <b v-if="cabChargeClient"> Contrat charge client ⇒ amortissement = 0.</b>
-          </div>
-        </div>
+          <!-- RIGHT -->
+          <div class="side">
+            <div class="card sideCard">
+              <div class="sideTitle">Résumé</div>
 
-        <div class="card side">
-          <div class="sideTtl">Repères</div>
-          <div class="sideLine">
-            <span class="k">Durée</span>
-            <span class="v mono">{{ n(dureeMois, 0) }} mois</span>
+              <div class="kv">
+                <div class="k muted">Durée</div>
+                <div class="v mono">{{ n(dureeMois, 0) }} <span class="muted">mois</span></div>
+              </div>
+
+              <div class="kv" style="margin-top:10px">
+                <div class="k muted">Amort./mois</div>
+                <div class="v mono">{{ money(amortMoisEff, 2) }}</div>
+              </div>
+
+              <div class="kv" style="margin-top:10px">
+                <div class="k muted">Total</div>
+                <div class="v mono">{{ money(amortTotal, 2) }}</div>
+              </div>
+
+              <div class="kv" style="margin-top:10px">
+                <div class="k muted">% CA</div>
+                <div class="v mono">{{ n(amortPctCa, 2) }} <span class="muted">%</span></div>
+              </div>
+
+              <div class="sideHint muted">Si le CA = 0 (formules non saisies), le % reste à 0.</div>
+            </div>
           </div>
-          <div class="sideLine">
-            <span class="k">Amort./mois</span>
-            <span class="v mono">{{ money(amortMoisEff, 2) }}</span>
-          </div>
-          <div class="sideLine">
-            <span class="k">Total</span>
-            <span class="v mono">{{ money(amortTotal, 2) }}</span>
-          </div>
-          <div class="sideLine">
-            <span class="k">% CA</span>
-            <span class="v mono">{{ n(amortPctCa, 2) }}%</span>
-          </div>
-          <div class="sideHint muted">Si le CA = 0 (formules non saisies), le % reste à 0.</div>
         </div>
-      </div>
+      </template>
     </template>
 
-    <!-- ✅ MODAL IMPORT -->
-    <SectionImportModal v-model="impOpen" sectionLabel="CAB" :targetVariantId="variant?.id ?? null" @apply="onApplyImport" />
+    <SectionImportModal
+      v-model="impOpen"
+      sectionLabel="CAB"
+      :targetVariantId="variant?.id ?? null"
+      @apply="onApplyImport"
+    />
 
-    <!-- ✅ MODAL GENERALISATION -->
     <SectionTargetsGeneralizeModal
       v-model="genOpen"
       sectionLabel="CAB"
@@ -689,24 +824,20 @@ const amortPctCa = computed<number>(() => {
       @apply="onApplyGeneralize"
     />
 
-    <!-- ✅ Modal confirm/info -->
+    <!-- ✅ Modal confirm/info (local page: reset/save/generalize/annuler) -->
     <teleport to="body">
-      <div v-if="modal.open" class="ovl underDash" role="dialog" aria-modal="true" @mousedown.self="closeModal()">
-        <div class="dlg">
-          <div class="dlgHdr">
-            <div class="dlgTtl">{{ modal.title }}</div>
-            <button class="x" type="button" @click="closeModal()" aria-label="Fermer">✕</button>
+      <div v-if="modal.open" class="overlay" role="dialog" aria-modal="true" @click.self="closeModal()">
+        <div class="modal">
+          <div class="mhead">
+            <div class="mtitle">{{ modal.title }}</div>
+            <button class="x" type="button" @click="closeModal()" aria-label="Fermer">×</button>
           </div>
 
-          <div class="dlgBody">
-            <div class="dlgMsg">{{ modal.message }}</div>
-          </div>
+          <div class="mbody">{{ modal.message }}</div>
 
-          <div class="dlgFtr">
-            <button class="btn2" type="button" @click="closeModal()">Fermer</button>
-            <button v-if="modal.mode === 'confirm'" class="btn2 pri" type="button" @click="modal.onConfirm && modal.onConfirm()">
-              Confirmer
-            </button>
+          <div class="mact">
+            <button class="btn ghost" type="button" @click="closeModal()">Annuler</button>
+            <button class="btn primary" type="button" @click="modal.onConfirm && modal.onConfirm()">Confirmer</button>
           </div>
         </div>
       </div>
@@ -714,428 +845,378 @@ const amortPctCa = computed<number>(() => {
 
     <!-- ✅ Toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err' }" role="status" aria-live="polite">
-        <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
-        <ExclamationTriangleIcon v-else class="tic" />
+      <div v-if="toastOpen" class="toast" :class="toastKind" role="status" aria-live="polite">
+        <div class="ticon">
+          <CheckCircleIcon v-if="toastKind === 'ok'" class="ic" />
+          <ExclamationTriangleIcon v-else class="ic" />
+        </div>
         <div class="tmsg">{{ toastMsg }}</div>
+        <button class="tclose" @click="toastOpen = false" title="Fermer">×</button>
       </div>
     </teleport>
   </div>
 </template>
 
 <style scoped>
-.page {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.muted {
-  color: rgba(15, 23, 42, 0.55);
-}
+/* ✅ Aligné TransportPage */
+.page{
+  --text:#0f172a;
+  --muted: rgba(15,23,42,0.62);
+  --b: rgba(16,24,40,0.12);
+  --soft: rgba(15,23,42,0.04);
 
-/* ✅ police normale (pas monospace) + chiffres tabulaires */
-.mono {
-  font-variant-numeric: tabular-nums;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding: 0 10px 14px;
 }
+.page, .page *{ box-sizing: border-box; }
+.muted{ color: var(--muted); }
+.dot{ color: rgba(148,163,184,1); font-weight: 900; }
+.ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.mono{ font-variant-numeric: tabular-nums; }
 
-/* sticky subheader (même esprit que MomdAndQuantityPage) */
-.subhdr {
+/* badges (dirty / preview) */
+.dirtyBadge, .prevBadge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(245,158,11,0.28);
+  background: rgba(245,158,11,0.10);
+  color: rgba(146,64,14,0.98);
+}
+.prevBadge{
+  border-color: rgba(59,130,246,0.25);
+  background: rgba(59,130,246,0.10);
+  color: rgba(29,78,216,0.98);
+}
+.icSm{ width: 14px; height: 14px; }
+
+/* =========================
+   STICKY HEADER
+========================= */
+.head{
   position: sticky;
-  top: var(--hdrdash-h, -15px);
-  z-index: 50;
-  background: rgba(248, 250, 252, 0.92);
+  top: -15px;
+  z-index: 40;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:10px;
+  padding: 8px 0;
+  background: rgba(248,250,252,0.92);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  border-radius: 16px;
-  padding: 10px;
+  border-bottom: 1px solid rgba(16,24,40,0.08);
 }
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+.headL{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.h1{
+  font-size:14px;
+  font-weight: 1000;
+  line-height: 1.05;
+  color: var(--text);
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
 }
-.left {
-  display: flex;
-  align-items: center;
-  min-width: 180px;
+.sub{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+  font-size: 11.5px;
+  min-width:0;
 }
-.ttl {
-  font-size: 15px;
+.pill{
+  border:1px solid rgba(16,24,40,0.10);
+  background: rgba(255,255,255,0.82);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
   font-weight: 950;
-  color: #0f172a;
+  color: rgba(15,23,42,0.78);
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.pill-warn{
+  border-color: rgba(245,158,11,0.28);
+  background: rgba(245,158,11,0.10);
+  color: rgba(146,64,14,0.98);
 }
 
-/* actions (mêmes tailles) */
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.btn {
-  height: 32px;
+.headR{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+/* buttons */
+.btn{
+  height: 30px;
+  border:1px solid var(--b);
+  background: rgba(255,255,255,0.84);
   border-radius: 12px;
-  padding: 0 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  color: #0f172a;
-  font-weight: 950;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-.btn:hover {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.18);
-}
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.btn.pri {
-  background: rgba(2, 132, 199, 0.12);
-  border-color: rgba(2, 132, 199, 0.28);
-}
-.btn.pri:hover {
-  background: rgba(2, 132, 199, 0.18);
-}
-.ic {
-  width: 18px;
-  height: 18px;
-}
-
-/* hint discret sous header */
-.hintLock {
-  margin-top: 8px;
-  border-radius: 14px;
-  padding: 9px 10px;
-  border: 1px solid rgba(124, 45, 18, 0.18);
-  background: rgba(255, 247, 237, 0.75);
-  display: inline-flex;
-  gap: 10px;
-  align-items: center;
+  padding: 6px 10px;
+  font-size: 12px;
   font-weight: 900;
-  color: rgba(124, 45, 18, 0.95);
+  color: rgba(15,23,42,0.86);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(15,23,42,0.06);
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
 }
-.lic {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
+.btn:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
+.btn.primary{
+  background: rgba(24,64,112,0.92);
+  border-color: rgba(24,64,112,0.6);
+  color:#fff;
+  box-shadow:none;
 }
+.btn.primary:hover{ background: rgba(24,64,112,1); }
+.btn.ghost{ background: rgba(255,255,255,0.72); }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.ic{ width:16px; height:16px; }
+.spin{ animation: spin .9s linear infinite; }
+@keyframes spin{ from{ transform: rotate(0);} to{ transform: rotate(360deg);} }
 
 /* alerts */
-.alert {
-  margin-top: 8px;
+.alert{
+  border:1px solid var(--b);
   border-radius: 14px;
-  padding: 9px 10px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  padding: 8px 10px;
+  background:#fff;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15,23,42,0.86);
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
 }
-.alert.err {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.22);
-}
-.aic {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
+.alert.err{ border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); color: rgba(127,29,29,0.95); }
+.alert.info{ border-color: rgba(59,130,246,0.25); background: rgba(59,130,246,0.08); }
 
-/* cards */
-.card {
+/* grid/cards */
+.grid{
+  display:grid;
+  grid-template-columns: minmax(520px, 1fr) 320px;
+  gap: 10px;
+  align-items:start;
+}
+@media (max-width: 1060px){
+  .grid{ grid-template-columns: 1fr; }
+}
+.card{
+  background: rgba(255,255,255,0.92);
+  border:1px solid var(--b);
   border-radius: 16px;
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  background: #fff;
-  overflow: hidden;
+  box-shadow: 0 10px 22px rgba(15,23,42,0.06);
+  overflow:hidden;
 }
-.empty {
-  padding: 12px;
-  font-weight: 850;
-  color: rgba(15, 23, 42, 0.6);
-}
-
-/* layout */
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 10px;
-  align-items: start;
-}
-@media (max-width: 980px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* CAB card */
-.cardHdr {
+.card.muted{
   padding: 10px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  color: var(--muted);
+  font-weight: 900;
 }
-.cardTtl {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+
+/* left card head (conserve look mais harmonise typo) */
+.cardHdr{
+  padding: 10px;
+  border-bottom: 1px solid rgba(16,24,40,0.08);
 }
-.ic3 {
+.cardTtl{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.ic3{
   width: 18px;
   height: 18px;
-  color: rgba(15, 23, 42, 0.75);
+  color: rgba(15,23,42,0.75);
 }
-.h {
-  font-weight: 950;
-  color: #0f172a;
-  font-size: 13px;
-}
-.p {
-  font-weight: 750;
-  color: rgba(15, 23, 42, 0.55);
+.twrap{ min-width:0; }
+.h{
+  font-weight: 1000;
+  color: var(--text);
   font-size: 12px;
 }
+.p{
+  font-weight: 900;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
 
-.rows {
+/* rows */
+.rows{
   padding: 10px;
-  display: flex;
-  flex-direction: column;
+  display:flex;
+  flex-direction:column;
   gap: 8px;
 }
-.rrow {
-  display: grid;
+.rrow{
+  display:grid;
   grid-template-columns: 180px 1fr;
   gap: 10px;
-  align-items: center;
+  align-items:center;
 }
-@media (max-width: 980px) {
-  .rrow {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 980px){
+  .rrow{ grid-template-columns: 1fr; }
 }
-.lab {
+.lab{
   font-size: 11px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.65);
-  display: inline-flex;
-  align-items: center;
+  font-weight: 950;
+  color: rgba(15,23,42,0.62);
+  display:inline-flex;
+  align-items:center;
   gap: 8px;
 }
-.lockPill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  font-weight: 950;
-  color: #7c2d12;
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  padding: 1px 6px;
-  border-radius: 999px;
-}
-.lic2 {
-  width: 12px;
-  height: 12px;
-}
+.val{ min-height: 34px; display:flex; align-items:center; }
 
-.val {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-}
-.click {
+/* click-to-edit */
+.click{
   cursor: pointer;
   padding: 6px 8px;
   border-radius: 12px;
-  border: 1px solid rgba(16, 24, 40, 0.1);
-  background: rgba(15, 23, 42, 0.02);
-}
-.click:hover {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.18);
-}
-.lockedVal {
-  cursor: not-allowed;
-  opacity: 0.95;
-}
-
-.inSel,
-.inNum {
-  width: 100%;
-  height: 34px;
-  border-radius: 12px;
-  border: 1px solid rgba(2, 132, 199, 0.26);
-  background: rgba(2, 132, 199, 0.06);
-  padding: 0 10px;
+  border: 1px solid rgba(16,24,40,0.10);
+  background: rgba(15,23,42,0.02);
   font-weight: 950;
-  color: #0f172a;
-  outline: none;
+  color: rgba(15,23,42,0.86);
+  width: 100%;
 }
-.inNum {
-  text-align: right;
+.click:hover{
+  background: rgba(32,184,232,0.12);
+  border-color: rgba(32,184,232,0.18);
 }
-.inSel:focus,
-.inNum:focus {
-  border-color: rgba(2, 132, 199, 0.55);
-  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+.lockedVal{ cursor:not-allowed; opacity: .9; }
+
+/* inputs */
+.inSel, .inNum{
+  width: 100%;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: #fff;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 950;
+  color: var(--text);
+  outline:none;
+}
+.inNum{ text-align:right; }
+.inSel:focus, .inNum:focus{
+  border-color: rgba(32,184,232,0.35);
+  box-shadow: 0 0 0 4px rgba(32,184,232,0.12);
 }
 
-.note {
+/* note */
+.note{
   padding: 8px 10px;
-  border-top: 1px dashed rgba(16, 24, 40, 0.14);
+  border-top: 1px dashed rgba(16,24,40,0.14);
   font-size: 11.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.65);
+  font-weight: 900;
+  color: rgba(15,23,42,0.70);
 }
 
 /* side */
-.side {
-  padding: 10px;
-}
-.sideTtl {
-  font-weight: 950;
-  color: #0f172a;
+.side{ position: relative; }
+.sideCard{ position: sticky; top: 64px; padding: 10px; }
+.sideTitle{
+  font-size: 12px;
+  font-weight: 1000;
+  color: var(--text);
   margin-bottom: 8px;
 }
-.sideLine {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.06);
+.kv{
+  padding: 8px;
+  border:1px solid rgba(16,24,40,0.10);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.85);
 }
-.sideLine:last-child {
-  border-bottom: none;
-}
-.sideLine .k {
-  font-size: 11px;
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.6);
-}
-.sideLine .v {
-  font-weight: 950;
-  color: #0f172a;
-}
-.sideHint {
-  margin-top: 10px;
-  font-size: 11.5px;
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.6);
-}
+.k{ font-size: 10.5px; font-weight: 950; letter-spacing: .2px; }
+.v{ margin-top: 4px; font-size: 13px; font-weight: 1000; color: var(--text); }
+.sideHint{ margin-top: 10px; font-size: 11.5px; font-weight: 900; }
 
-/* modal */
-.ovl {
+/* modal (Transport style) */
+.overlay{
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  z-index: 120000;
+  background: rgba(2,6,23,0.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 14px;
+  z-index: 99999;
 }
-.ovl.underDash {
-  align-items: flex-start;
-  padding-top: 82px;
-}
-.dlg {
-  width: min(520px, 100%);
-  background: #fff;
-  border-radius: 16px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
+.modal{
+  width: min(560px, 96vw);
+  background: linear-gradient(180deg, #eef1f6 0%, #ffffff 40%);
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  border-radius: 18px;
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.35);
   overflow: hidden;
 }
-.dlgHdr {
-  padding: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+.mhead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid rgba(16,24,40,0.10);
 }
-.dlgTtl {
-  font-weight: 950;
-  color: #0f172a;
-}
-.x {
-  width: 34px;
-  height: 34px;
+.mtitle{ font-size: 13px; font-weight: 1000; color: var(--text); }
+.x{
+  width: 30px; height: 30px;
   border-radius: 12px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  cursor: pointer;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.04);
+  cursor:pointer;
+  font-size: 18px;
+  line-height: 1;
 }
-.dlgBody {
-  padding: 12px;
-}
-.dlgMsg {
-  font-weight: 800;
-  color: rgba(15, 23, 42, 0.8);
-  line-height: 1.45;
-}
-.dlgFtr {
-  padding: 10px;
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  border-top: 1px solid rgba(16, 24, 40, 0.08);
-}
-.btn2 {
-  height: 34px;
-  border-radius: 12px;
-  padding: 0 12px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(15, 23, 42, 0.03);
-  font-weight: 950;
-  cursor: pointer;
-}
-.btn2.pri {
-  background: rgba(2, 132, 199, 0.12);
-  border-color: rgba(2, 132, 199, 0.28);
-}
-
-/* toast */
-.toast {
-  position: fixed;
-  right: 12px;
-  bottom: 12px;
-  z-index: 100000;
-  display: flex;
-  align-items: center;
+.x:hover{ background: rgba(32,184,232,0.12); border-color: rgba(32,184,232,0.18); }
+.mbody{ padding: 12px 14px 10px; font-size: 12.5px; font-weight: 900; color: rgba(15,23,42,0.86); }
+.mact{
+  padding: 10px 14px 14px;
+  display:flex;
+  justify-content:flex-end;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.15);
-}
-.toast.err {
-  border-color: rgba(239, 68, 68, 0.22);
-}
-.tic {
-  width: 18px;
-  height: 18px;
-}
-.tmsg {
-  font-weight: 900;
-  color: rgba(15, 23, 42, 0.85);
+  border-top: 1px solid rgba(16,24,40,0.10);
+  background: rgba(255,255,255,0.72);
 }
 
-/* safe overlays from child modals */
-:deep(.modalOverlay) {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 100000 !important;
+/* toast (Transport style) */
+.toast{
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100000;
+  display:flex;
+  gap:10px;
+  align-items:center;
+
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 18px 60px rgba(15,23,42,0.20);
+  max-width: min(520px, 92vw);
 }
-:deep(.modalDialog),
-:deep(.modalCard),
-:deep(.modalPanel) {
-  z-index: 100001 !important;
+.toast.ok{ border-color: rgba(34,197,94,0.25); }
+.toast.err{ border-color: rgba(239,68,68,0.28); }
+.toast.info{ border-color: rgba(59,130,246,0.22); }
+.ticon{ display:flex; align-items:center; }
+.tmsg{ font-size: 12px; font-weight: 950; color: rgba(15,23,42,0.86); }
+.tclose{
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: rgba(15,23,42,0.55);
+  padding: 0 4px;
 }
+.tclose:hover{ color: rgba(15,23,42,0.85); }
 </style>

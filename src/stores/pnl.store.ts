@@ -67,6 +67,72 @@ async function blobFetch(url: string, opts?: RequestInit): Promise<Response> {
 
 type AnyObj = Record<string, any>;
 
+/* =========================================================
+   ✅ Header preview patch helper (merge sections safely)
+   - Ce patch n'impacte QUE activeHeaderKPIs
+========================================================= */
+function mergeVariantForHeader(base: AnyObj, patch: AnyObj): AnyObj {
+  if (!patch) return base;
+
+  const out: AnyObj = { ...base, ...patch };
+
+  const sectionKeys = [
+    // backend
+    "cab",
+    "transport",
+    "mp",
+    "formules",
+    "maintenance",
+    "coutM3",
+    "coutMensuel",
+    "coutOccasionnel",
+    "employes",
+    "autresCouts",
+    "majorations",
+    "devis",
+    "details",
+
+    // compat front/anciens alias
+    "momd",
+    "coutEmployes",
+    "coutsOccasionnels",
+  ];
+
+  for (const k of sectionKeys) {
+    const b = (base as any)?.[k];
+    const p = (patch as any)?.[k];
+
+    if (
+      b &&
+      p &&
+      typeof b === "object" &&
+      typeof p === "object" &&
+      !Array.isArray(b) &&
+      !Array.isArray(p)
+    ) {
+      out[k] = { ...b, ...p };
+    }
+  }
+
+  // compat croisée occasionnels
+  if ((out as any).coutOccasionnel && !(out as any).coutsOccasionnels) {
+    (out as any).coutsOccasionnels = (out as any).coutOccasionnel;
+  }
+  if ((out as any).coutsOccasionnels && !(out as any).coutOccasionnel) {
+    (out as any).coutOccasionnel = (out as any).coutsOccasionnels;
+  }
+
+  // compat croisée employes
+  if ((out as any).employes && !(out as any).coutEmployes) {
+    (out as any).coutEmployes = (out as any).employes;
+  }
+  if ((out as any).coutEmployes && !(out as any).employes) {
+    (out as any).employes = (out as any).coutEmployes;
+  }
+
+  return out;
+}
+
 export const usePnlStore = defineStore("pnl", {
   state: () => ({
     pnls: [] as any[],
@@ -87,6 +153,9 @@ export const usePnlStore = defineStore("pnl", {
     headerMajorationsPreview: null as Record<string, number> | null,
     // preview devis surcharges (temporaire) : n’impacte que les KPIs du header
     headerDevisSurchargesPreview: null as Record<string, number> | null,
+
+    // ✅ NOUVEAU: preview "variant patch" (temporaire) : n’impacte que les KPIs du header
+    headerVariantPreviewPatch: null as AnyObj | null,
   }),
 
   getters: {
@@ -136,9 +205,13 @@ export const usePnlStore = defineStore("pnl", {
             },
           };
 
+      // ✅ NOUVEAU: patch preview de la page (CAB, transport, etc) => HEADER ONLY
+      const patch = (this as any).headerVariantPreviewPatch as AnyObj | null;
+      const vPatched = patch ? mergeVariantForHeader(vForCalc as AnyObj, patch) : vForCalc;
+
       // ✅ surcharge devis (persistée + preview) uniquement si toggle ON
       return computeHeaderKpis(
-        vForCalc,
+        vPatched,
         Number(dureeMois ?? 0),
         useMaj ? majPreview : null,
         useDevis ? devisPreview : null,
@@ -457,6 +530,14 @@ export const usePnlStore = defineStore("pnl", {
       (this as any).headerUseDevisSurcharge = Boolean(v);
     },
 
+    // ✅ NOUVEAU: preview patch de variante (CAB, etc) => header uniquement
+    setHeaderVariantPreviewPatch(patch: AnyObj | null) {
+      this.headerVariantPreviewPatch = patch ? (patch as AnyObj) : null;
+    },
+    clearHeaderVariantPreviewPatch() {
+      this.headerVariantPreviewPatch = null;
+    },
+
     // =========================================================
     // Majorations
     // =========================================================
@@ -613,7 +694,9 @@ export const usePnlStore = defineStore("pnl", {
           cab: p.cab ? { ...(current.cab ?? {}), ...(p.cab ?? {}) } : current.cab,
           transport: p.transport ? { ...(current.transport ?? {}), ...(p.transport ?? {}) } : current.transport,
           coutM3: p.coutM3 ? { ...(current.coutM3 ?? {}), ...(p.coutM3 ?? {}) } : current.coutM3,
-          coutMensuel: p.coutMensuel ? { ...(current.coutMensuel ?? {}), ...(p.coutMensuel ?? {}) } : current.coutMensuel,
+          coutMensuel: p.coutMensuel
+            ? { ...(current.coutMensuel ?? {}), ...(p.coutMensuel ?? {}) }
+            : current.coutMensuel,
           maintenance: p.maintenance ? { ...(current.maintenance ?? {}), ...(p.maintenance ?? {}) } : current.maintenance,
           autresCouts: p.autresCouts ? { ...(current.autresCouts ?? {}), ...(p.autresCouts ?? {}) } : current.autresCouts,
           devis: p.devis ? { ...(current.devis ?? {}), ...(p.devis ?? {}) } : current.devis,

@@ -1,7 +1,8 @@
-<!-- ✅ src/pages/MomdAndQuantityPage.vue (COMPLET / police normale comme FormulesCataloguePage / MOMD+PV max 2 décimales) -->
+<!-- ✅ src/pages/MomdAndQuantityPage.vue (COMPLET / dirty badge + apply preview + unsaved integration FIX) -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionGeneralizeModal, { type CopyPreset } from "@/components/SectionGeneralizeModal.vue";
 
 // Heroicons
@@ -10,9 +11,11 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   Squares2X2Icon,
+  EyeIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 /* =========================
    HELPERS
@@ -41,7 +44,13 @@ function moneyNum(v: number, digits = 2) {
     maximumFractionDigits: digits,
   }).format(toNum(v));
 }
-
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
 /* ✅ Round up to step (1DH / 5DH), keep 2 decimals */
 function roundUpToStep(val: any, step: number) {
   const v = round2(clamp(val, 0, 1e12));
@@ -79,7 +88,9 @@ function loadDraftsFromVariant() {
 /* =========================
    TRANSPORT
 ========================= */
-const transportPrixMoyen = computed(() => round2(toNum((variant.value as any)?.transport?.prixMoyen)));
+const transportPrixMoyen = computed(() =>
+  round2(toNum((variant.value as any)?.transport?.prixMoyen))
+);
 
 /* =========================
    CMP
@@ -169,19 +180,7 @@ const rows = computed<Row[]>(() => {
   }
   return out;
 });
-
-watch(
-  () => variant.value?.id,
-  () => {
-    loadDraftsFromVariant();
-    setInitialOrderFromVariant();
-    if (!didInitialSort.value) {
-      applySortNow();
-      didInitialSort.value = true;
-    }
-  },
-  { immediate: true }
-);
+const rowsUi = rows;
 
 /* =========================
    ✅ PV INPUT -> apply on BLUR
@@ -226,7 +225,6 @@ function onPvBlur(id: string) {
 
   const cmp = cmpFor(key);
   const tr = transportPrixMoyen.value;
-
   const momd = round2(pv - cmp - tr);
 
   if (momd < 0) {
@@ -280,16 +278,15 @@ function bulkApplyPvTransform(fn: (pv: number, rowId: string) => number, success
       const base = round2(getDisplayedPv(id));
       const next = round2(clamp(fn(base, id), 0, 1e12));
 
-      // set draft as user edit then reuse existing onPvBlur() validation + MOMD recalc
       pvTouched[id] = true;
       pvDrafts[id] = next;
       pvErr[id] = false;
 
-      const beforeErr = !!pvErr[id];
+      const before = !!pvErr[id];
       onPvBlur(id);
-      const afterErr = !!pvErr[id];
+      const after = !!pvErr[id];
 
-      if (!beforeErr && afterErr) rejected++;
+      if (!before && after) rejected++;
       else touched++;
     }
 
@@ -319,7 +316,6 @@ function applyRemise() {
     showToast("Remise = 0 DH (aucun changement).", "ok");
     return;
   }
-
   bulkApplyPvTransform((pv) => round2(pv - dh), `Remise ${n(dh, 2)} DH appliquée sur tous les PV.`);
 }
 
@@ -333,8 +329,6 @@ const momdTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.momd) *
 const momdMoy = computed(() => (volumeTotal.value > 0 ? momdTotal.value / volumeTotal.value : 0));
 const caTotal = computed(() => rows.value.reduce((s, r) => s + toNum(r.ca), 0));
 const pvMoy = computed(() => (volumeTotal.value > 0 ? caTotal.value / volumeTotal.value : 0));
-
-const rowsUi = rows;
 
 /* =========================
    TOAST
@@ -390,35 +384,50 @@ function hasPvErrors() {
   return Object.values(pvErr).some((x) => !!x);
 }
 
-async function save() {
-  if (!variant.value) return;
+function buildItemsPayloadFromDrafts(): { id: string; volumeM3: number; momd: number }[] {
+  return formules.value.map((vf: any) => {
+    const d = getDraft(vf.id);
+    return {
+      id: String(vf.id),
+      volumeM3: Number(clamp(d.volumeM3, 0, 1e12)),
+      momd: Number(round2(clamp(d.momd, 0, 1e12))),
+    };
+  });
+}
+function buildItemsPayloadFromVariant(): { id: string; volumeM3: number; momd: number }[] {
+  return formules.value.map((vf: any) => ({
+    id: String(vf.id),
+    volumeM3: Number(clamp(vf?.volumeM3, 0, 1e12)),
+    momd: Number(round2(clamp(vf?.momd, 0, 1e12))),
+  }));
+}
+
+async function save(): Promise<boolean> {
+  if (!variant.value) return false;
 
   if (hasPvErrors()) {
     showToast("Corrige les PV invalides avant d’enregistrer.", "err");
     openInfo("Validation", "Impossible d’enregistrer : certains PV sont invalides.");
-    return;
+    return false;
   }
 
   err.value = null;
   saving.value = true;
   try {
-    const items = formules.value.map((vf: any) => {
-      const d = getDraft(vf.id);
-      return {
-        id: String(vf.id),
-        volumeM3: Number(clamp(d.volumeM3, 0, 1e12)),
-        momd: Number(round2(clamp(d.momd, 0, 1e12))),
-      };
-    });
-
+    const items = buildItemsPayloadFromDrafts();
     await (store as any).updateVariant(variant.value.id, { formules: { items } });
 
+    // ✅ refresh sort + baseline after DB write
     applySortNow();
+    setBaselineFromVariant();
+
     showToast("Quantités, PV & MOMD enregistrés.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
     openInfo("Erreur", String(err.value));
+    return false;
   } finally {
     saving.value = false;
   }
@@ -430,16 +439,12 @@ function askSave() {
     await save();
   });
 }
+
+/* ✅ Reset = même comportement que les autres pages: recharge depuis base + annule preview */
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", () => {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la base ?", async () => {
     closeModal();
-    loadDraftsFromVariant();
-    for (const r of rows.value) {
-      const id = String(r.id);
-      pvTouched[id] = false;
-      pvDrafts[id] = round2(toNum(r.pv));
-      pvErr[id] = false;
-    }
+    await discardLocalChanges();
     showToast("Valeurs restaurées.", "ok");
   });
 }
@@ -536,6 +541,162 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
 }
 
 /* =========================
+   UNSAVED + PREVIEW APPLY (FIX)
+   ✅ Tout déclaré AVANT les watch(immediate)
+========================= */
+const PAGE_KEY = "MOMD_QTY";
+
+const baselineItemsJson = ref<string>("");
+const baselineVariantSnapshot = ref<any | null>(null);
+const previewApplied = ref(false);
+
+function setBaselineFromVariant() {
+  // snapshot variant (restore preview)
+  try {
+    baselineVariantSnapshot.value = structuredClone(variant.value);
+  } catch {
+    baselineVariantSnapshot.value = JSON.parse(JSON.stringify(variant.value ?? null));
+  }
+
+  baselineItemsJson.value = stableJson(buildItemsPayloadFromVariant());
+  previewApplied.value = false;
+}
+
+const currentItemsJson = computed(() => stableJson(buildItemsPayloadFromDrafts()));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  return currentItemsJson.value !== baselineItemsJson.value;
+});
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+  if (hasPvErrors()) {
+    showToast("Impossible: PV invalides.", "err");
+    return;
+  }
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState !== "function") {
+    showToast("Preview non supportée (replaceActiveVariantInState absent).", "err");
+    return;
+  }
+
+  // ✅ IMPORTANT: construire une variante COMPLETE (sinon transport/formule disparaissent)
+  let next: any;
+  try {
+    next = structuredClone(s.activeVariant ?? variant.value);
+  } catch {
+    next = JSON.parse(JSON.stringify(s.activeVariant ?? variant.value ?? null));
+  }
+  if (!next?.id) return;
+
+  const patchItems = buildItemsPayloadFromDrafts(); // [{id, volumeM3, momd}]
+  const patchById = new Map(patchItems.map((x) => [String(x.id), x]));
+
+  // ✅ conserver tous les champs de variantFormule (designation, formule, etc.)
+  const currentItems = (next?.formules?.items ?? []) as any[];
+  if (!next.formules) next.formules = {};
+  next.formules.items = currentItems.map((it: any) => {
+    const id = String(it?.id ?? "");
+    const p = patchById.get(id);
+    if (!p) return it;
+    return {
+      ...it, // garde formule/label/formuleId/…
+      volumeM3: Number(p.volumeM3),
+      momd: Number(p.momd),
+    };
+  });
+
+  // fallback: si items vides côté store (cas rare), on met au moins le patch
+  if (!Array.isArray(next.formules.items) || next.formules.items.length === 0) {
+    next.formules.items = patchItems;
+  }
+
+  s.replaceActiveVariantInState(next);
+  previewApplied.value = true;
+  showToast("Prévisualisation appliquée au header (non enregistrée).", "ok");
+}
+
+function restoreFromBaselineSnapshot() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap); // snap est COMPLET
+  }
+  previewApplied.value = false;
+}
+
+async function discardLocalChanges() {
+  // 1) restore header preview if applied
+  if (previewApplied.value) restoreFromBaselineSnapshot();
+
+  // 2) restore local drafts from variant (DB values)
+  loadDraftsFromVariant();
+
+  // reset pv UI states
+  for (const r of rows.value) {
+    const id = String(r.id);
+    pvTouched[id] = false;
+    pvDrafts[id] = round2(toNum(r.pv));
+    pvErr[id] = false;
+  }
+
+  // also reset baseline (since we aligned to DB)
+  baselineItemsJson.value = stableJson(buildItemsPayloadFromVariant());
+
+  showToast("Modifications annulées.", "ok");
+}
+
+/* ✅ connect to unsaved.store.ts EXACT API: registerPage/unregisterPage */
+function syncUnsaved() {
+  const u: any = unsaved as any;
+  if (typeof u.setDirty === "function") u.setDirty(Boolean(dirty.value));
+
+  if (typeof u.registerPage === "function") {
+    u.registerPage({
+      pageKey: PAGE_KEY,
+      save: async () => {
+        const ok = await save();
+        return ok; // ✅ boolean pour saveAndLeave()
+      },
+      discard: async () => {
+        await discardLocalChanges();
+      },
+    });
+  }
+}
+
+watch(dirty, () => syncUnsaved(), { immediate: true });
+
+/* =========================
+   WATCH VARIANT
+========================= */
+watch(
+  () => variant.value?.id,
+  () => {
+    loadDraftsFromVariant();
+    setInitialOrderFromVariant();
+
+    if (!didInitialSort.value) {
+      applySortNow();
+      didInitialSort.value = true;
+    }
+
+    // ✅ baseline refresh when switching variant
+    setBaselineFromVariant();
+    syncUnsaved();
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(() => {
+  const u: any = unsaved as any;
+  if (typeof u.unregisterPage === "function") u.unregisterPage(PAGE_KEY);
+});
+
+/* =========================
    INIT
 ========================= */
 onMounted(async () => {
@@ -543,6 +704,9 @@ onMounted(async () => {
   if (pnls.length === 0 && (store as any).loadPnls) {
     await (store as any).loadPnls();
   }
+  // baseline (safe even if variant null)
+  setBaselineFromVariant();
+  syncUnsaved();
 });
 </script>
 
@@ -551,10 +715,31 @@ onMounted(async () => {
     <div class="subhdr">
       <div class="row">
         <div class="left">
-          <div class="ttl">Qté & MOMD</div>
+          <div class="ttl">
+            Qté & MOMD
+            <span v-if="dirty" class="dirtyBadge" title="Modifications non enregistrées">
+              <ExclamationTriangleIcon class="icSm" />
+              Modifié
+            </span>
+            <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée au header">
+              <EyeIcon class="icSm" />
+              Preview
+            </span>
+          </div>
         </div>
 
         <div class="actions" v-if="variant">
+          <!-- ✅ Apply preview -->
+          <button
+            class="btn"
+            :disabled="saving || genBusy || bulkBusy || !dirty || hasPvErrors()"
+            @click="applyPreviewToHeader()"
+            title="Appliquer au header (sans enregistrer)"
+          >
+            <EyeIcon class="ic" />
+            Appliquer
+          </button>
+
           <!-- ✅ mini tools -->
           <div class="miniTools">
             <div class="miniGroup">
@@ -587,7 +772,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- existing actions -->
+          <!-- actions -->
           <button class="btn" :disabled="saving || genBusy || bulkBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
@@ -843,6 +1028,34 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ✅ badges */
+.dirtyBadge,
+.prevBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 1000;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.1);
+  color: rgba(146, 64, 14, 0.98);
+}
+.prevBadge {
+  border-color: rgba(59, 130, 246, 0.25);
+  background: rgba(59, 130, 246, 0.1);
+  color: rgba(29, 78, 216, 0.98);
+}
+.icSm {
+  width: 14px;
+  height: 14px;
 }
 
 /* actions */

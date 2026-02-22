@@ -1,16 +1,18 @@
 <!-- ✅ src/pages/AutresCoutsPage.vue (FICHIER COMPLET)
      Inspiration: CoutEmployesPage.vue
-     ✅ Header: titre + actions (pas de meta / pas de hint)
-     ✅ Lignes: Libellé + Unité + Valeur (placeholder discret dans le champ) + KPI inline sur la même ligne
-     ✅ KPI inline par ligne: "x DH/m³ / y DH/mois / z DH / t%"
+     ✅ Header: titre + actions
+     ✅ Hint "Modifié" ORANGE (comme TransportPage + CoutM3)
+     ✅ Apply preview + Unsaved integration (comme tes pages récentes)
+     ✅ Lignes: Libellé + Unité + Valeur + KPI inline sur la même ligne
      ✅ Polices NORMALES (pas mono), chiffres alignés via tabular-nums
      ✅ Alternance background bien visible
      ✅ Tooltip (title) sur textes tronqués
      ✅ Logique inchangée: FG unique, non supprimable, seuil <5%, save/import/généralisation, modal confirm, toast
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 import SectionImportModal from "@/components/SectionImportModal.vue";
 
@@ -21,9 +23,11 @@ import {
   Squares2X2Icon,
   PlusCircleIcon,
   ArrowDownTrayIcon,
+  EyeIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 onMounted(async () => {
   if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
@@ -58,6 +62,13 @@ function compact(v: number, digits = 0) {
 }
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
+}
+function stableJson(v: any) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 /* ✅ Null-safe helpers (affichage vide + placeholder) */
@@ -158,7 +169,7 @@ function isFraisGenerauxRow(r: DraftRow | null | undefined) {
   return normLabel(r.label) === FG_NORM;
 }
 
-/** ✅ FG existe une seule fois */
+/** ✅ FG existe une seule fois + en première ligne */
 function ensureFraisGeneraux() {
   const idx = rows.value.findIndex((r) => isFraisGenerauxRow(r));
   if (idx === -1) {
@@ -188,8 +199,14 @@ watch(
   { immediate: true }
 );
 
+// ✅ garantie FG même si user édite label/ordre
+watch(
+  () => rows.value.map((r) => `${r._id}|${normLabel(r.label)}|${r.unite}`),
+  () => ensureFraisGeneraux(),
+  { deep: false }
+);
+
 const displayRows = computed(() => {
-  ensureFraisGeneraux();
   const fg = rows.value.find((r) => isFraisGenerauxRow(r));
   const rest = rows.value.filter((r) => !isFraisGenerauxRow(r));
   return fg ? [fg, ...rest] : rest;
@@ -321,22 +338,25 @@ function closeModal() {
 const saving = ref(false);
 const err = ref<string | null>(null);
 
-function buildPayload() {
+function buildItemsPayloadFromRows() {
   ensureFraisGeneraux();
   const fg = rows.value.find((r) => isFraisGenerauxRow(r));
   const rest = rows.value.filter((r) => !isFraisGenerauxRow(r));
   const all = fg ? [fg, ...rest] : rest;
 
-  // ✅ null => 0 dans payload
   return all.map((r) => ({
     label: String(r.label ?? ""),
     unite: String(r.unite ?? "FORFAIT"),
-    valeur: Number(clamp(nz(r.valeur), 0, 1e15)),
+    valeur: Number(clamp(nz(r.valeur), 0, 1e15)), // null => 0
   }));
 }
 
-async function save() {
-  if (!variant.value) return;
+function buildUpdatePayload() {
+  return { autresCouts: { items: buildItemsPayloadFromRows() } };
+}
+
+async function save(): Promise<boolean> {
+  if (!variant.value) return false;
 
   err.value = null;
 
@@ -345,17 +365,19 @@ async function save() {
     err.value = validation;
     showToast(validation, "err");
     openInfo("Erreur", validation);
-    return;
+    return false;
   }
 
   saving.value = true;
   try {
-    await (store as any).updateVariant(variant.value.id, { autresCouts: { items: buildPayload() } });
+    await (store as any).updateVariant(variant.value.id, buildUpdatePayload());
     showToast("Autres coûts enregistrés.", "ok");
+    return true;
   } catch (e: any) {
     err.value = e?.message ?? String(e);
     showToast(String(err.value), "err");
     openInfo("Erreur", String(err.value));
+    return false;
   } finally {
     saving.value = false;
   }
@@ -363,14 +385,14 @@ async function save() {
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des autres coûts ?", async () => {
     closeModal();
-    await save();
+    const ok = await save();
+    if (ok) setBaselineFromVariant();
   });
 }
 function askReset() {
-  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", () => {
+  openConfirm("Réinitialiser", "Recharger les valeurs depuis la variante active ?", async () => {
     closeModal();
-    loadFromVariant();
-    showToast("Valeurs restaurées.", "ok");
+    await discardLocalChanges();
   });
 }
 
@@ -393,7 +415,7 @@ async function generalizeTo(variantIds: string[]) {
     return;
   }
 
-  const payload = buildPayload();
+  const payload = buildItemsPayloadFromRows();
 
   genErr.value = null;
   genBusy.value = true;
@@ -508,15 +530,160 @@ function valeurPlaceholder(u: Unite): string {
   if (u === "POURCENT_CA") return "%";
   return "Valeur";
 }
+
+/* =========================
+   ✅ UNSAVED + APPLY PREVIEW
+========================= */
+const PAGE_KEY = "AUTRES_COUTS";
+
+const baselineJson = ref<string>("");
+const baselineVariantSnapshot = ref<any | null>(null);
+const previewApplied = ref(false);
+
+function buildComparableState() {
+  // state minimal + stable (FG en 1er, et null => 0 pour comparer)
+  ensureFraisGeneraux();
+  const items = buildItemsPayloadFromRows();
+  return { autresCouts: { items } };
+}
+
+function setBaselineFromVariant() {
+  try {
+    baselineVariantSnapshot.value = structuredClone((store as any).activeVariant ?? variant.value);
+  } catch {
+    baselineVariantSnapshot.value = JSON.parse(JSON.stringify((store as any).activeVariant ?? variant.value ?? null));
+  }
+
+  // baseline depuis la variante (pas depuis rows) pour être exact
+  const v: any = (store as any).activeVariant ?? variant.value ?? {};
+  const items = ((v as any)?.autresCouts?.items ?? []) as any[];
+  const normalized = items.map((it: any) => ({
+    label: String(it?.label ?? ""),
+    unite: String(it?.unite ?? "FORFAIT"),
+    valeur: Number(clamp(toNum(it?.valeur), 0, 1e15)),
+  }));
+  // ✅ s'assurer FG en premier dans baseline aussi
+  const fgIdx = normalized.findIndex((x) => normLabel(x.label) === FG_NORM);
+  if (fgIdx === -1) normalized.unshift({ label: "Frais généraux", unite: "POURCENT_CA", valeur: 0 });
+  else if (fgIdx > 0) normalized.unshift(...normalized.splice(fgIdx, 1));
+
+  baselineJson.value = stableJson({ autresCouts: { items: normalized } });
+  previewApplied.value = false;
+}
+
+const currentJson = computed(() => stableJson(buildComparableState()));
+const dirty = computed(() => {
+  if (!variant.value?.id) return false;
+  return currentJson.value !== baselineJson.value;
+});
+
+function applyPreviewToHeader() {
+  if (!variant.value?.id) return;
+
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState !== "function") {
+    showToast("Preview non supportée (replaceActiveVariantInState absent).", "err");
+    return;
+  }
+
+  let next: any;
+  try {
+    next = structuredClone(s.activeVariant ?? variant.value);
+  } catch {
+    next = JSON.parse(JSON.stringify(s.activeVariant ?? variant.value ?? null));
+  }
+  if (!next?.id) return;
+
+  next.autresCouts = buildComparableState().autresCouts;
+  s.replaceActiveVariantInState(next);
+
+  previewApplied.value = true;
+  showToast("Prévisualisation appliquée (non enregistrée).", "ok");
+}
+
+function restoreFromBaselineSnapshot() {
+  const snap = baselineVariantSnapshot.value;
+  if (!snap?.id) return;
+  const s: any = store as any;
+  if (typeof s.replaceActiveVariantInState === "function") {
+    s.replaceActiveVariantInState(snap);
+  }
+  previewApplied.value = false;
+}
+
+async function discardLocalChanges() {
+  if (previewApplied.value) restoreFromBaselineSnapshot();
+
+  loadFromVariant();
+  setBaselineFromVariant();
+  showToast("Valeurs restaurées.", "ok");
+}
+
+function syncUnsaved() {
+  const u: any = unsaved as any;
+  u.setDirty?.(Boolean(dirty.value));
+
+  u.registerPage?.({
+    pageKey: PAGE_KEY,
+    save: async () => {
+      const ok = await save();
+      if (ok) setBaselineFromVariant();
+      return ok;
+    },
+    discard: async () => {
+      await discardLocalChanges();
+    },
+  });
+}
+
+watch(
+  () => variant.value?.id,
+  () => {
+    loadFromVariant();
+    setBaselineFromVariant();
+    syncUnsaved();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => currentJson.value,
+  () => syncUnsaved()
+);
+
+onBeforeUnmount(() => {
+  (unsaved as any).unregisterPage?.(PAGE_KEY);
+});
 </script>
 
 <template>
   <div class="page">
     <div class="subhdr">
       <div class="row">
-        <div class="ttl">Autres coûts</div>
+        <div class="ttlWrap">
+          <div class="ttl">
+            Autres coûts
+
+            <!-- ✅ Modifié ORANGE -->
+            <span v-if="dirty" class="modifiedHint" title="Modifications non enregistrées">
+              <span class="modifiedDot" aria-hidden="true"></span>
+              Modifié
+            </span>
+
+            <!-- ✅ Preview -->
+            <span v-if="previewApplied" class="prevBadge" title="Prévisualisation appliquée (non enregistrée)">
+              <EyeIcon class="icSm" />
+              Preview
+            </span>
+          </div>
+        </div>
 
         <div class="actions">
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy || !dirty" @click="applyPreviewToHeader()">
+            <EyeIcon class="ic" />
+            Appliquer
+          </button>
+
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="addRow()">
             <PlusCircleIcon class="ic" />
             Ajouter
@@ -544,7 +711,7 @@ function valeurPlaceholder(u: Unite): string {
         </div>
       </div>
 
-      <!-- ✅ KPIs globaux (style CoutEmployesPage) -->
+      <!-- KPIs globaux -->
       <div class="kpis" v-if="variant">
         <div class="kpi">
           <div class="kLbl">/ m³</div>
@@ -604,7 +771,7 @@ function valeurPlaceholder(u: Unite): string {
                 <option value="POURCENT_CA">%CA</option>
               </select>
 
-              <!-- valeur (✅ placeholder dans le champ, pas de label au-dessus) -->
+              <!-- valeur -->
               <input
                 class="inVal num"
                 type="number"
@@ -617,8 +784,11 @@ function valeurPlaceholder(u: Unite): string {
 
               <div class="unit">{{ valueUnitLabel(r0.unite) }}</div>
 
-              <!-- KPI inline par poste (✅ une seule ligne) -->
-              <div class="kpiInline num" :title="`${n(perM3For(r0), 2)} DH/m³ / ${compact(monthlyFor(r0), 0)} DH/mois / ${compact(totalFor(r0), 0)} DH / ${n(pctFor(r0), 2)}%`">
+              <!-- KPI inline -->
+              <div
+                class="kpiInline num"
+                :title="`${n(perM3For(r0), 2)} DH/m³ / ${compact(monthlyFor(r0), 0)} DH/mois / ${compact(totalFor(r0), 0)} DH / ${n(pctFor(r0), 2)}%`"
+              >
                 <span class="k">{{ n(perM3For(r0), 2) }}</span><span class="u">DH/m³</span>
                 <span class="s">/</span>
                 <span class="k">{{ compact(monthlyFor(r0), 0) }}</span><span class="u">DH/mois</span>
@@ -641,7 +811,7 @@ function valeurPlaceholder(u: Unite): string {
               </button>
             </div>
 
-            <!-- FG warning (discret) -->
+            <!-- FG warning -->
             <div v-if="isFraisGenerauxRow(r0) && fgLow" class="fgHint">⚠ Frais généraux &lt; <b>5%</b></div>
           </div>
         </div>
@@ -721,10 +891,56 @@ function valeurPlaceholder(u: Unite): string {
   gap: 8px;
   flex-wrap: wrap;
 }
+.ttlWrap {
+  min-width: 240px;
+}
 .ttl {
   font-size: 14px;
   font-weight: 950;
   color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ✅ MODIFIÉ (ORANGE) */
+.modifiedHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(194, 65, 12, 1);
+  background: rgba(251, 146, 60, 0.14);
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  white-space: nowrap;
+}
+.modifiedDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 1);
+}
+
+/* preview badge */
+.prevBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  background: rgba(2, 132, 199, 0.08);
+  color: rgba(2, 132, 199, 0.95);
+  white-space: nowrap;
+}
+.icSm {
+  width: 14px;
+  height: 14px;
 }
 
 /* actions */
@@ -858,7 +1074,7 @@ function valeurPlaceholder(u: Unite): string {
   gap: 8px;
 }
 
-/* alternance visible (comme demandé) */
+/* alternance visible */
 .rowCard {
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 12px;
@@ -869,7 +1085,7 @@ function valeurPlaceholder(u: Unite): string {
   background: rgba(15, 23, 42, 0.085);
 }
 
-/* ✅ une seule ligne */
+/* une seule ligne */
 .line {
   display: flex;
   align-items: center;
@@ -917,7 +1133,7 @@ function valeurPlaceholder(u: Unite): string {
   flex: 0 0 auto;
 }
 .inVal {
-  width: 140px; /* ✅ plus compact */
+  width: 140px;
   text-align: right;
   flex: 0 0 auto;
 }
@@ -929,7 +1145,7 @@ function valeurPlaceholder(u: Unite): string {
   white-space: nowrap;
 }
 
-/* KPI inline (même style que CoutEmployesPage) */
+/* KPI inline */
 .kpiInline {
   margin-left: auto;
   flex: 0 1 auto;
@@ -1015,7 +1231,7 @@ function valeurPlaceholder(u: Unite): string {
   }
 }
 
-/* modal + toast (au-dessus HeaderDashboard) */
+/* modal + toast */
 .ovl {
   position: fixed;
   inset: 0;

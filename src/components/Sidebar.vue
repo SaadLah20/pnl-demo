@@ -3,6 +3,8 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
+const unsaved = useUnsavedStore();
 
 // ✅ Logo
 import holcimLogoUrl from "@/assets/holcim_logo.png";
@@ -159,37 +161,41 @@ const multiDevisDisabledReason = computed(() => {
 });
 
 function goToPage(item: string) {
-  // ✅ hard stop (anti-faille par click) — uniquement Devis & MultiDevis
   if (item === "Devis" && !devisAllowed.value) return;
   if (item === "Générer devis multi-variantes" && !multiDevisAllowed.value) return;
 
-  activeItem.value = item;
-
   const rn = routeByItem[item];
-  if (rn) {
-    router.push({ name: rn });
-    return;
-  }
 
-  // fallback PageView (si tu l'utilises encore)
-  const pageNameMap: Record<string, string> = {
-    Formules: "Variante/Sections/Formules/Formules",
-    "Qté et MOMD": "Variante/Sections/Formules/Qté et MOMD",
+  unsaved.requestNavigation({
+    label: `Sidebar: ${item}`,
+    run: async () => {
+      activeItem.value = item;
 
-    CAB: "Variante/Sections/Couts/CAB",
-    Maintenance: "Variante/Sections/Couts/Maintenance",
-    "Cout au m3": "Variante/Sections/Couts/Cout au m3",
-    "Cout au mois": "Variante/Sections/Couts/Cout au mois",
-    "Cout employés": "Variante/Sections/Couts/Cout employés",
-    "Couts occasionnels": "Variante/Sections/Couts/Couts occasionnels",
-    "Autres couts": "Variante/Sections/Couts/Autres couts",
+      if (rn) {
+        router.push({ name: rn });
+        return;
+      }
 
-    Majorations: "Variante/Sections/Devis/Majorations",
-    Devis: "Variante/Sections/Devis/Devis",
-  };
+      const pageNameMap: Record<string, string> = {
+        Formules: "Variante/Sections/Formules/Formules",
+        "Qté et MOMD": "Variante/Sections/Formules/Qté et MOMD",
 
-  const pageName = pageNameMap[item] ?? item;
-  router.push({ name: "PageView", params: { name: pageName } });
+        CAB: "Variante/Sections/Couts/CAB",
+        Maintenance: "Variante/Sections/Couts/Maintenance",
+        "Cout au m3": "Variante/Sections/Couts/Cout au m3",
+        "Cout au mois": "Variante/Sections/Couts/Cout au mois",
+        "Cout employés": "Variante/Sections/Couts/Cout employés",
+        "Couts occasionnels": "Variante/Sections/Couts/Couts occasionnels",
+        "Autres couts": "Variante/Sections/Couts/Autres couts",
+
+        Majorations: "Variante/Sections/Devis/Majorations",
+        Devis: "Variante/Sections/Devis/Devis",
+      };
+
+      const pageName = pageNameMap[item] ?? item;
+      router.push({ name: "PageView", params: { name: pageName } });
+    },
+  });
 }
 
 /* ✅ Auto-redirect anti-faille :

@@ -5,20 +5,25 @@
      ✅ Supprimer la ligne sous le titre (Variante • Vol • PMV)
      ✅ Libellés colonnes EXACTEMENT au-dessus des champs (grid alignée)
      ✅ IMPORTANT: Suppression notion "PV pondéré" (arrondi au 5) => PV déf = PV base + surcharge
+
+     ✅ Refonte demandée (sans toucher logique/design) :
+     ✅ Supprimer l’ancienne logique d’alerte d’enregistrement (dirtyBar + export guard modal)
+     ✅ Traiter "appliquer" et "quitter" via useUnsavedStore comme les autres pages (registerPage + setDirty)
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+import { useUnsavedStore } from "@/stores/unsaved.store";
 
 import {
   InformationCircleIcon,
   ArrowPathIcon,
   CheckBadgeIcon,
   ArrowDownTrayIcon,
-  ExclamationTriangleIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
+const unsaved = useUnsavedStore();
 
 type Tab = "SURCHARGES" | "CONTENU";
 const activeTab = ref<Tab>("SURCHARGES");
@@ -479,17 +484,6 @@ const isDirty = computed(() => {
   return makeSnapshot() !== lastSavedSnapshot.value;
 });
 
-const exportGuardOpen = ref(false);
-
-function openExportGuardIfNeeded() {
-  if (!isDirty.value) return false;
-  exportGuardOpen.value = true;
-  return true;
-}
-function closeExportGuard() {
-  exportGuardOpen.value = false;
-}
-
 /* =========================
    BASE CALCS (/m3)
    ✅ PV NON PONDÉRÉ: PV déf = PV base + surcharge
@@ -779,9 +773,34 @@ async function reload() {
   }
 }
 
+/* =========================
+   APPLY / HEADER PREVIEW (comme autres pages)
+========================= */
+const previewApplied = ref(false);
+const baselineHeader = ref<{ use: boolean; preview: any }>({ use: false, preview: null });
+
+function takeBaselineHeaderSnapshot() {
+  baselineHeader.value = {
+    use: Boolean((store as any).headerUseDevisSurcharge),
+    preview: (store as any).headerDevisSurchargesPreview ?? null,
+  };
+}
+
+function restoreBaselineHeaderSnapshot() {
+  try {
+    (store as any).setHeaderDevisSurchargesPreview?.(baselineHeader.value.preview ?? null);
+    (store as any).setHeaderUseDevisSurcharge?.(Boolean(baselineHeader.value.use));
+  } catch {}
+}
+
+/** Appliquer = preview dashboard (sans persister) */
 function applyToDashboard() {
   busy.apply = true;
   try {
+    if (!previewApplied.value) {
+      takeBaselineHeaderSnapshot();
+      previewApplied.value = true;
+    }
     (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
     withDevisSurcharge.value = true;
   } finally {
@@ -798,6 +817,10 @@ async function saveDevis() {
 
   try {
     if (draft.applyToDashboardOnSave) {
+      if (!previewApplied.value) {
+        takeBaselineHeaderSnapshot();
+        previewApplied.value = true;
+      }
       (store as any).setHeaderDevisSurchargesPreview({ ...draft.surcharges });
       withDevisSurcharge.value = true;
     }
@@ -825,6 +848,7 @@ async function saveDevis() {
     lastSavedSnapshot.value = makeSnapshot();
   } catch (e: any) {
     error.value = e?.message ?? String(e);
+    throw e; // ✅ important pour unsaved.save => bloque navigation
   } finally {
     busy.save = false;
   }
@@ -845,17 +869,9 @@ async function doExportWord() {
   }
 }
 
+/** ✅ Simplifié : plus de modal/guard local (backend exportera la version persistée) */
 async function exportWord() {
   if (busy.export || busy.save) return;
-  if (openExportGuardIfNeeded()) return;
-  await doExportWord();
-}
-
-async function saveAndExport() {
-  if (busy.export || busy.save) return;
-  closeExportGuard();
-  await saveDevis();
-  if (error.value) return;
   await doExportWord();
 }
 
@@ -864,16 +880,62 @@ function resetSurcharges() {
   nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
 }
 
-/* Anti-pollution header preview */
+/* =========================
+   UNSAVED STORE (Appliquer / Quitter comme autres pages)
+   - Quitter sans enregistrer => annule preview + recharge local depuis persisted
+   - Enregistrer et quitter => saveDevis()
+========================= */
+const PAGE_KEY = "DEVIS";
+
+async function discardLocalChanges() {
+  // 1) restore header si "Appliquer" a été utilisé
+  if (previewApplied.value) {
+    restoreBaselineHeaderSnapshot();
+    previewApplied.value = false;
+  }
+
+  // 2) restore local depuis persisted variant
+  error.value = null;
+  loadPersistedAll();
+}
+
+function registerUnsavedHandlers() {
+  (unsaved as any).registerPage?.({
+    pageKey: PAGE_KEY,
+    save: async () => {
+      await saveDevis();
+      return true;
+    },
+    discard: async () => {
+      await discardLocalChanges();
+    },
+  });
+}
+
+onMounted(async () => {
+  await reload();
+  registerUnsavedHandlers();
+  // baseline pour le header (utile si l'user fait "Appliquer" puis Quitter)
+  takeBaselineHeaderSnapshot();
+});
+
 onBeforeUnmount(() => {
+  (unsaved as any).unregisterPage?.(PAGE_KEY);
+
+  // Anti-pollution header preview
   try {
     (store as any).setHeaderDevisSurchargesPreview(null);
   } catch {}
 });
 
-onMounted(async () => {
-  await reload();
-});
+/** ✅ alimente le système global (bandeau / Enregistrer&Quitter / Quitter) */
+watch(
+  isDirty,
+  (v) => {
+    (unsaved as any).setDirty?.(Boolean(v));
+  },
+  { immediate: true }
+);
 
 watch(
   () => variant.value?.id,
@@ -1063,13 +1125,7 @@ function onContentScrollSpy() {
 
         <button class="btn" @click="resetSurcharges" :disabled="busy.save">Réinitialiser</button>
 
-        <button
-          class="btn"
-          :class="{ warnBtn: isDirty }"
-          @click="exportWord"
-          :disabled="busy.export || !variant?.id"
-          :title="isDirty ? 'Export = dernière version enregistrée' : 'Exporter en Word'"
-        >
+        <button class="btn" @click="exportWord" :disabled="busy.export || !variant?.id">
           <ArrowDownTrayIcon class="ic" />
           {{ busy.export ? "Export..." : "Exporter Word" }}
         </button>
@@ -1077,20 +1133,6 @@ function onContentScrollSpy() {
         <button class="btn primary" @click="saveDevis" :disabled="busy.save || !variant?.id">
           <CheckBadgeIcon class="ic" />
           {{ busy.save ? "Enregistrement..." : "Enregistrer" }}
-        </button>
-      </div>
-    </div>
-
-    <div v-if="isDirty" class="dirtyBar">
-      <ExclamationTriangleIcon class="warnIc" />
-      <div class="dirtyTxt">
-        <b>Changements non enregistrés.</b>
-        <span class="muted">Exporter = dernière version enregistrée.</span>
-      </div>
-      <div class="dirtyActions">
-        <button class="btn mini" @click="saveDevis" :disabled="busy.save || !variant?.id">Enregistrer</button>
-        <button class="btn mini" @click="exportGuardOpen = true" :disabled="busy.export || !variant?.id">
-          Exporter quand même
         </button>
       </div>
     </div>
@@ -1170,7 +1212,10 @@ function onContentScrollSpy() {
               </div>
 
               <div class="chips">
-                <span class="chip"><span class="muted">Vol</span> <b class="mono">{{ int(r?.volumeM3) }}</b> <span class="muted">m³</span></span>
+                <span class="chip"
+                  ><span class="muted">Vol</span> <b class="mono">{{ int(r?.volumeM3) }}</b>
+                  <span class="muted">m³</span></span
+                >
                 <span class="chip"><span class="muted">CMP</span> <b class="mono">{{ money2(cmpFormuleBaseM3(r?.formule)) }}</b></span>
                 <span class="chip"><span class="muted">MOMD</span> <b class="mono">{{ money2(r?.momd) }}</b></span>
                 <span class="chip"><span class="muted">PV base</span> <b class="mono">{{ money2(pvBaseM3(r)) }}</b></span>
@@ -1436,33 +1481,6 @@ function onContentScrollSpy() {
         </main>
       </div>
     </template>
-
-    <!-- Export guard modal -->
-    <div v-if="exportGuardOpen" class="modalOverlay" @click.self="closeExportGuard">
-      <div class="modalCard" role="dialog" aria-modal="true" aria-label="Export Word">
-        <div class="modalTitle">
-          <ExclamationTriangleIcon class="warnIc2" />
-          <div>
-            <div style="font-weight: 1000; color: #111827">Exporter sans enregistrer ?</div>
-            <div class="muted" style="margin-top: 2px">
-              Le Word sera généré depuis <b>la dernière version enregistrée</b>. Tes changements en cours ne seront pas inclus.
-            </div>
-          </div>
-        </div>
-
-        <div class="modalActions">
-          <button class="btn" type="button" @click="closeExportGuard" :disabled="busy.export || busy.save">Annuler</button>
-
-          <button class="btn" type="button" @click="doExportWord(); closeExportGuard();" :disabled="busy.export || !variant?.id">
-            Exporter quand même
-          </button>
-
-          <button class="btn primary" type="button" @click="saveAndExport" :disabled="busy.save || busy.export || !variant?.id">
-            Enregistrer & exporter
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -1507,7 +1525,6 @@ function onContentScrollSpy() {
 .btn:hover{ background: rgba(15,23,42,0.03); }
 .btn.primary{ background: rgba(15,23,42,0.92); border-color: rgba(15,23,42,0.65); color:#fff; }
 .btn.primary:hover{ filter: brightness(1.05); }
-.btn.warnBtn{ border-color: rgba(245,158,11,0.55); }
 .btn.mini{ padding:6px 9px; font-size:11px; }
 
 .iconBtn{
@@ -1622,18 +1639,6 @@ function onContentScrollSpy() {
   color: rgba(15,23,42,.80);
 }
 .miniK b{ color: var(--text); font-weight: 950; }
-
-/* Dirty bar */
-.dirtyBar{
-  display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;
-  border:1px solid rgba(245,158,11,0.45);
-  background: rgba(245,158,11,0.08);
-  border-radius:14px;
-  padding:8px 10px;
-}
-.warnIc{ width:18px; height:18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
-.dirtyTxt{ display:flex; flex-direction:column; gap:2px; min-width:220px; flex:1; }
-.dirtyActions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 
 /* Controls compact */
 .controls{
@@ -2025,39 +2030,5 @@ function onContentScrollSpy() {
   }
   .inputSurcharge{ width: 100%; }
   .pillFinal, .pillTotal{ width: 100%; justify-content: flex-start; }
-}
-
-/* Modal */
-.modalOverlay{
-  position: fixed;
-  inset: 0;
-  background: rgba(2,6,23,0.45);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index: 999999;
-  padding: 16px;
-}
-.modalCard{
-  width: min(560px, 100%);
-  background:#fff;
-  border: 1px solid var(--b);
-  border-radius: 18px;
-  box-shadow: 0 24px 70px rgba(2,6,23,0.35);
-  padding: 12px 12px;
-}
-.modalTitle{
-  display:flex;
-  align-items:flex-start;
-  gap: 10px;
-  padding: 6px 6px 10px 6px;
-}
-.warnIc2{ width:18px; height:18px; color: rgba(245,158,11,1); flex: 0 0 auto; margin-top: 1px; }
-.modalActions{
-  display:flex;
-  justify-content:flex-end;
-  gap: 8px;
-  flex-wrap:wrap;
-  padding: 8px 6px 4px 6px;
 }
 </style>
