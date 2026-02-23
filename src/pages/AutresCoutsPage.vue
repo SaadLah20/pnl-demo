@@ -370,7 +370,29 @@ async function save(): Promise<boolean> {
 
   saving.value = true;
   try {
-    await (store as any).updateVariant(variant.value.id, buildUpdatePayload());
+    // ✅ payload stable au moment du clic
+    const payload = buildUpdatePayload(); // { autresCouts: { items: [...] } }
+
+    await (store as any).updateVariant(variant.value.id, payload);
+
+    // ✅ IMPORTANT: baseline = ce qu’on vient d’enregistrer (robuste même si store ne refresh pas)
+    baselineJson.value = stableJson(payload);
+
+    // ✅ snapshot baseline pour discard (restore) cohérent
+    try {
+      baselineVariantSnapshot.value = structuredClone({
+        ...(variant.value ?? {}),
+        ...(payload ?? {}),
+      });
+    } catch {
+      baselineVariantSnapshot.value = JSON.parse(
+        JSON.stringify({ ...(variant.value ?? {}), ...(payload ?? {}) })
+      );
+    }
+
+    previewApplied.value = false;
+    (unsaved as any)?.setDirty?.(false);
+
     showToast("Autres coûts enregistrés.", "ok");
     return true;
   } catch (e: any) {
@@ -385,8 +407,7 @@ async function save(): Promise<boolean> {
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des autres coûts ?", async () => {
     closeModal();
-    const ok = await save();
-    if (ok) setBaselineFromVariant();
+    await save();
   });
 }
 function askReset() {

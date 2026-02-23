@@ -435,9 +435,32 @@ async function save(): Promise<boolean> {
   if (!variant.value) return false;
   err.value = null;
   saving.value = true;
+
   try {
     enforceLocks();
-    await (store as any).updateVariant(variant.value.id, { coutOccasionnel: buildPayloadEffective() });
+
+    const payload = buildPayloadEffective(); // ✅ snapshot du draft au moment du save
+
+    await (store as any).updateVariant(variant.value.id, { coutOccasionnel: payload });
+
+    // ✅ IMPORTANT: baseline = ce qu’on vient d’enregistrer (robuste même si store ne refresh pas)
+    baselineJson.value = stableJson(payload);
+
+    // ✅ snapshot baseline pour restore (discard) cohérent
+    try {
+      baselineVariantSnapshot.value = structuredClone({
+        ...(variant.value ?? {}),
+        coutOccasionnel: payload,
+      });
+    } catch {
+      baselineVariantSnapshot.value = JSON.parse(
+        JSON.stringify({ ...(variant.value ?? {}), coutOccasionnel: payload })
+      );
+    }
+
+    previewApplied.value = false;
+    (unsaved as any)?.setDirty?.(false);
+
     showToast("Coûts occasionnels enregistrés.", "ok");
     return true;
   } catch (e: any) {
@@ -452,8 +475,7 @@ async function save(): Promise<boolean> {
 function askSave() {
   openConfirm("Enregistrer", "Confirmer l’enregistrement des coûts occasionnels ?", async () => {
     closeModal();
-    const ok = await save();
-    if (ok) setBaselineFromVariant();
+    await save();
   });
 }
 

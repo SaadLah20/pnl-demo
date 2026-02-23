@@ -313,8 +313,35 @@ async function save(): Promise<boolean> {
   if (!variant.value) return false;
   err.value = null;
   saving.value = true;
+
   try {
-    await (store as any).updateVariant(variant.value.id, { coutM3: buildPayload() });
+    const payload = buildPayload(); // ✅ snapshot du draft au moment du save
+
+    await (store as any).updateVariant(variant.value.id, { coutM3: payload });
+
+    // ✅ IMPORTANT: après save, remettre le baseline sur l'état "enregistré"
+    // 1) On aligne baselineJson sur ce qu’on vient d’enregistrer (plus robuste que lire variant.coutM3 si store ne refresh pas)
+    baselineJson.value = stableJson(payload);
+
+    // 2) Mettre à jour le snapshot baseline (pour le discard qui restore la variante)
+    //    On clone la variante actuelle mais avec coutM3 = payload
+    try {
+      baselineVariantSnapshot.value = structuredClone({
+        ...(variant.value ?? {}),
+        coutM3: payload,
+      });
+    } catch {
+      baselineVariantSnapshot.value = JSON.parse(
+        JSON.stringify({ ...(variant.value ?? {}), coutM3: payload })
+      );
+    }
+
+    // 3) Preview appliquée n'a plus de sens après save (car maintenant c’est persisté)
+    previewApplied.value = false;
+
+    // 4) Sync unsaved flag (optionnel mais propre)
+    (unsaved as any)?.setDirty?.(false);
+
     showToast("Coût au m³ enregistré.", "ok");
     return true;
   } catch (e: any) {
