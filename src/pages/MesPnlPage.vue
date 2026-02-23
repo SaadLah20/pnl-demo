@@ -1388,10 +1388,10 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="line2">
-                    <span class="meta">
-                      <span class="k">Description:</span>
-                      <span class="desc">{{ v.description ?? "-" }}</span>
-                    </span>
+<span class="meta meta--desc">
+<span class="k">Description:&nbsp;</span>
+<span class="desc">{{ v.description ?? "-" }}</span>
+</span>
                   </div>
                 </div>
 
@@ -2202,7 +2202,7 @@ onBeforeUnmount(() => {
 }
 
 .desc {
-  display: inline-block;
+  display: inline;
   max-width: 680px;
   white-space: nowrap;
   overflow: hidden;
@@ -2629,5 +2629,22 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
     justify-content: center;
   }
+  /* Fix alignement "Description:" + valeur sur la même baseline */
+.meta--desc {
+  display: inline-flex;
+  align-items: baseline; /* ✅ baseline parfaite */
+  gap: 6px;
 }
+
+/* Dans ce cas précis, pas d'inline-block (cause du décalage) */
+.meta--desc .desc {
+  display: inline;
+  max-width: 680px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+}
+
+
 </style>
