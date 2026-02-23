@@ -1,7 +1,7 @@
 <!-- ✅ src/components/variantWizard/VariantWizardModal.vue
      Wizard Variantes
      - INITIEE: wizard multi-onglets (sliders only) selon doc
-     - COMPOSEE: UI existante conservée
+     - COMPOSEE: UI existante conservée + ✅ actions "Importer tout de la base" / "Mettre tout à 0"
 -->
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
@@ -122,7 +122,9 @@ const locationTerrainLocked = computed(() => isChargeClient(props.contract?.terr
 const transportOccasionnelLocked = computed(() => isChargeClient(props.contract?.transport));
 
 // ✅ branchements contractuels
-const branchementElecLocked = computed(() => isChargeClient(props.contract?.branchementElec ?? props.contract?.branchementElectricite));
+const branchementElecLocked = computed(() =>
+  isChargeClient(props.contract?.branchementElec ?? props.contract?.branchementElectricite),
+);
 const branchementEauLocked = computed(() => isChargeClient(props.contract?.branchementEau));
 
 const locationChargeurLocked = computed(() => isChargeClient(props.contract?.chargeuse ?? props.contract?.locationChargeur));
@@ -210,7 +212,7 @@ const tab = ref<InitTabKey>("general");
 const initieeReady = computed(() => !!initWizard.value);
 
 /* =========================================================
-   COMPOSEE (inchangé)
+   COMPOSEE (inchangé + actions globales)
 ========================================================= */
 const compose = reactive<ComposePayload>({
   baseVariantId: "",
@@ -233,6 +235,28 @@ function setAllSectionsZero() {
   ];
   const next: any = {};
   for (const k of keys) next[k] = "ZERO";
+  compose.bySection = next;
+}
+
+function setAllSectionsFromBase() {
+  const baseId = String(compose.baseVariantId ?? "").trim();
+  if (!baseId) return;
+
+  const keys: ComposeSectionKey[] = [
+    "transport",
+    "cab",
+    "maintenance",
+    "coutM3",
+    "coutMensuel",
+    "coutOccasionnel",
+    "employes",
+    "autresCouts",
+    "formules",
+    "majorations",
+    "devis",
+  ];
+  const next: any = {};
+  for (const k of keys) next[k] = baseId;
   compose.bySection = next;
 }
 
@@ -289,7 +313,7 @@ watch(
     }
 
     await nextTick();
-  }
+  },
 );
 
 function close() {
@@ -349,17 +373,9 @@ function onKeydown(e: KeyboardEvent) {
             <div v-if="!initieeReady" class="box">Chargement…</div>
 
             <template v-else>
-              <WizardGeneralTab
-                v-if="tab === 'general'"
-                v-model="initWizard!.general"
-                :cab-charge-client="cabChargeClient"
-              />
+              <WizardGeneralTab v-if="tab === 'general'" v-model="initWizard!.general" :cab-charge-client="cabChargeClient" />
 
-              <WizardFormulesTab
-                v-else-if="tab === 'formules'"
-                v-model="initWizard!.formules"
-                :contract-id="contract?.id ?? ''"
-              />
+              <WizardFormulesTab v-else-if="tab === 'formules'" v-model="initWizard!.formules" :contract-id="contract?.id ?? ''" />
 
               <WizardCoutsTab
                 v-else-if="tab === 'couts'"
@@ -369,10 +385,7 @@ function onKeydown(e: KeyboardEvent) {
                 :duree-mois="dureeMois"
               />
 
-              <WizardEmployesTab
-                v-else-if="tab === 'employes'"
-                v-model="initWizard!.employes"
-              />
+              <WizardEmployesTab v-else-if="tab === 'employes'" v-model="initWizard!.employes" />
             </template>
           </div>
 
@@ -407,7 +420,31 @@ function onKeydown(e: KeyboardEvent) {
             </div>
 
             <div class="box">
-              <div class="boxT">Sections</div>
+              <div class="boxHd">
+                <div class="boxT">Sections</div>
+
+                <div class="boxActions">
+                  <button
+                    class="btn btn--mini"
+                    type="button"
+                    :disabled="!composeValid"
+                    :title="!composeValid ? 'Choisir une variante de base d’abord' : 'Copier toutes les sections depuis la variante de base'"
+                    @click="setAllSectionsFromBase()"
+                  >
+                    Importer tout de la base
+                  </button>
+
+                  <button
+                    class="btn btn--mini btn--miniGhost"
+                    type="button"
+                    title="Mettre toutes les sections à ZERO"
+                    @click="setAllSectionsZero()"
+                  >
+                    Mettre tout à 0
+                  </button>
+                </div>
+              </div>
+
               <div class="mutedSmall">Zéro = ne copie pas</div>
 
               <div class="sections">
@@ -426,9 +463,7 @@ function onKeydown(e: KeyboardEvent) {
         <!-- Footer -->
         <div class="ft">
           <div class="ftL">
-            <div v-if="mode === 'INITIEE'" class="miniHint">
-              Sliders + clics uniquement (pas de clavier).
-            </div>
+            <div v-if="mode === 'INITIEE'" class="miniHint">Sliders + clics uniquement (pas de clavier).</div>
           </div>
 
           <div class="ftR">
@@ -443,133 +478,249 @@ function onKeydown(e: KeyboardEvent) {
 
 <style scoped>
 /* ✅ Light modal based on global tokens in src/style.css (Teleports OK) */
-.ov{
-  position:fixed; inset:0;
-  background: rgba(15,23,42,.28);
+.ov {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
   backdrop-filter: blur(3px);
-  display:flex; align-items:center; justify-content:center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 1000000;
   padding: 12px;
 }
 
-.md{
+.md {
   width: min(980px, 100%);
   max-height: min(640px, 92vh);
   background: var(--card, #fff);
-  color: rgba(15,23,42,.92);
-  border: 1px solid var(--border, rgba(16,24,40,.12));
+  color: rgba(15, 23, 42, 0.92);
+  border: 1px solid var(--border, rgba(16, 24, 40, 0.12));
   border-radius: 18px;
-  box-shadow: 0 22px 70px rgba(0,0,0,.25);
-  display:flex; flex-direction:column;
-  overflow:hidden;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.hd{
-  display:flex; align-items:center; gap:10px;
+.hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border, rgba(16,24,40,.12));
-  background: rgba(255,255,255,.72);
+  border-bottom: 1px solid var(--border, rgba(16, 24, 40, 0.12));
+  background: rgba(255, 255, 255, 0.72);
 }
 
-.ttl{ font-weight: 900; font-size: 14px; white-space: nowrap; }
+.ttl {
+  font-weight: 900;
+  font-size: 14px;
+  white-space: nowrap;
+}
 
-.tabs{ display:flex; gap:6px; flex:1; overflow:hidden; }
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  overflow: hidden;
+}
 
-.tb{
-  border: 1px solid var(--border, rgba(16,24,40,.14));
-  background: rgba(15,23,42,.04);
-  color: rgba(15,23,42,.9);
+.tb {
+  border: 1px solid var(--border, rgba(16, 24, 40, 0.14));
+  background: rgba(15, 23, 42, 0.04);
+  color: rgba(15, 23, 42, 0.9);
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
 }
-.tb.on{
-  background: rgba(24,64,112,.10);
-  border-color: rgba(24,64,112,.28);
+.tb.on {
+  background: rgba(24, 64, 112, 0.1);
+  border-color: rgba(24, 64, 112, 0.28);
 }
 
-.x{
-  margin-left:auto;
-  border:none;
+.x {
+  margin-left: auto;
+  border: none;
   background: transparent;
-  color: rgba(15,23,42,.75);
+  color: rgba(15, 23, 42, 0.75);
   font-size: 16px;
   cursor: pointer;
 }
 
-.bd{ padding: 10px 12px; overflow:auto; }
-
-.ft{
-  display:flex; align-items:center; justify-content:space-between;
-  gap:10px;
+.bd {
   padding: 10px 12px;
-  border-top: 1px solid var(--border, rgba(16,24,40,.12));
-  background: rgba(255,255,255,.72);
+  overflow: auto;
 }
 
-.ftR{ display:flex; gap:8px; }
+.ft {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border, rgba(16, 24, 40, 0.12));
+  background: rgba(255, 255, 255, 0.72);
+}
 
-.btn{
+.ftR {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
   border-radius: 12px;
   padding: 8px 12px;
   font-size: 13px;
-  border: 1px solid var(--border, rgba(16,24,40,.14));
-  background: rgba(15,23,42,.04);
-  color: rgba(15,23,42,.92);
+  border: 1px solid var(--border, rgba(16, 24, 40, 0.14));
+  background: rgba(15, 23, 42, 0.04);
+  color: rgba(15, 23, 42, 0.92);
   cursor: pointer;
 }
-.btn--pri{
-  background: rgba(101,129,77,.14);
-  border-color: rgba(101,129,77,.28);
+.btn--pri {
+  background: rgba(101, 129, 77, 0.14);
+  border-color: rgba(101, 129, 77, 0.28);
 }
-.btn--ghost{ background: transparent; }
+.btn--ghost {
+  background: transparent;
+}
 
-.box{
+/* ✅ Mini buttons for COMPOSEE global actions */
+.btn--mini {
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+.btn--miniGhost {
+  background: transparent;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.box {
   padding: 10px;
-  border: 1px dashed rgba(16,24,40,.18);
+  border: 1px dashed rgba(16, 24, 40, 0.18);
   border-radius: 14px;
   font-size: 12px;
-  color: rgba(15,23,42,.82);
+  color: rgba(15, 23, 42, 0.82);
 }
 
-.stack{ display:flex; flex-direction:column; gap:10px; }
-.grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-.f--full{ grid-column: 1 / -1; }
-.f{ display:flex; flex-direction:column; gap:6px; }
-.k{ font-size: 12px; font-weight: 800; color: rgba(15,23,42,.86); }
+.boxHd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
 
-.in{
-  border: 1px solid rgba(16,24,40,.16);
+.boxActions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.f--full {
+  grid-column: 1 / -1;
+}
+.f {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.k {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.86);
+}
+
+.in {
+  border: 1px solid rgba(16, 24, 40, 0.16);
   background: #fff;
-  color: rgba(15,23,42,.92);
+  color: rgba(15, 23, 42, 0.92);
   border-radius: 12px;
   padding: 8px 10px;
   font-size: 13px;
   outline: none;
 }
-.in:focus{
-  border-color: rgba(24,64,112,.35);
-  box-shadow: 0 0 0 3px rgba(24,64,112,.12);
+.in:focus {
+  border-color: rgba(24, 64, 112, 0.35);
+  box-shadow: 0 0 0 3px rgba(24, 64, 112, 0.12);
 }
-.in--strong{
-  background: rgba(238,243,250,.9);
+.in--strong {
+  background: rgba(238, 243, 250, 0.9);
 }
 
-.f--chk{ justify-content:flex-end; }
-.chk{ display:flex; align-items:center; gap:8px; font-size: 12px; color: rgba(15,23,42,.82); }
+.f--chk {
+  justify-content: flex-end;
+}
+.chk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.82);
+}
 
-.sections{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:8px; }
-.sec{ display:flex; flex-direction:column; gap:6px; }
+.sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+.sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
-.k2{ font-size:12px; font-weight:700; opacity:.9; }
-.mutedSmall{ font-size:12px; opacity:.7; }
-.miniHint{ font-size:12px; opacity:.72; white-space:nowrap; }
+.k2 {
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.9;
+}
+.mutedSmall {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.miniHint {
+  font-size: 12px;
+  opacity: 0.72;
+  white-space: nowrap;
+}
 
-@media (max-width: 720px){
-  .grid{ grid-template-columns: 1fr; }
-  .sections{ grid-template-columns: 1fr; }
-  .tabs{ flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .sections {
+    grid-template-columns: 1fr;
+  }
+  .tabs {
+    flex-wrap: wrap;
+  }
+  .boxHd {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .boxActions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
 }
 </style>
