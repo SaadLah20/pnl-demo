@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, toRaw, ref, watchEffect } from "vue";
+import { computed, onMounted, toRaw, ref } from "vue";
 import type { WizardCoutsState } from "../composables/useInitieeWizardState";
 
 const props = defineProps<{
@@ -76,6 +76,47 @@ function fmt2(x: number) {
 }
 
 /* =========================
+   PATHS (exclusion Elec/GE + gasoil)
+========================= */
+const ELEC_PATH = "coutMensuel.electricite";
+const GE_PATH = "coutMensuel.location"; // ✅ "Location groupes" = Groupe électrogène
+const gasoilPath = "coutMensuel.gasoil";
+
+function patchDeepMulti(pairs: Array<{ path: string; value: any }>) {
+  const next: WizardCoutsState = deepClone(props.modelValue);
+  for (const p of pairs) setPath(next as any, p.path, p.value);
+  emit("update:modelValue", next);
+}
+
+/** ✅ Empêche Elec et Groupe électrogène d’être non-zéro en même temps */
+function applyElecGeExclusion(changedPath: string, nextValue: number): boolean {
+  const v = n(nextValue);
+  if (v <= 0) return false;
+
+  if (changedPath === ELEC_PATH) {
+    if (!isLocked(GE_PATH) && n(getByPath(GE_PATH)) !== 0) {
+      patchDeepMulti([
+        { path: ELEC_PATH, value: v },
+        { path: GE_PATH, value: 0 },
+      ]);
+      return true;
+    }
+  }
+
+  if (changedPath === GE_PATH) {
+    if (!isLocked(ELEC_PATH) && n(getByPath(ELEC_PATH)) !== 0) {
+      patchDeepMulti([
+        { path: GE_PATH, value: v },
+        { path: ELEC_PATH, value: 0 },
+      ]);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/* =========================
    DEFAULTS (one-shot init)
 ========================= */
 onMounted(() => {
@@ -87,6 +128,16 @@ onMounted(() => {
   if (!isLocked("coutMensuel.locationChargeur") && n(next.coutMensuel.locationChargeur) === 0)
     next.coutMensuel.locationChargeur = 22000;
   if (!isLocked("coutMensuel.troisG") && n(next.coutMensuel.troisG) === 0) next.coutMensuel.troisG = 500;
+
+  // ✅ Interdiction: Électricité et Groupe électrogène non-zéro en même temps
+  const eNow = n(next.coutMensuel.electricite);
+  const geNow = n(next.coutMensuel.location);
+  if (eNow > 0 && geNow > 0) {
+    // Priorité à l'électricité (plus "logique" si déjà renseignée)
+    if (!isLocked(GE_PATH)) next.coutMensuel.location = 0;
+    // si GE est verrouillé mais pas elec, on force elec à 0
+    else if (!isLocked(ELEC_PATH)) next.coutMensuel.electricite = 0;
+  }
 
   const m = next.maintenance;
   if (!isLocked("maintenance.cab") && n(m.cab) === 0) m.cab = 3000;
@@ -102,15 +153,14 @@ onMounted(() => {
 });
 
 /* =========================
-   Gasoil auto
+   Volume / durée (ratio)
 ========================= */
-const elecGroupLocked = computed(
-  () => isLocked("coutMensuel.electricite") || isLocked("coutMensuel.location")
-);
 const volTotal = computed(() => Math.max(0, n(props.volumeTotalM3)));
 const duree = computed(() => Math.max(1, Math.trunc(n(props.dureeMois) || 1)));
-const gasoilAutoRate = computed(() => (elecGroupLocked.value ? 1.5 : 1.8));
-const gasoilAutoValue = computed(() => (gasoilAutoRate.value * volTotal.value * 12) / duree.value);
+const ratioVolDuree = computed(() => (duree.value > 0 ? volTotal.value / duree.value : 0));
+
+const elecVal = computed(() => n(getByPath(ELEC_PATH)));
+const geVal = computed(() => n(getByPath(GE_PATH)));
 
 /* =========================
    Totaux
@@ -214,33 +264,84 @@ const itemsOccasionnels = computed(() => {
 ========================= */
 function onSlide(path: string, min: number, max: number, raw: any) {
   if (isLocked(path)) return;
-  patchDeep(path, clamp(raw, min, max));
+  const v = clamp(raw, min, max);
+
+  // ✅ exclusion Elec/GE
+  if (path === ELEC_PATH || path === GE_PATH) {
+    const handled = applyElecGeExclusion(path, v);
+    if (handled) return;
+  }
+
+  patchDeep(path, v);
 }
 function onInput(path: string, min: number, max: number, raw: any) {
   if (isLocked(path)) return;
-  patchDeep(path, clamp(raw, min, max));
+  const v = clamp(raw, min, max);
+
+  // ✅ exclusion Elec/GE
+  if (path === ELEC_PATH || path === GE_PATH) {
+    const handled = applyElecGeExclusion(path, v);
+    if (handled) return;
+  }
+
+  patchDeep(path, v);
 }
 
 /* =========================
-   Gasoil control
+   Outil gasoil (manuel + calcul assisté)
 ========================= */
-const gasoilPath = "coutMensuel.gasoil";
-const gasoilLinkedPath = "coutMensuel.gasoilLinked";
-const gasoilIsAuto = computed(() => !!(props.modelValue as any)?.coutMensuel?.gasoilLinked);
+const gasToolOpen = ref(false);
+const gasPrix = ref<number | null>(null); // prix gasoil
+const gasCoef = ref<number | null>(null); // coefficient (mode GE)
+const gasErr = ref<string | null>(null);
 
-function toggleGasoilAuto(v: boolean) {
-  patchDeep(gasoilLinkedPath, !!v);
-  if (v) patchDeep(gasoilPath, gasoilAutoValue.value);
-}
-const gasoilDisplay = computed(() => (gasoilIsAuto.value ? gasoilAutoValue.value : getByPath(gasoilPath)));
+const gasSuggested = computed(() => {
+  const prix = n(gasPrix.value);
+  const coef = n(gasCoef.value);
+  const r = Math.max(0, n(ratioVolDuree.value));
 
-watchEffect(() => {
-  if (!gasoilIsAuto.value) return;
-  if (isLocked(gasoilPath)) return;
-  const target = gasoilAutoValue.value;
-  const cur = getByPath(gasoilPath);
-  if (Math.abs(cur - target) > 0.5) patchDeep(gasoilPath, target);
+  if (elecVal.value > 0) {
+    // ✅ Electricité => (Prix/3) * (volume/durée)
+    return (prix / 3) * r;
+  }
+  if (geVal.value > 0) {
+    // ✅ Groupe électrogène => Coef * Prix * (volume/durée)
+    return coef * prix * r;
+  }
+  return 0;
 });
+
+function openGasTool() {
+  gasErr.value = null;
+  gasToolOpen.value = true;
+}
+function closeGasTool() {
+  gasToolOpen.value = false;
+  gasErr.value = null;
+}
+
+function applyGasSuggested() {
+  if (isLocked(gasoilPath)) return;
+
+  const prix = n(gasPrix.value);
+  if (prix <= 0) {
+    gasErr.value = "Saisis un prix gasoil > 0.";
+    return;
+  }
+
+  if (elecVal.value <= 0 && geVal.value <= 0) {
+    gasErr.value = "Renseigne Électricité ou Groupe électrogène (l’un des deux).";
+    return;
+  }
+
+  if (geVal.value > 0 && n(gasCoef.value) <= 0) {
+    gasErr.value = "En mode Groupe électrogène, saisis un coefficient > 0.";
+    return;
+  }
+
+  patchDeep(gasoilPath, gasSuggested.value);
+  closeGasTool();
+}
 
 /* =========================
    UI: pliable (tu peux garder)
@@ -298,30 +399,23 @@ function valFmt(path: string, mode: "0" | "2") {
           </button>
 
           <div v-show="openMens" class="secB">
-            <!-- Gasoil -->
+            <!-- Gasoil (manuel) + outil -->
             <div class="row" :class="{ locked: isLocked(gasoilPath) }">
               <div class="rowTop">
                 <div class="lab">
                   <span class="txt">Gasoil</span>
                   <span v-if="isLocked(gasoilPath)" class="lk">contrat</span>
 
-                  <label class="auto">
-                    <input
-                      type="checkbox"
-                      :checked="gasoilIsAuto"
-                      :disabled="isLocked(gasoilPath)"
-                      @change="toggleGasoilAuto(($event.target as HTMLInputElement).checked)"
-                    />
-                    <span>Auto</span>
-                  </label>
+                  <button class="toolBtn" type="button" @click="openGasTool()" :disabled="isLocked(gasoilPath)">
+                    Outil
+                  </button>
 
-                  <span v-if="gasoilIsAuto" class="hint">
-                    {{ elecGroupLocked ? "GE verrouillé" : "GE libre" }} · {{ gasoilAutoRate.toFixed(1) }}DH · vol
-                    {{ fmt0(volTotal) }} · {{ duree }}m
-                  </span>
+                  <span v-if="elecVal > 0" class="hint">Mode: Électricité</span>
+                  <span v-else-if="geVal > 0" class="hint">Mode: Groupe électrogène</span>
+                  <span v-else class="hint">Mode: —</span>
                 </div>
 
-                <div class="badge mono">{{ fmt0(gasoilDisplay) }}</div>
+                <div class="badge mono">{{ fmt0(getByPath(gasoilPath)) }}</div>
               </div>
 
               <div class="rowBot">
@@ -331,8 +425,8 @@ function valFmt(path: string, mode: "0" | "2") {
                   min="0"
                   max="200000"
                   step="100"
-                  :disabled="isLocked(gasoilPath) || gasoilIsAuto"
-                  :value="gasoilDisplay"
+                  :disabled="isLocked(gasoilPath)"
+                  :value="getByPath(gasoilPath)"
                   @input="onSlide(gasoilPath, 0, 200000, ($event.target as HTMLInputElement).value)"
                 />
                 <input
@@ -341,8 +435,8 @@ function valFmt(path: string, mode: "0" | "2") {
                   min="0"
                   max="200000"
                   step="1"
-                  :disabled="isLocked(gasoilPath) || gasoilIsAuto"
-                  :value="gasoilDisplay"
+                  :disabled="isLocked(gasoilPath)"
+                  :value="getByPath(gasoilPath)"
                   @input="onInput(gasoilPath, 0, 200000, ($event.target as HTMLInputElement).value)"
                 />
               </div>
@@ -519,6 +613,71 @@ function valFmt(path: string, mode: "0" | "2") {
         </section>
       </div>
     </div>
+
+    <!-- ✅ Outil gasoil -->
+    <Teleport to="body">
+      <div v-if="gasToolOpen" class="gasOvl" role="dialog" aria-modal="true" @mousedown.self="closeGasTool()">
+        <div class="gasDlg">
+          <div class="gasHdr">
+            <div class="gasTtl">Outil gasoil</div>
+            <button class="gasX" type="button" @click="closeGasTool()" aria-label="Fermer">✕</button>
+          </div>
+
+          <div class="gasBody">
+            <div class="gasGrid">
+              <div class="gasF">
+                <div class="gasLbl">Prix gasoil</div>
+                <input
+                  class="gasIn mono"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="DH/L"
+                  :value="gasPrix ?? ''"
+                  @input="gasPrix = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null"
+                />
+              </div>
+
+              <div class="gasF" :class="{ dim: !(geVal > 0) }">
+                <div class="gasLbl">Coefficient (si Groupe électrogène)</div>
+                <input
+                  class="gasIn mono"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  placeholder="ex: 0.35"
+                  :disabled="!(geVal > 0)"
+                  :value="gasCoef ?? ''"
+                  @input="gasCoef = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null"
+                />
+              </div>
+
+              <div class="gasSum">
+                <div class="gasSumL">
+                  <div class="gasK">Mode</div>
+                  <div class="gasV">{{ elecVal > 0 ? "Électricité" : geVal > 0 ? "Groupe électrogène" : "—" }}</div>
+
+                  <div class="gasK">Ratio (vol/durée)</div>
+                  <div class="gasV mono">{{ ratioVolDuree.toLocaleString("fr-FR", { maximumFractionDigits: 3 }) }}</div>
+                </div>
+
+                <div class="gasSumR">
+                  <div class="gasK">Suggestion gasoil</div>
+                  <div class="gasBig mono">{{ fmt0(gasSuggested) }}</div>
+                </div>
+              </div>
+
+              <div v-if="gasErr" class="gasErr">{{ gasErr }}</div>
+            </div>
+          </div>
+
+          <div class="gasFtr">
+            <button class="btn2" type="button" @click="closeGasTool()">Annuler</button>
+            <button class="btn2 pri" type="button" @click="applyGasSuggested()">Appliquer</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -701,4 +860,102 @@ function valFmt(path: string, mode: "0" | "2") {
   white-space:nowrap;
 }
 .auto input{transform: translateY(1px);}
+
+/* =========================
+   ✅ Outil gasoil (modal)
+========================= */
+.toolBtn{
+  border:1px solid rgba(16,24,40,.12);
+  background: rgba(15,23,42,.03);
+  color: rgba(15,23,42,.85);
+  border-radius:999px;
+  padding:2px 8px;
+  font-size:10.5px;
+  font-weight:950;
+  cursor:pointer;
+  line-height:1.2;
+}
+.toolBtn:hover{
+  background: rgba(32,184,232,.08);
+  border-color: rgba(32,184,232,.20);
+}
+.toolBtn:disabled{opacity:.55;cursor:not-allowed}
+
+.gasOvl{
+  position:fixed; inset:0;
+  background: rgba(2,6,23,.40);
+  display:flex; align-items:center; justify-content:center;
+  padding:12px; z-index: 1200000;
+}
+.gasDlg{
+  width:min(520px,100%);
+  background:#fff;
+  border-radius:14px;
+  border:1px solid rgba(16,24,40,.12);
+  overflow:hidden;
+  box-shadow: 0 18px 50px rgba(2,6,23,.22);
+}
+.gasHdr{
+  padding:10px;
+  display:flex; align-items:center; justify-content:space-between;
+  border-bottom:1px solid rgba(16,24,40,.08);
+  background: rgba(255,255,255,.78);
+  backdrop-filter: blur(6px);
+}
+.gasTtl{font-weight:1000;color:rgba(15,23,42,.92)}
+.gasX{
+  width:32px;height:32px;
+  border-radius:12px;
+  border:1px solid rgba(16,24,40,.12);
+  background: rgba(15,23,42,.03);
+  cursor:pointer;
+}
+.gasBody{padding:12px}
+.gasGrid{display:grid;gap:10px}
+.gasF{display:grid;gap:6px}
+.gasLbl{
+  font-size:11px;font-weight:900;color:rgba(15,23,42,.60);
+  text-transform:uppercase;letter-spacing:.03em;
+}
+.gasIn{
+  height:34px;
+  border-radius:12px;
+  border:1px solid rgba(16,24,40,.14);
+  background:#fff;
+  padding:0 10px;
+  font-weight:1000;
+  text-align:right;
+  outline:none;
+}
+.gasIn:focus{
+  border-color: rgba(32,184,232,.45);
+  box-shadow: 0 0 0 3px rgba(32,184,232,.14);
+}
+.gasF.dim{opacity:.65}
+.gasSum{
+  border:1px solid rgba(16,24,40,.10);
+  border-radius:14px;
+  background: rgba(15,23,42,.02);
+  padding:10px;
+  display:flex; gap:12px;
+  align-items:stretch; justify-content:space-between;
+}
+.gasK{font-size:10px;font-weight:900;color:rgba(15,23,42,.55);margin-top:2px}
+.gasV{font-size:12px;font-weight:900;color:rgba(15,23,42,.86)}
+.gasBig{font-size:16px;font-weight:1100;color:rgba(15,23,42,.92)}
+.gasErr{
+  border:1px solid rgba(239,68,68,.22);
+  background: rgba(239,68,68,.10);
+  border-radius:12px;
+  padding:8px 10px;
+  font-weight:900;
+  color: rgba(127,29,29,.95);
+  font-size:12px;
+}
+.gasFtr{
+  padding:10px;
+  display:flex; gap:8px;
+  justify-content:flex-end;
+  border-top:1px solid rgba(16,24,40,.08);
+}
 </style>

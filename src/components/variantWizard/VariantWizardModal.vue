@@ -6,6 +6,9 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
 
+import { usePnlStore } from "@/stores/pnl.store";
+import { contractUiTitle } from "@/services/contractTitle";
+
 import WizardGeneralTab from "@/components/variantWizard/tabs/WizardGeneralTab.vue";
 import WizardFormulesTab from "@/components/variantWizard/tabs/WizardFormulesTab.vue";
 import WizardCoutsTab from "@/components/variantWizard/tabs/WizardCoutsTab.vue";
@@ -64,6 +67,8 @@ const props = defineProps<{
     title: string;
     contractTitle?: string | null;
     pnlTitle?: string | null;
+    contractId?: string | null;
+    pnlId?: string | null;
   }>;
 }>();
 
@@ -72,6 +77,8 @@ const emit = defineEmits<{
   (e: "submit-initiee", payload: InitieePayload): void;
   (e: "submit-composee", payload: ComposePayload): void;
 }>();
+
+const store = usePnlStore();
 
 const isOpen = computed(() => !!props.open);
 const mode = computed(() => props.mode);
@@ -116,7 +123,9 @@ const elecAndGroupsLocked = computed(() =>
 );
 
 // ✅ Location terrain contractuel via Contract.terrain (aligné avec CoutMensuelPage)
-const locationTerrainLocked = computed(() => isChargeClient(props.contract?.terrain ?? props.contract?.locationTerrain));
+const locationTerrainLocked = computed(() =>
+  isChargeClient(props.contract?.terrain ?? props.contract?.locationTerrain),
+);
 
 // ✅ Occasionnel: transport contractuel
 const transportOccasionnelLocked = computed(() => isChargeClient(props.contract?.transport));
@@ -127,7 +136,9 @@ const branchementElecLocked = computed(() =>
 );
 const branchementEauLocked = computed(() => isChargeClient(props.contract?.branchementEau));
 
-const locationChargeurLocked = computed(() => isChargeClient(props.contract?.chargeuse ?? props.contract?.locationChargeur));
+const locationChargeurLocked = computed(() =>
+  isChargeClient(props.contract?.chargeuse ?? props.contract?.locationChargeur),
+);
 const genieCivilLocked = computed(() => isChargeClient(props.contract?.genieCivil));
 const installationLocked = computed(() => isChargeClient(props.contract?.installation));
 
@@ -212,7 +223,7 @@ const tab = ref<InitTabKey>("general");
 const initieeReady = computed(() => !!initWizard.value);
 
 /* =========================================================
-   COMPOSEE (inchangé + actions globales)
+   COMPOSEE (UI inchangée)
 ========================================================= */
 const compose = reactive<ComposePayload>({
   baseVariantId: "",
@@ -264,21 +275,87 @@ const composeQuery = ref("");
 const composeOnlySameContract = ref(false);
 
 function labelV(v: any) {
-  const parts = [v.title];
-  if (v.contractTitle) parts.push(v.contractTitle);
-  if (v.pnlTitle) parts.push(v.pnlTitle);
+  const parts = [String(v?.title ?? "").trim() || "—"];
+  if (v?.contractTitle) parts.push(String(v.contractTitle));
+  if (v?.pnlTitle) parts.push(String(v.pnlTitle));
   return parts.filter(Boolean).join(" · ");
 }
 
+type VariantChoice = {
+  id: string;
+  title: string;
+  contractTitle?: string | null;
+  pnlTitle?: string | null;
+  contractId?: string | null;
+  pnlId?: string | null;
+};
+
+/** ✅ variantes de TOUS les PNL (store.pnls) */
+const allVariantsFromStore = computed<VariantChoice[]>(() => {
+  const out: VariantChoice[] = [];
+  const pnls = (store as any).pnls ?? [];
+  for (const p of pnls) {
+    const pnlId = String(p?.id ?? "").trim() || null;
+    const pnlTitle = String(p?.title ?? p?.name ?? "").trim() || null;
+
+    for (const c of p?.contracts ?? []) {
+      const contractId = String(c?.id ?? "").trim() || null;
+      const ct = contractUiTitle(c);
+
+      for (const v of c?.variants ?? []) {
+        const id = String(v?.id ?? "").trim();
+        if (!id) continue;
+        out.push({
+          id,
+          title: String(v?.title ?? v?.name ?? "").trim() || "Variante",
+          contractTitle: ct,
+          pnlTitle,
+          contractId,
+          pnlId,
+        });
+      }
+    }
+  }
+  return out;
+});
+
+/** ✅ merge props.allVariants (si parent injecte) + store flatten */
+const allVariantsMerged = computed<VariantChoice[]>(() => {
+  const out: VariantChoice[] = [];
+  const seen = new Set<string>();
+
+  for (const v of allVariantsFromStore.value) {
+    if (!v?.id || seen.has(v.id)) continue;
+    seen.add(v.id);
+    out.push(v);
+  }
+
+  for (const v of props.allVariants ?? []) {
+    const id = String((v as any)?.id ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      title: String((v as any)?.title ?? "").trim() || "Variante",
+      contractTitle: (v as any)?.contractTitle ?? null,
+      pnlTitle: (v as any)?.pnlTitle ?? null,
+      contractId: (v as any)?.contractId ?? null,
+      pnlId: (v as any)?.pnlId ?? null,
+    });
+  }
+
+  return out;
+});
+
 const allVariantChoices = computed(() => {
-  const all = props.allVariants ?? [];
+  const all = allVariantsMerged.value;
   const q = String(composeQuery.value ?? "").toLowerCase().trim();
 
   let out = all;
 
   if (composeOnlySameContract.value && props.contract?.id) {
-    // si tu filtres côté parent, garde tel quel
-    out = out;
+    const cid = String(props.contract.id);
+    out = out.filter((v) => !v.contractId || String(v.contractId) === cid);
   }
 
   if (q) out = out.filter((v) => labelV(v).toLowerCase().includes(q));

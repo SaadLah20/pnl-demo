@@ -5,6 +5,7 @@
      ✅ Hint ORANGE "Modifié"
      ✅ Bouton "Appliquer" (preview header) SANS casser le reste de la variante
      ✅ Dirty ne s'affiche pas au chargement
+     ✅ + Mini calculateur salaire (modal) à côté de chaque champ salaire
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
@@ -29,6 +30,7 @@ import {
   ShieldCheckIcon,
   WrenchScrewdriverIcon,
   TruckIcon,
+  CalculatorIcon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -275,6 +277,47 @@ const perM3 = computed(() => (volumeTotal.value > 0 ? total.value / volumeTotal.
 const pct = computed(() => (caTotal.value > 0 ? (total.value / caTotal.value) * 100 : 0));
 
 /* =========================
+   ✅ MINI CALCULATEUR SALAIRE
+   - Salaire (base)
+   - Heures sup (montant)
+   - Charges = Salaire * 32%
+   - Total = Salaire + Heures sup + Charges
+========================= */
+const salCalcOpen = ref(false);
+const salCalcKey = ref<string | null>(null); // g.key
+const salBase = ref<number | null>(null);
+const salOver = ref<number | null>(null);
+
+const CHARGES_RATE = 0.32;
+
+const salCharges = computed(() => clamp(nz(salBase.value) * CHARGES_RATE, 0, 1e15));
+const salTotal = computed(() => clamp(nz(salBase.value) + nz(salOver.value) + salCharges.value, 0, 1e15));
+
+function openSalaryCalc(gKey: string) {
+  salCalcKey.value = String(gKey);
+  // init sur la valeur actuelle du champ salaire (si existe), sinon 0
+  const current = clamp(nz(draft[`${gKey}Cout`]), 0, 1e15);
+  // par défaut: tout en "salaire base" pour que l'utilisateur puisse ajuster
+  salBase.value = current > 0 ? current : null;
+  salOver.value = null;
+  salCalcOpen.value = true;
+}
+function closeSalaryCalc() {
+  salCalcOpen.value = false;
+  salCalcKey.value = null;
+  salBase.value = null;
+  salOver.value = null;
+}
+function confirmSalaryCalc() {
+  const gKey = salCalcKey.value;
+  if (!gKey) return;
+  const t = clamp(salTotal.value, 0, 999999999);
+  draft[`${gKey}Cout`] = t === 0 ? null : t;
+  closeSalaryCalc();
+  showToast("Salaire calculé appliqué.", "ok");
+}
+
+/* =========================
    PAYLOAD + DIRTY + PREVIEW APPLY
 ========================= */
 function buildPayloadFromDraft() {
@@ -287,11 +330,11 @@ function buildPayloadFromDraft() {
   return out;
 }
 
-const baselineJson = ref<string>(""); // ✅ baseline initial
+const baselineJson = ref<string>("");
 const currentJson = computed(() => stableJson(buildPayloadFromDraft()));
 const dirty = computed(() => {
   if (!variant.value?.id) return false;
-  if (!baselineJson.value) return false; // ✅ tant que baseline pas prête => pas dirty
+  if (!baselineJson.value) return false;
   return currentJson.value !== baselineJson.value;
 });
 
@@ -313,7 +356,6 @@ function applyPreviewToHeader() {
 
   const s: any = store as any;
 
-  // ✅ on ne patch PAS un objet partiel: on clone toute la variante et on modifie SEULEMENT employes
   const full = cloneSafe(variant.value);
   full.employes = buildPayloadFromDraft();
 
@@ -336,23 +378,18 @@ function restorePreviewBaseline() {
   previewApplied.value = false;
 }
 
-/* ✅ init baseline : après loadFromVariant (sinon dirty au chargement) */
 watch(
   () => variant.value?.id,
   () => {
     loadFromVariant();
     applyAutoHideZeroOnEnter();
 
-    // snapshot pour restaurer si preview appliquée
     setBaselineSnapshotFromVariant();
-
-    // baseline JSON = état initial => pas "Modifié"
     setBaselineNow();
   },
   { immediate: true }
 );
 
-/* push dirty to global unsaved store */
 watch(
   dirty,
   (v) => {
@@ -375,7 +412,7 @@ function showToast(msg: string, kind: "ok" | "err" | "info" = "ok") {
 }
 
 /* =========================
-   MODAL
+   MODAL (confirm)
 ========================= */
 const modal = reactive({
   open: false,
@@ -411,7 +448,6 @@ async function saveDirect(): Promise<boolean> {
   try {
     await (store as any).updateVariant(variant.value.id, { employes: buildPayloadFromDraft() });
 
-    // refresh baseline snapshot AFTER save
     setBaselineSnapshotFromVariant();
     setBaselineNow();
 
@@ -427,13 +463,11 @@ async function saveDirect(): Promise<boolean> {
 }
 
 async function discardDirect() {
-  // si preview appliquée, restaurer l'ancien snapshot (avant preview)
   if (previewApplied.value) restorePreviewBaseline();
 
   loadFromVariant();
   applyAutoHideZeroOnEnter();
 
-  // baseline = état restauré
   setBaselineSnapshotFromVariant();
   setBaselineNow();
 }
@@ -594,18 +628,12 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
         </div>
 
         <div class="actions">
-          <button
-            class="btn"
-            :disabled="!variant || saving || genBusy || impBusy"
-            @click="toggleHideZero()"
-            :class="{ on: hideZero }"
-          >
+          <button class="btn" :disabled="!variant || saving || genBusy || impBusy" @click="toggleHideZero()" :class="{ on: hideZero }">
             <span class="dot" aria-hidden="true"></span>
             {{ hideZero ? "Afficher" : "Masquer 0" }}
             <span v-if="hideZero && hiddenCount" class="miniBadge">{{ hiddenCount }}</span>
           </button>
 
-          <!-- ✅ Apply preview -->
           <button class="btn" :disabled="!variant || saving || genBusy || impBusy || !dirty" @click="applyPreviewToHeader()">
             <EyeIcon class="ic" />
             Appliquer
@@ -693,16 +721,22 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
                 @input="draft[`${g.key}Nb`] = inputToNullable(($event.target as HTMLInputElement).value, 0, 9999, true)"
               />
 
-              <input
-                class="inSalaire num"
-                type="number"
-                step="0.01"
-                min="0"
-                max="999999999"
-                placeholder="Salaire"
-                :value="draft[`${g.key}Cout`] ?? ''"
-                @input="draft[`${g.key}Cout`] = inputToNullable(($event.target as HTMLInputElement).value, 0, 999999999, false)"
-              />
+              <!-- salaire + mini bouton calcul -->
+              <div class="salWrap">
+                <input
+                  class="inSalaire num"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="999999999"
+                  placeholder="Salaire"
+                  :value="draft[`${g.key}Cout`] ?? ''"
+                  @input="draft[`${g.key}Cout`] = inputToNullable(($event.target as HTMLInputElement).value, 0, 999999999, false)"
+                />
+                <button class="miniCalc" type="button" title="Calcul salaire moyen" @click="openSalaryCalc(g.key)">
+                  <CalculatorIcon class="mic" />
+                </button>
+              </div>
 
               <div class="unit">DH/mois</div>
 
@@ -751,9 +785,77 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
       </div>
     </teleport>
 
+    <!-- ✅ salaire calculator modal -->
+    <teleport to="body">
+      <div v-if="salCalcOpen" class="ovl" role="dialog" aria-modal="true" @mousedown.self="closeSalaryCalc()">
+        <div class="salDlg">
+          <div class="salHdr">
+            <div class="salTtl">
+              <CalculatorIcon class="salIc" />
+              Calcul salaire moyen
+            </div>
+            <button class="x" type="button" @click="closeSalaryCalc()" aria-label="Fermer">✕</button>
+          </div>
+
+          <div class="salBody">
+            <div class="salGrid">
+              <div class="f">
+                <div class="fl">Salaire</div>
+                <input
+                  class="salIn num"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="999999999"
+                  placeholder="0"
+                  :value="salBase ?? ''"
+                  @input="salBase = inputToNullable(($event.target as HTMLInputElement).value, 0, 999999999, false)"
+                />
+              </div>
+
+              <div class="f">
+                <div class="fl">Heures sup (montant)</div>
+                <input
+                  class="salIn num"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="999999999"
+                  placeholder="0"
+                  :value="salOver ?? ''"
+                  @input="salOver = inputToNullable(($event.target as HTMLInputElement).value, 0, 999999999, false)"
+                />
+              </div>
+
+              <div class="f ro">
+                <div class="fl">Charges (32%)</div>
+                <div class="roVal num">{{ money(salCharges, 2) }}</div>
+              </div>
+
+              <div class="tot">
+                <div class="totL">Total (salaire moyen)</div>
+                <div class="totV num">{{ money(salTotal, 2) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="salFtr">
+            <button class="btn2" type="button" @click="closeSalaryCalc()">Annuler</button>
+            <button class="btn2 pri" type="button" @click="confirmSalaryCalc()">Confirmer</button>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
     <!-- toast -->
     <teleport to="body">
-      <div v-if="toastOpen" class="toast" :class="{ err: toastKind === 'err', info: toastKind === 'info' }" role="status" aria-live="polite">
+      <div
+        v-if="toastOpen"
+        class="toast"
+        :class="{ err: toastKind === 'err', info: toastKind === 'info' }"
+        role="status"
+        aria-live="polite"
+      >
         <CheckCircleIcon v-if="toastKind === 'ok'" class="tic" />
         <ExclamationTriangleIcon v-else class="tic" />
         <div class="tmsg">{{ toastMsg }}</div>
@@ -1061,6 +1163,34 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.55);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
 }
+
+/* ✅ salaire + mini calc button */
+.salWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.miniCalc {
+  width: 24px;
+  height: 24px;
+  border-radius: 9px;
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  background: rgba(15, 23, 42, 0.03);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.miniCalc:hover {
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.2);
+}
+.mic {
+  width: 14px;
+  height: 14px;
+  color: rgba(2, 132, 199, 0.95);
+}
+
 .unit {
   font-size: 10.5px;
   font-weight: 950;
@@ -1180,6 +1310,111 @@ async function onApplyGeneralize(payload: { mode: "ALL" | "SELECT"; variantIds: 
   border-color: rgba(2, 132, 199, 0.28);
 }
 
+/* ✅ salaire calculator dialog */
+.salDlg {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(2, 6, 23, 0.2);
+}
+.salHdr {
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(248, 250, 252, 0.85);
+  backdrop-filter: blur(8px);
+}
+.salTtl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 950;
+  color: #0f172a;
+}
+.salIc {
+  width: 18px;
+  height: 18px;
+  color: rgba(2, 132, 199, 0.95);
+}
+.salBody {
+  padding: 12px;
+}
+.salGrid {
+  display: grid;
+  gap: 10px;
+}
+.f {
+  display: grid;
+  gap: 6px;
+}
+.fl {
+  font-size: 10.5px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.65);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.salIn {
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(2, 132, 199, 0.26);
+  background: rgba(2, 132, 199, 0.055);
+  padding: 0 10px;
+  font-weight: 950;
+  font-size: 13px;
+  color: #0f172a;
+  outline: none;
+  text-align: right;
+}
+.salIn:focus {
+  border-color: rgba(2, 132, 199, 0.55);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+.f.ro .roVal {
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.9);
+}
+.tot {
+  margin-top: 2px;
+  border-radius: 14px;
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  background: rgba(245, 158, 11, 0.08);
+  padding: 10px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.totL {
+  font-weight: 950;
+  color: rgba(146, 64, 14, 0.98);
+}
+.totV {
+  font-weight: 1000;
+  color: rgba(146, 64, 14, 0.98);
+  white-space: nowrap;
+}
+.salFtr {
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(16, 24, 40, 0.08);
+}
+
+/* toast */
 .toast {
   position: fixed;
   right: 12px;

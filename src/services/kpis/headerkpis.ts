@@ -422,9 +422,27 @@ export function computeHeaderKpis(
     n(coutOcc?.bungalows),
     getMajorationPct("coutOccasionnel.bungalows", persistedMajorations, previewMajorations)
   );
+    const occBranchementElec = applyMajoration(
+    n((coutOcc as any)?.branchementElec ?? (coutOcc as any)?.branchementElectricite),
+    getMajorationPct("coutOccasionnel.branchementElec", persistedMajorations, previewMajorations)
+  );
+
+  const occBranchementEau = applyMajoration(
+    n((coutOcc as any)?.branchementEau),
+    getMajorationPct("coutOccasionnel.branchementEau", persistedMajorations, previewMajorations)
+  );
 
   const coutOccasionnelTotal =
-    occGenieCivil + occInstallation + occTransport + occDemontage + occRemise + occSilots + occLocalAdjuvant + occBungalows;
+    occGenieCivil +
+    occInstallation +
+    occTransport +
+    occDemontage +
+    occRemise +
+    occSilots +
+    occLocalAdjuvant +
+    occBungalows +
+    occBranchementElec +
+    occBranchementEau;
 
   // 5.6) Autres coûts
   const fraisGenPct = n(autresItems.find((x: any) => String(x?.unite ?? "").includes("POURCENT"))?.valeur);

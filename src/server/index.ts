@@ -1332,32 +1332,55 @@ async function applyComposee(
     }
   };
 
-  const copyFormules = async (fromId: string) => {
-    const dstSec = await tx.sectionFormules.upsert({
-      where: { variantId },
-      create: { variantId, category: "FORMULES" },
-      update: {},
+const copyFormules = async (fromId: string) => {
+  const dstSec = await tx.sectionFormules.upsert({
+    where: { variantId },
+    create: { variantId, category: "FORMULES" },
+    update: {},
+  });
+
+  const srcLinks = await tx.variantFormule.findMany({
+    where: { variantId: fromId },
+  });
+
+  await tx.variantFormule.deleteMany({ where: { variantId } });
+
+  if (srcLinks.length) {
+    await tx.variantFormule.createMany({
+      data: srcLinks.map((l) => ({
+        variantId,
+        sectionId: dstSec.id,
+        formuleId: l.formuleId,
+        volumeM3: l.volumeM3,
+        momd: l.momd,
+        cmpOverride: l.cmpOverride,
+      })),
     });
+  }
 
-    const srcLinks = await tx.variantFormule.findMany({ where: { variantId: fromId } });
+  // 1) Sync MP nécessaires depuis les formules (crée les MP manquantes au prix catalogue)
+  await syncVariantMpsFromFormules(tx, variantId);
 
-    await tx.variantFormule.deleteMany({ where: { variantId } });
+  // 2) ✅ Copier les overrides MP de la source -> destination (prix + comment)
+  const srcMps = await tx.variantMp.findMany({ where: { variantId: fromId } });
+  if (!srcMps.length) return;
 
-    if (srcLinks.length) {
-      await tx.variantFormule.createMany({
-        data: srcLinks.map((l) => ({
-          variantId,
-          sectionId: dstSec.id,
-          formuleId: l.formuleId,
-          volumeM3: l.volumeM3,
-          momd: l.momd,
-          cmpOverride: l.cmpOverride,
-        })),
-      });
-    }
+  const srcByMpId = new Map(srcMps.map((m) => [String(m.mpId), m]));
 
-    await syncVariantMpsFromFormules(tx, variantId);
-  };
+  const dstMps = await tx.variantMp.findMany({ where: { variantId } });
+  for (const dst of dstMps) {
+    const src = srcByMpId.get(String(dst.mpId));
+    if (!src) continue;
+
+    await tx.variantMp.update({
+      where: { id: dst.id },
+      data: {
+        prix: src.prix,
+        comment: (src as any).comment ?? null,
+      } as any,
+    });
+  }
+};
 
   const copyDevis = async (fromId: string) => {
     const src = await tx.sectionDevis.findUnique({ where: { variantId: fromId } });

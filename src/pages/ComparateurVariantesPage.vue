@@ -1,9 +1,9 @@
-<!-- ✅ src/pages/ComparateurVariantesPage.vue (FICHIER COMPLET — CORRIGÉ SELON TES REMARQUES)
-     - ✅ En haut: PLUS AUCUNE notion contrat/périmètre (pas de select contrat, pas de scope)
-     - ✅ Graphes: PNL complet par défaut, filtre UNIQUEMENT via cartes contrats (cliquables)
-     - ✅ Tableau: ajout filtre contrat SEULEMENT (UI compact, sans déformation)
-     - ✅ Exclure EBIT=0 et/ou PMV=0 + bandeau compteur
-     - ✅ Scatter: points petits + jitter léger
+<!-- ✅ src/pages/ComparateurVariantesPage.vue (FICHIER COMPLET - FIX BUILD + UI)
+     ✅ Icônes safe (outline existants)
+     ✅ Filtre contrat global (cartes) => graphes + delta + tableau
+     ✅ Base variant + delta (sans delta volume)
+     ✅ Tableau: + espace titre, - espace EBIT% + Faisable
+     ✅ Delta: anti-chevauchement (2 lignes)
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -14,11 +14,13 @@ import { contractUiTitle } from "@/services/contractTitle";
 import {
   ArrowPathIcon,
   ExclamationTriangleIcon,
+  Squares2X2Icon,
+  ChartBarIcon,
+  AdjustmentsHorizontalIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  ChartBarIcon,
-  Squares2X2Icon,
-  AdjustmentsHorizontalIcon,
+  BookmarkIcon,
+  ListBulletIcon,
 } from "@heroicons/vue/24/outline";
 
 /* =========================
@@ -32,7 +34,11 @@ onMounted(async () => {
   try {
     loading.value = true;
     error.value = null;
-    if ((store as any).pnls?.length === 0 && (store as any).loadPnls) await (store as any).loadPnls();
+
+    if ((store as any).pnls?.length === 0 && (store as any).loadPnls) {
+      await (store as any).loadPnls();
+    }
+
     initDefaults();
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -46,17 +52,27 @@ onMounted(async () => {
 ========================= */
 type VariantPack = { variant: any; contract: any; pnl: any };
 
+type Kpi = {
+  pmvM3: number;
+  caTotal: number;
+  ebitTotal: number;
+  ebitPct: number;
+  productionTotal: number;
+  cmpM3: number;
+};
+
 type Row = {
   id: string;
   variantTitle: string;
-  contractTitle: string;
+
   contractId: string;
+  contractTitle: string;
   dureeMois: number;
-  pmv: number;
-  ebit: number;
-  ebitPct: number;
-  feasible: boolean;
+
+  kpi: Kpi;
+
   valid: boolean;
+  feasible: boolean;
 };
 
 type ContractSummary = {
@@ -64,53 +80,56 @@ type ContractSummary = {
   contractTitle: string;
   dureeMois: number;
   variantsCount: number;
-
   validCount: number;
   invalidCount: number;
-
   maxEbit: number | null;
   minPmv: number | null;
-  bestCompromisePmv: number | null;
 };
 
 /* =========================
    UI STATE
 ========================= */
 const ui = reactive({
-  // cible faisabilité
+  tab: "SYNTH" as "SYNTH" | "DELTA" | "TABLE",
+
   ebitTargetMode: "total" as "total" | "pct",
   ebitTargetTotal: 0 as number,
   ebitTargetPct: 0 as number,
   onlyFeasible: false,
 
-  // affichage
-  showGraphs: true,
   contractsOpen: true,
-  globalOpen: true,
 
-  // ✅ filtre des graphes par cartes ("" = PNL complet)
-  graphsContractId: "" as string,
+  // ✅ filtre contrat global
+  contractIdFilter: "" as string,
 
-  // ✅ filtre tableau (SEULEMENT contrat)
-  tableContractId: "" as string,
+  // base
+  baseVariantId: "" as string,
 
-  // tri
-  sortKey: "ebit" as keyof Row | "variantTitle" | "dureeMois" | "pmv" | "ebitPct" | "feasible",
+  // bars metric
+  barMetric: "EBIT" as "EBIT" | "CA" | "PMV" | "CMP",
+
+  // tri tableau
+  sortKey: "ebitTotal" as
+    | "variantTitle"
+    | "pmvM3"
+    | "cmpM3"
+    | "caTotal"
+    | "ebitTotal"
+    | "ebitPct"
+    | "productionTotal"
+    | "feasible",
   sortDir: "desc" as "asc" | "desc",
 });
 
 /* =========================
-   DERIVED: active
+   DERIVED
 ========================= */
 const activePnl = computed(() => (store as any).activePnl ?? null);
-const activeContract = computed(() => (store as any).activeContract ?? null);
 const activeVariantId = computed(() => (store as any).activeVariantId ?? null);
 
 function initDefaults() {
-  // Graphes = PNL complet par défaut
-  ui.graphsContractId = "";
-  // Tableau = tous par défaut
-  ui.tableContractId = "";
+  ui.contractIdFilter = "";
+  ui.baseVariantId = String(activeVariantId.value ?? "");
 }
 
 watch(
@@ -121,15 +140,15 @@ watch(
 /* =========================
    HELPERS
 ========================= */
-function toNum(v: any): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+function n(x: any): number {
+  const v = Number(x);
+  return Number.isFinite(v) ? v : 0;
 }
 function fmtNumber(v: any, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
-  }).format(toNum(v));
+  }).format(n(v));
 }
 function fmtMoney(v: any, digits = 2) {
   return new Intl.NumberFormat("fr-FR", {
@@ -137,7 +156,7 @@ function fmtMoney(v: any, digits = 2) {
     currency: "MAD",
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
-  }).format(toNum(v));
+  }).format(n(v));
 }
 function fmtPct(v: any, digits = 1) {
   return `${fmtNumber(v, digits)} %`;
@@ -159,13 +178,6 @@ function safeMax(nums: number[]) {
   const a = nums.filter((x) => Number.isFinite(x));
   return a.length ? Math.max(...a) : 0;
 }
-function bestBy(list: Row[], better: (a: Row, b: Row) => boolean): Row | null {
-  let best: Row | null = null;
-  for (const r of list) if (!best || better(r, best)) best = r;
-  return best;
-}
-
-/** jitter déterministe (évite superposition dans scatter) */
 function hash01(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -176,7 +188,20 @@ function hash01(s: string): number {
 }
 
 /* =========================
-   SOURCE PACKS (PNL complet)
+   PREVIEW PARAMS (SAFE)
+========================= */
+const previewMajorations = computed<Record<string, number> | null>(() => {
+  const v = (store as any).headerMajorationsPreview;
+  return v && typeof v === "object" ? (v as any) : null;
+});
+const previewDevisSurcharges = computed<Record<string, number> | null>(() => {
+  const v = (store as any).headerDevisSurchargesPreview;
+  return v && typeof v === "object" ? (v as any) : null;
+});
+const useDevisSurcharge = computed<boolean>(() => Boolean((store as any).headerUseDevisSurcharge ?? false));
+
+/* =========================
+   PACKS (PNL complet)
 ========================= */
 const allPacks = computed<VariantPack[]>(() => {
   const pnl = activePnl.value;
@@ -189,26 +214,10 @@ const allPacks = computed<VariantPack[]>(() => {
 });
 
 /* =========================
-   KPI CACHE (ALL PNL)
+   FEASIBILITY
 ========================= */
-const kpisByVariantIdAll = computed(() => {
-  const out = new Map<string, any>();
-  for (const pack of allPacks.value) {
-    const vid = String(pack.variant.id);
-    const dureeMois = toNum(pack.contract?.dureeMois ?? 0);
-    out.set(vid, computeHeaderKpis(pack.variant, dureeMois, null));
-  }
-  return out;
-});
-function getKpi(variantId: string) {
-  return kpisByVariantIdAll.value.get(String(variantId));
-}
-
-/* =========================
-   TARGET / FEASIBILITY
-========================= */
-const ebitMinTotal = computed(() => Math.max(0, toNum(ui.ebitTargetTotal)));
-const ebitMinPct = computed(() => Math.max(0, toNum(ui.ebitTargetPct)));
+const ebitMinTotal = computed(() => Math.max(0, n(ui.ebitTargetTotal)));
+const ebitMinPct = computed(() => Math.max(0, n(ui.ebitTargetPct)));
 
 function isFeasible(ebitTotal: number, ebitPct: number): boolean {
   if (!(ebitTotal >= 0)) return false;
@@ -217,86 +226,154 @@ function isFeasible(ebitTotal: number, ebitPct: number): boolean {
 }
 
 /* =========================
-   ROWS (PNL complet)
+   KPI (source unique)
+========================= */
+function computeKpi(variant: any, dureeMois: number): Kpi {
+  const hk = computeHeaderKpis(
+    variant,
+    n(dureeMois),
+    previewMajorations.value,
+    previewDevisSurcharges.value,
+    useDevisSurcharge.value
+  );
+
+  return {
+    pmvM3: n((hk as any).prixMoyenM3),
+    caTotal: n((hk as any).caTotal),
+    ebitTotal: n((hk as any).ebitTotal),
+    ebitPct: n((hk as any).ebitPct),
+    productionTotal: n((hk as any).productionTotal),
+    cmpM3: n((hk as any).coutMpMoyenM3),
+  };
+}
+
+/* =========================
+   ROWS
 ========================= */
 const rowsAllRawAll = computed<Row[]>(() => {
   return allPacks.value.map((pack) => {
     const vid = String(pack.variant.id);
-    const k = getKpi(vid);
+    const duree = n(pack.contract?.dureeMois ?? 0);
 
-    const pmv = toNum(k?.prixMoyenM3);
-    const ebit = toNum(k?.ebitTotal);
-    const ebitPct = toNum(k?.ebitPct);
+    const kpi = computeKpi(pack.variant, duree);
 
-    const valid = pmv !== 0 && ebit !== 0; // ✅ règle demandée
-    const feasible = valid ? isFeasible(ebit, ebitPct) : false;
+    const valid = kpi.pmvM3 !== 0 && kpi.ebitTotal !== 0;
+    const feasible = valid ? isFeasible(kpi.ebitTotal, kpi.ebitPct) : false;
 
     return {
       id: vid,
       variantTitle: vTitle(pack.variant),
-      contractTitle: cTitle(pack.contract),
       contractId: String(pack.contract?.id ?? ""),
-      dureeMois: toNum(pack.contract?.dureeMois ?? 0),
-      pmv,
-      ebit,
-      ebitPct,
-      feasible,
+      contractTitle: cTitle(pack.contract),
+      dureeMois: duree,
+      kpi,
       valid,
+      feasible,
     };
   });
 });
 
-/* ✅ Comparatif = uniquement valides */
-const rowsAllRaw = computed<Row[]>(() => rowsAllRawAll.value.filter((r) => r.valid));
 const invalidCount = computed(() => rowsAllRawAll.value.filter((r) => !r.valid).length);
-const feasibleCount = computed(() => rowsAllRaw.value.filter((r) => r.feasible).length);
 
-/* =========================
-   FILTERS (GLOBAL)
-========================= */
+/* ✅ filtre contrat global */
+const rowsByContract = computed<Row[]>(() => {
+  const cid = String(ui.contractIdFilter || "");
+  const base = rowsAllRawAll.value.filter((r) => r.valid);
+  if (!cid) return base;
+  return base.filter((r) => r.contractId === cid);
+});
+
 const rowsFiltered = computed<Row[]>(() => {
-  const only = !!ui.onlyFeasible;
-  return rowsAllRaw.value.filter((r) => {
-    if (only && !r.feasible) return false;
-    return true;
-  });
+  if (!ui.onlyFeasible) return rowsByContract.value;
+  return rowsByContract.value.filter((r) => r.feasible);
 });
 
+const feasibleCount = computed(() => rowsFiltered.value.filter((r) => r.feasible).length);
+const validCount = computed(() => rowsByContract.value.length);
+
 /* =========================
-   TABLE FILTER (ONLY contract)
+   CONTRACT SUMMARY
 ========================= */
-const rowsTableFiltered = computed<Row[]>(() => {
-  const cid = String(ui.tableContractId || "");
-  return rowsFiltered.value.filter((r) => {
-    if (cid && r.contractId !== cid) return false;
-    return true;
-  });
+const contractSummaries = computed<ContractSummary[]>(() => {
+  const pnl = activePnl.value;
+  if (!pnl) return [];
+
+  const out: ContractSummary[] = [];
+
+  for (const c of pnl.contracts ?? []) {
+    const cid = String(c.id);
+    const packs = allPacks.value.filter((p) => String(p.contract?.id ?? "") === cid);
+
+    const rowsAll = packs.map((p) => {
+      const kpi = computeKpi(p.variant, n(c?.dureeMois ?? 0));
+      const valid = kpi.pmvM3 !== 0 && kpi.ebitTotal !== 0;
+      return { kpi, valid };
+    });
+
+    const invalid = rowsAll.filter((x) => !x.valid).length;
+    const rows = rowsAll.filter((x) => x.valid);
+
+    const maxE = rows.length ? Math.max(...rows.map((x) => n(x.kpi.ebitTotal))) : null;
+    const minP = rows.length ? Math.min(...rows.map((x) => n(x.kpi.pmvM3))) : null;
+
+    out.push({
+      contractId: cid,
+      contractTitle: cTitle(c),
+      dureeMois: n(c?.dureeMois ?? 0),
+      variantsCount: rowsAll.length,
+      validCount: rows.length,
+      invalidCount: invalid,
+      maxEbit: maxE,
+      minPmv: minP,
+    });
+  }
+
+  out.sort((a, b) => n(b.maxEbit) - n(a.maxEbit));
+  return out;
 });
+
+const bestContract = computed(() => (contractSummaries.value.length ? contractSummaries.value[0] : null));
+
+function setContractFilter(cid: string) {
+  ui.contractIdFilter = String(cid || "");
+
+  // si la base sort du filtre, fallback propre
+  const b = baseRow.value;
+  if (b && ui.contractIdFilter && b.contractId !== ui.contractIdFilter) {
+    const fallback =
+      rowsByContract.value.find((r) => r.id === String(activeVariantId.value ?? "")) ||
+      rowsByContract.value[0] ||
+      null;
+    ui.baseVariantId = fallback ? fallback.id : "";
+  }
+}
 
 /* =========================
    SORT
 ========================= */
-function sortValue(r: Row, k: typeof ui.sortKey) {
-  switch (k) {
-    case "variantTitle":
-      return r.variantTitle;
-    default:
-      return (r as any)[k];
-  }
+function sortValue(r: Row, key: typeof ui.sortKey) {
+  if (key === "variantTitle") return r.variantTitle;
+  if (key === "feasible") return r.feasible ? 1 : 0;
+  return (r.kpi as any)[key];
 }
-const rowsTable = computed<Row[]>(() => {
+
+const rowsSorted = computed<Row[]>(() => {
   const key = ui.sortKey;
   const dir = ui.sortDir;
-  const arr = [...rowsTableFiltered.value];
+  const arr = [...rowsFiltered.value];
+
   arr.sort((a, b) => {
     const av = sortValue(a, key);
     const bv = sortValue(b, key);
     const mul = dir === "asc" ? 1 : -1;
+
     if (typeof av === "string" || typeof bv === "string") return String(av).localeCompare(String(bv)) * mul;
-    return (toNum(av) - toNum(bv)) * mul;
+    return (n(av) - n(bv)) * mul;
   });
+
   return arr;
 });
+
 function setSort(k: typeof ui.sortKey) {
   if (ui.sortKey === k) ui.sortDir = ui.sortDir === "asc" ? "desc" : "asc";
   else {
@@ -306,119 +383,125 @@ function setSort(k: typeof ui.sortKey) {
 }
 
 /* =========================
-   MAX/MIN/BEST (valide)
+   BASE + DELTAS (sans volume)
 ========================= */
-const maxEbitRow = computed<Row | null>(() => bestBy(rowsFiltered.value, (a, b) => a.ebit > b.ebit));
-const minPmvRow = computed<Row | null>(() => bestBy(rowsFiltered.value, (a, b) => a.pmv < b.pmv));
+const baseRow = computed<Row | null>(() => {
+  const id = String(ui.baseVariantId || "");
+  if (!id) return null;
+  return rowsByContract.value.find((r) => r.id === id) ?? rowsByContract.value[0] ?? null;
+});
 
-const bestCompromise = computed<null | { row: Row; ok: boolean; reason: string }>(() => {
-  const feas = rowsFiltered.value.filter((r) => r.feasible);
-  const bestFeasible = bestBy(feas, (a, b) => a.pmv < b.pmv);
-  if (bestFeasible) return { row: bestFeasible, ok: true, reason: "PMV minimal parmi variantes faisables" };
+function setBaseVariant(id: string) {
+  ui.baseVariantId = String(id || "");
+  ui.tab = "DELTA";
+}
 
-  const fallback = maxEbitRow.value;
-  if (fallback) return { row: fallback, ok: false, reason: "Aucune variante ne respecte la cible (fallback = Max EBIT)" };
+function delta(a: number, b: number) {
+  return n(a) - n(b);
+}
+function deltaPct(a: number, b: number) {
+  const base = n(b);
+  if (base === 0) return 0;
+  return ((n(a) - base) / base) * 100;
+}
 
-  return null;
+type DeltaRow = Row & {
+  isBase: boolean;
+
+  d_pmv: number; d_pmvPct: number;
+  d_ca: number; d_caPct: number;
+  d_ebit: number; d_ebitRelPct: number;
+  d_ebitPct: number;
+  d_prod: number; d_prodPct: number;
+  d_cmp: number; d_cmpPct: number;
+};
+
+const deltaRows = computed<DeltaRow[]>(() => {
+  const b = baseRow.value;
+  if (!b) return [];
+
+  return rowsSorted.value.map((r) => ({
+    ...r,
+    isBase: r.id === b.id,
+
+    d_pmv: delta(r.kpi.pmvM3, b.kpi.pmvM3),
+    d_pmvPct: deltaPct(r.kpi.pmvM3, b.kpi.pmvM3),
+
+    d_ca: delta(r.kpi.caTotal, b.kpi.caTotal),
+    d_caPct: deltaPct(r.kpi.caTotal, b.kpi.caTotal),
+
+    d_ebit: delta(r.kpi.ebitTotal, b.kpi.ebitTotal),
+    d_ebitRelPct: deltaPct(r.kpi.ebitTotal, b.kpi.ebitTotal),
+
+    d_ebitPct: delta(r.kpi.ebitPct, b.kpi.ebitPct),
+
+    d_prod: delta(r.kpi.productionTotal, b.kpi.productionTotal),
+    d_prodPct: deltaPct(r.kpi.productionTotal, b.kpi.productionTotal),
+
+    d_cmp: delta(r.kpi.cmpM3, b.kpi.cmpM3),
+    d_cmpPct: deltaPct(r.kpi.cmpM3, b.kpi.cmpM3),
+  }));
 });
 
 /* =========================
-   CONTRACTS SUMMARY (cards)
+   GRAPHS (filtrés contrat)
 ========================= */
-const contractSummaries = computed<ContractSummary[]>(() => {
-  const pnl = activePnl.value;
-  if (!pnl) return [];
+const barsTop = computed(() => {
+  const rows = rowsByContract.value; // ✅ filtre contrat
+  const metric = ui.barMetric;
 
-  const out: ContractSummary[] = [];
-  for (const c of pnl.contracts ?? []) {
-    const cid = String(c.id);
-    const packs = allPacks.value.filter((p) => String(p.contract?.id ?? "") === cid);
+  const pick = (r: Row) => {
+    if (metric === "EBIT") return r.kpi.ebitTotal;
+    if (metric === "CA") return r.kpi.caTotal;
+    if (metric === "PMV") return r.kpi.pmvM3;
+    return r.kpi.cmpM3;
+  };
 
-    const rowsAll: Row[] = packs.map((p) => {
-      const vid = String(p.variant.id);
-      const k = getKpi(vid);
-      const pmv = toNum(k?.prixMoyenM3);
-      const ebit = toNum(k?.ebitTotal);
-      const ebitPct = toNum(k?.ebitPct);
-      const valid = pmv !== 0 && ebit !== 0;
-      const feasible = valid ? isFeasible(ebit, ebitPct) : false;
+  const sorted = [...rows].sort((a, b) => n(pick(b)) - n(pick(a))).slice(0, 10);
+  const maxV = safeMax(sorted.map((r) => pick(r)));
+  const minV = safeMin(sorted.map((r) => pick(r)));
+  const span = maxV - minV || 1;
 
-      return {
-        id: vid,
-        variantTitle: vTitle(p.variant),
-        contractTitle: cTitle(c),
-        contractId: cid,
-        dureeMois: toNum(c?.dureeMois ?? 0),
-        pmv,
-        ebit,
-        ebitPct,
-        feasible,
-        valid,
-      };
-    });
-
-    const invalid = rowsAll.filter((r) => !r.valid).length;
-    const rows = rowsAll.filter((r) => r.valid);
-
-    const maxE = bestBy(rows, (a, b) => a.ebit > b.ebit);
-    const minP = bestBy(rows, (a, b) => a.pmv < b.pmv);
-    const bestC = bestBy(rows.filter((r) => r.feasible), (a, b) => a.pmv < b.pmv);
-
-    out.push({
-      contractId: cid,
-      contractTitle: cTitle(c),
-      dureeMois: toNum(c?.dureeMois ?? 0),
-      variantsCount: rowsAll.length,
-      validCount: rows.length,
-      invalidCount: invalid,
-      maxEbit: maxE ? maxE.ebit : null,
-      minPmv: minP ? minP.pmv : null,
-      bestCompromisePmv: bestC ? bestC.pmv : null,
-    });
-  }
-
-  out.sort((a, b) => toNum(b.maxEbit) - toNum(a.maxEbit));
-  return out;
+  return sorted.map((r) => ({ ...r, v: pick(r), n01: clamp((pick(r) - minV) / span, 0, 1) }));
 });
 
-const bestContract = computed(() => (contractSummaries.value.length ? contractSummaries.value[0] : null));
+const scatter = computed(() => {
+  const rows = rowsByContract.value;
 
-/* =========================
-   GRAPHS FILTER (via cards)
-========================= */
-const packsForGraphs = computed<VariantPack[]>(() => {
-  const cid = String(ui.graphsContractId || "");
-  if (!cid) return allPacks.value; // ✅ PNL complet
-  return allPacks.value.filter((p) => String(p.contract?.id ?? "") === cid);
-});
+  const xs = rows.map((r) => r.kpi.pmvM3);
+  const ys = rows.map((r) => r.kpi.ebitTotal);
 
-const rowsGraphsRawAll = computed<Row[]>(() => {
-  return packsForGraphs.value.map((pack) => {
-    const vid = String(pack.variant.id);
-    const k = getKpi(vid);
+  const minX = safeMin(xs);
+  const maxX = safeMax(xs);
+  const minY = safeMin(ys);
+  const maxY = safeMax(ys);
 
-    const pmv = toNum(k?.prixMoyenM3);
-    const ebit = toNum(k?.ebitTotal);
-    const ebitPct = toNum(k?.ebitPct);
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
 
-    const valid = pmv !== 0 && ebit !== 0;
-    const feasible = valid ? isFeasible(ebit, ebitPct) : false;
+  const targetY = ui.ebitTargetMode === "total" ? n(ui.ebitTargetTotal) : null;
 
-    return {
-      id: vid,
-      variantTitle: vTitle(pack.variant),
-      contractTitle: cTitle(pack.contract),
-      contractId: String(pack.contract?.id ?? ""),
-      dureeMois: toNum(pack.contract?.dureeMois ?? 0),
-      pmv,
-      ebit,
-      ebitPct,
-      feasible,
-      valid,
-    };
+  const pts = rows.map((r) => {
+    const x0 = clamp((r.kpi.pmvM3 - minX) / spanX, 0, 1);
+    const y0 = clamp((r.kpi.ebitTotal - minY) / spanY, 0, 1);
+
+    const h = hash01(r.id);
+    const jx = (h - 0.5) * 0.010;
+    const jy = (hash01(r.id + "y") - 0.5) * 0.010;
+
+    const x = clamp(x0 + jx, 0, 1);
+    const y = clamp(y0 + jy, 0, 1);
+
+    const isActive = activeVariantId.value ? String(activeVariantId.value) === r.id : false;
+    const isBase = baseRow.value ? baseRow.value.id === r.id : false;
+
+    return { ...r, x, y, isActive, isBase };
   });
+
+  const yTarget01 = targetY == null ? null : clamp((targetY - minY) / spanY, 0, 1);
+
+  return { minX, maxX, minY, maxY, pts, yTarget01 };
 });
-const rowsGraphs = computed<Row[]>(() => rowsGraphsRawAll.value.filter((r) => r.valid));
 
 /* =========================
    ACTIONS
@@ -443,72 +526,15 @@ function reload() {
   })();
 }
 
-/* ✅ sélection cartes contrats pour filtrer graphes */
-function setGraphsFilter(cid: string) {
-  ui.graphsContractId = String(cid || "");
-}
-
 /* =========================
-   GRAPHS (SVG)
+   DELTA COLORS
 ========================= */
-const graphData = computed(() => {
-  const rows = rowsGraphs.value;
-  const maxE = safeMax(rows.map((r) => r.ebit));
-  const minE = safeMin(rows.map((r) => r.ebit));
-  const minP = safeMin(rows.map((r) => r.pmv));
-  const maxP = safeMax(rows.map((r) => r.pmv));
-
-  const spanE = maxE - minE || 1;
-  const spanP = maxP - minP || 1;
-
-  const bars = [...rows]
-    .sort((a, b) => b.ebit - a.ebit)
-    .slice(0, 8)
-    .map((r) => ({
-      ...r,
-      eN: clamp((r.ebit - minE) / spanE, 0, 1),
-      pN: clamp((r.pmv - minP) / spanP, 0, 1),
-    }));
-
-  return { minE, maxE, minP, maxP, bars };
-});
-
-const scatter = computed(() => {
-  const rows = rowsGraphs.value;
-  const minE = graphData.value.minE;
-  const maxE = graphData.value.maxE;
-  const minP = graphData.value.minP;
-  const maxP = graphData.value.maxP;
-
-  const spanE = maxE - minE || 1;
-  const spanP = maxP - minP || 1;
-
-  const targetTotal = ebitMinTotal.value;
-
-  const pts = rows.map((r) => {
-    const x0 = clamp((r.pmv - minP) / spanP, 0, 1);
-    const y0 = clamp((r.ebit - minE) / spanE, 0, 1);
-
-    const h = hash01(r.id);
-    const jx = (h - 0.5) * 0.010;
-    const jy = (hash01(r.id + "y") - 0.5) * 0.010;
-
-    const x = clamp(x0 + jx, 0, 1);
-    const y = clamp(y0 + jy, 0, 1);
-
-    const isTargetOk = r.feasible;
-    const isActive = activeVariantId.value ? String(activeVariantId.value) === r.id : false;
-
-    return { ...r, x, y, isTargetOk, isActive };
-  });
-
-  const yTarget =
-    ui.ebitTargetMode === "pct"
-      ? null
-      : clamp((targetTotal - minE) / spanE, 0, 1);
-
-  return { pts, yTarget };
-});
+function signClass(val: number, dir: "UP" | "DOWN") {
+  const v = n(val);
+  if (v === 0) return "neu";
+  if (dir === "UP") return v > 0 ? "pos" : "neg";
+  return v < 0 ? "pos" : "neg"; // DOWN: baisse = mieux
+}
 </script>
 
 <template>
@@ -520,16 +546,18 @@ const scatter = computed(() => {
         <div class="hSub ellipsis" v-if="activePnl" :title="String(activePnl?.title ?? activePnl?.name ?? '—')">
           PNL: <b>{{ activePnl?.title ?? activePnl?.name ?? "—" }}</b>
           <span class="sep">•</span>
-          Variantes (valides): <b>{{ rowsAllRaw.length }}</b>
+          Filtre: <b>{{ ui.contractIdFilter ? "Contrat" : "PNL complet" }}</b>
+          <span class="sep">•</span>
+          Valides: <b>{{ validCount }}</b>
           <span class="sep">•</span>
           Faisables: <b>{{ feasibleCount }}</b>
           <span class="sep">•</span>
-          Tableau: <b>{{ rowsTable.length }}</b>
+          Base: <b>{{ baseRow ? baseRow.variantTitle : "—" }}</b>
         </div>
       </div>
 
       <div class="hRight">
-        <button class="btn ghost" type="button" @click="reload" :disabled="loading" title="Rafraîchir">
+        <button class="btn ghost" type="button" @click="reload" :disabled="!!loading" title="Rafraîchir">
           <ArrowPathIcon class="ic" />
         </button>
       </div>
@@ -541,28 +569,26 @@ const scatter = computed(() => {
     </div>
     <div v-if="loading" class="alert info">Chargement…</div>
 
-    <!-- INFO exclusions -->
     <div v-if="invalidCount > 0" class="alert warn">
       <ExclamationTriangleIcon class="aic" />
       <div class="min0">
-        <b>{{ invalidCount }}</b> variante(s) ont <b>EBIT</b> et/ou <b>PMV</b> <b>nul</b> (0) :
-        elles sont <b>exclues</b> du comparatif (table + graphes).
+        <b>{{ invalidCount }}</b> variante(s) ont <b>EBIT</b> et/ou <b>PMV</b> à <b>0</b> : exclues.
       </div>
     </div>
 
-    <!-- CONTROLS (AUCUN contrat ici) -->
+    <!-- CONTROLS -->
     <div class="controls">
-      <div class="ctlRow">
-        <div class="ctlGroup">
-          <div class="ctlLabel">Cible EBIT</div>
+      <div class="ctlGrid">
+        <div class="ctlBlock">
+          <div class="ctlLabel">Cible faisabilité</div>
 
-          <div class="targetWrap">
-            <div class="targetMode">
-              <button class="pillTinyBtn" :class="{ on: ui.ebitTargetMode === 'total' }" type="button" @click="ui.ebitTargetMode = 'total'">
-                Total (DH)
+          <div class="row">
+            <div class="seg">
+              <button class="segBtn" :class="{ on: ui.ebitTargetMode === 'total' }" type="button" @click="ui.ebitTargetMode='total'">
+                EBIT (DH)
               </button>
-              <button class="pillTinyBtn" :class="{ on: ui.ebitTargetMode === 'pct' }" type="button" @click="ui.ebitTargetMode = 'pct'">
-                %
+              <button class="segBtn" :class="{ on: ui.ebitTargetMode === 'pct' }" type="button" @click="ui.ebitTargetMode='pct'">
+                EBIT (%)
               </button>
             </div>
 
@@ -583,29 +609,38 @@ const scatter = computed(() => {
               placeholder="ex: 12.5"
             />
 
-            <div class="ctlHint">
-              Faisable si <b>EBIT ≥ 0</b> et
-              <b v-if="ui.ebitTargetMode === 'total'">EBIT total ≥ cible</b>
-              <b v-else>EBIT % ≥ cible</b>.
-            </div>
+            <label class="check">
+              <input type="checkbox" v-model="ui.onlyFeasible" />
+              <span>Faisables</span>
+            </label>
+          </div>
+
+          <div class="hint">
+            Faisable si <b>EBIT ≥ 0</b> et
+            <b v-if="ui.ebitTargetMode==='total'">EBIT total ≥ cible</b>
+            <b v-else>EBIT % ≥ cible</b>.
           </div>
         </div>
 
-        <div class="ctlGroup">
-          <div class="ctlLabel">Options</div>
-          <label class="check">
-            <input type="checkbox" v-model="ui.onlyFeasible" />
-            <span>Afficher seulement faisables</span>
-          </label>
-          <label class="check" style="margin-top: 6px">
-            <input type="checkbox" v-model="ui.showGraphs" />
-            <span>Afficher graphes</span>
-          </label>
+        <div class="ctlBlock">
+          <div class="ctlLabel">Affichage</div>
+          <div class="tabs">
+            <button class="tab" :class="{ on: ui.tab==='SYNTH' }" type="button" @click="ui.tab='SYNTH'">
+              <ChartBarIcon class="icSm" /> Synthèse
+            </button>
+            <button class="tab" :class="{ on: ui.tab==='DELTA' }" type="button" @click="ui.tab='DELTA'">
+              <BookmarkIcon class="icSm" /> Δ vs Base
+            </button>
+            <button class="tab" :class="{ on: ui.tab==='TABLE' }" type="button" @click="ui.tab='TABLE'">
+              <ListBulletIcon class="icSm" /> Tableau
+            </button>
+          </div>
+          <div class="hint">Filtre contrat via <b>cartes</b> • Base via bouton <b>Base</b>.</div>
         </div>
       </div>
     </div>
 
-    <!-- CONTRACTS CARDS (filtre graphes via clic) -->
+    <!-- CONTRACTS CARDS -->
     <div class="box" v-if="contractSummaries.length">
       <button class="boxHead" type="button" @click="ui.contractsOpen = !ui.contractsOpen">
         <div class="bhLeft">
@@ -616,37 +651,27 @@ const scatter = computed(() => {
           <span class="mutedSmall" v-if="bestContract">
             • meilleur (EBIT): <b>{{ bestContract.contractTitle }}</b>
           </span>
-          <span class="mutedSmall">
-            • filtre graphes: <b>{{ ui.graphsContractId ? "contrat" : "PNL complet" }}</b>
-          </span>
+          <span class="mutedSmall">• filtre: <b>{{ ui.contractIdFilter ? "contrat" : "PNL complet" }}</b></span>
         </div>
-        <div class="bhRight"><span class="mutedSmall">Clique un bloc pour filtrer les graphes</span></div>
+        <div class="bhRight"><span class="mutedSmall">Clique un contrat pour filtrer toute la page</span></div>
       </button>
 
       <div v-show="ui.contractsOpen" class="boxBody">
         <div class="contracts">
-          <!-- ✅ reset graphs filter -->
-          <button
-            class="cCard reset"
-            type="button"
-            :class="{ on: !ui.graphsContractId }"
-            @click="setGraphsFilter('')"
-          >
+          <button class="cCard reset" type="button" :class="{ on: !ui.contractIdFilter }" @click="setContractFilter('')">
             <div class="cTop">
               <div class="cName">PNL complet</div>
-              <div class="cMeta">Toutes variantes valides</div>
+              <div class="cMeta">Tous contrats</div>
             </div>
-            <div class="cHint">→ Afficher tous les contrats</div>
           </button>
 
-          <!-- ✅ contract cards clickable -->
           <button
             v-for="c in contractSummaries"
             :key="c.contractId"
             class="cCard"
             type="button"
-            :class="{ on: ui.graphsContractId === c.contractId }"
-            @click="setGraphsFilter(c.contractId)"
+            :class="{ on: ui.contractIdFilter === c.contractId }"
+            @click="setContractFilter(c.contractId)"
           >
             <div class="cTop">
               <div class="cName ellipsis" :title="c.contractTitle">{{ c.contractTitle }}</div>
@@ -656,204 +681,277 @@ const scatter = computed(() => {
               </div>
             </div>
 
-            <div class="cLines">
-              <div class="cLine">
+            <div class="cKpis">
+              <div class="kv">
                 <div class="k">Max EBIT</div>
                 <div class="v" v-if="c.maxEbit != null">{{ fmtMoney(c.maxEbit, 0) }}</div>
                 <div class="v muted" v-else>—</div>
               </div>
-              <div class="cLine">
+              <div class="kv">
                 <div class="k">Min PMV</div>
                 <div class="v" v-if="c.minPmv != null">{{ fmtMoney(c.minPmv, 2) }}</div>
                 <div class="v muted" v-else>—</div>
               </div>
-              <div class="cLine">
-                <div class="k">Compromis</div>
-                <div class="v" v-if="c.bestCompromisePmv != null">{{ fmtMoney(c.bestCompromisePmv, 2) }}</div>
-                <div class="v muted" v-else>—</div>
-              </div>
             </div>
-
-            <div class="cHint">→ Filtrer les graphes sur ce contrat</div>
           </button>
         </div>
       </div>
     </div>
 
-    <!-- GRAPHS -->
-    <div v-if="ui.showGraphs" class="grid2">
+    <!-- TAB: SYNTH -->
+    <div v-if="ui.tab==='SYNTH'" class="grid2">
       <div class="gCard">
         <div class="gHead">
-          <div class="gTitle"><ChartBarIcon class="gIc" /> Top EBIT (8)</div>
+          <div class="gTitle"><ChartBarIcon class="gIc" /> Top 10</div>
           <div class="gSub">
-            <span v-if="!ui.graphsContractId">PNL complet</span>
+            <span v-if="!ui.contractIdFilter">PNL complet</span>
             <span v-else>Contrat filtré</span>
-            • Barres (EBIT) + indicateur PMV
           </div>
         </div>
 
-        <div class="bars" v-if="graphData.bars.length">
-          <div v-for="b in graphData.bars" :key="b.id" class="barRow">
-            <div class="bLab ellipsis" :title="b.variantTitle">{{ b.variantTitle }}</div>
-            <div class="bTrack" :title="`EBIT ${fmtMoney(b.ebit,0)} • PMV ${fmtMoney(b.pmv,2)}`">
-              <div class="bFill" :style="{ width: (b.eN * 100).toFixed(1) + '%' }"></div>
-              <div class="bDot" :style="{ left: (b.pN * 100).toFixed(1) + '%' }" title="PMV (position relative)"></div>
-            </div>
-            <div class="bVal">{{ fmtMoney(b.ebit, 0) }}</div>
+        <div class="segLine">
+          <div class="seg">
+            <button class="segBtn" :class="{ on: ui.barMetric==='EBIT' }" type="button" @click="ui.barMetric='EBIT'">EBIT</button>
+            <button class="segBtn" :class="{ on: ui.barMetric==='CA' }" type="button" @click="ui.barMetric='CA'">CA</button>
+            <button class="segBtn" :class="{ on: ui.barMetric==='PMV' }" type="button" @click="ui.barMetric='PMV'">PMV</button>
+            <button class="segBtn" :class="{ on: ui.barMetric==='CMP' }" type="button" @click="ui.barMetric='CMP'">CMP</button>
           </div>
         </div>
+
+        <div class="bars" v-if="barsTop.length">
+          <div v-for="b in barsTop" :key="b.id" class="barRow">
+            <div class="bLab ellipsis" :title="b.variantTitle">
+              {{ b.variantTitle }}
+              <span v-if="baseRow && b.id===baseRow.id" class="tag base">BASE</span>
+            </div>
+
+            <div class="bTrack">
+              <div class="bFill" :style="{ width: (b.n01 * 100).toFixed(1) + '%' }"></div>
+            </div>
+
+            <div class="bVal">
+              <span v-if="ui.barMetric==='PMV' || ui.barMetric==='CMP'">{{ fmtMoney((b as any).v, 2) }}</span>
+              <span v-else>{{ fmtMoney((b as any).v, 0) }}</span>
+            </div>
+          </div>
+        </div>
+
         <div v-else class="muted">Aucune donnée.</div>
       </div>
 
       <div class="gCard">
         <div class="gHead">
           <div class="gTitle"><AdjustmentsHorizontalIcon class="gIc" /> PMV vs EBIT</div>
-          <div class="gSub">
-            Scatter: X=PMV, Y=EBIT •
-            <span v-if="ui.ebitTargetMode === 'total'">ligne = cible EBIT (DH)</span>
-            <span v-else>cible = EBIT % (filtre)</span>
-            <span class="sep">•</span>
-            points: <b>{{ rowsGraphs.length }}</b>
-          </div>
+          <div class="gSub">X=PMV (MAD/m³), Y=EBIT (DH)</div>
         </div>
 
         <div class="scatterWrap">
           <svg class="svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <line x1="10" y1="90" x2="90" y2="90" class="axis" />
-            <line x1="10" y1="10" x2="10" y2="90" class="axis" />
+            <rect x="10" y="10" width="80" height="80" class="frame" />
+
             <line
-              v-if="scatter.yTarget != null"
+              v-if="scatter.yTarget01 != null"
               x1="10"
-              :y1="(90 - scatter.yTarget * 80)"
+              :y1="90 - scatter.yTarget01*80"
               x2="90"
-              :y2="(90 - scatter.yTarget * 80)"
+              :y2="90 - scatter.yTarget01*80"
               class="target"
             />
 
             <g v-for="p in scatter.pts" :key="p.id">
               <circle
-                :cx="10 + p.x * 80"
-                :cy="90 - p.y * 80"
-                r="1.25"
+                :cx="10 + p.x*80"
+                :cy="90 - p.y*80"
+                r="1.35"
                 class="pt"
-                :class="{ ok: p.isTargetOk, bad: !p.isTargetOk, active: p.isActive }"
+                :class="{ ok: p.feasible, bad: !p.feasible, base: p.isBase, active: p.isActive }"
               >
                 <title>
-                  {{ p.variantTitle }} • PMV {{ fmtMoney(p.pmv,2) }} • EBIT {{ fmtMoney(p.ebit,0) }} • EBIT% {{ fmtPct(p.ebitPct,1) }}
+                  {{ p.variantTitle }}
+                  • PMV {{ fmtMoney(p.kpi.pmvM3,2) }}
+                  • CA {{ fmtMoney(p.kpi.caTotal,0) }}
+                  • EBIT {{ fmtMoney(p.kpi.ebitTotal,0) }}
+                  • EBIT% {{ fmtPct(p.kpi.ebitPct,1) }}
                 </title>
               </circle>
             </g>
           </svg>
 
-          <div class="legend">
-            <span class="lg ok">●</span> faisable
-            <span class="sep">•</span>
-            <span class="lg bad">●</span> non faisable
-            <span class="sep">•</span>
-            <span class="lg active">◎</span> active
+          <div class="axisLabels">
+            <div class="xLab">PMV: {{ fmtMoney(scatter.minX,2) }} → {{ fmtMoney(scatter.maxX,2) }}</div>
+            <div class="yLab">EBIT: {{ fmtMoney(scatter.minY,0) }} → {{ fmtMoney(scatter.maxY,0) }}</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- GLOBAL TABLE -->
-    <div class="box">
-      <button class="boxHead" type="button" @click="ui.globalOpen = !ui.globalOpen">
-        <div class="bhLeft">
-          <component :is="ui.globalOpen ? ChevronDownIcon : ChevronRightIcon" class="chev" />
-          <ChartBarIcon class="bhIc" />
-          <div class="bhTitle">Tableau global des variantes</div>
-          <span class="pillTiny">{{ rowsTable.length }}</span>
-          <span class="mutedSmall">• tri • sans valeurs nulles</span>
-        </div>
-      </button>
-
-      <div v-show="ui.globalOpen" class="boxBody">
-        <!-- ✅ TABLE FILTER (ONLY contract) -->
-        <div class="tableFilter">
-          <div class="tfLeft">
-            <div class="tfLabel">Filtre (tableau)</div>
-            <select v-model="ui.tableContractId" class="sel">
-              <option value="">Tous les contrats</option>
-              <option v-for="c in contractSummaries" :key="c.contractId" :value="c.contractId">
-                {{ c.contractTitle }}
-              </option>
-            </select>
+    <!-- TAB: DELTA -->
+    <div v-else-if="ui.tab==='DELTA'" class="deltaSection">
+      <div class="deltaHeader">
+        <div class="dhLeft min0">
+          <div class="dhTitle">Δ vs Variante de base</div>
+          <div class="dhSub ellipsis" v-if="baseRow" :title="baseRow.variantTitle">
+            Base: <b>{{ baseRow.variantTitle }}</b>
+            <span class="sep">•</span>
+            Clique <b>Base</b> dans le tableau pour changer
           </div>
-
-          <div class="tfRight">
-            <button class="btn small" type="button" @click="ui.tableContractId = ''" :disabled="!ui.tableContractId">
-              Réinitialiser
-            </button>
-          </div>
+          <div class="dhSub" v-else>Aucune base sélectionnée.</div>
         </div>
 
+        <div class="dhRight" v-if="baseRow">
+          <div class="baseKpis">
+            <div class="chip">
+              <div class="k">PMV</div>
+              <div class="v">{{ fmtMoney(baseRow.kpi.pmvM3,2) }}</div>
+            </div>
+            <div class="chip">
+              <div class="k">CA</div>
+              <div class="v">{{ fmtMoney(baseRow.kpi.caTotal,0) }}</div>
+            </div>
+            <div class="chip">
+              <div class="k">EBIT</div>
+              <div class="v">{{ fmtMoney(baseRow.kpi.ebitTotal,0) }}</div>
+            </div>
+            <div class="chip">
+              <div class="k">EBIT%</div>
+              <div class="v">{{ fmtPct(baseRow.kpi.ebitPct,1) }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="box" v-if="baseRow">
+        <div class="boxBody">
+          <div class="tableWrap">
+            <table class="tbl deltaTbl">
+              <thead>
+                <tr>
+                  <th class="sticky">Variante</th>
+                  <th class="num sticky">Δ PMV</th>
+                  <th class="num sticky">Δ CA</th>
+                  <th class="num sticky">Δ EBIT</th>
+                  <th class="num sticky">Δ EBIT%</th>
+                  <th class="num sticky">Δ Prod</th>
+                  <th class="num sticky">Δ CMP</th>
+                  <th class="sticky act">Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                <tr v-for="r in deltaRows" :key="r.id" :class="{ base: r.isBase, bad: !r.feasible }">
+                  <td class="tTitle">
+                    <div class="tMain">
+                      <span class="ellipsis" :title="r.variantTitle">{{ r.variantTitle }}</span>
+                      <span v-if="r.isBase" class="badge base">BASE</span>
+                      <span v-if="String(activeVariantId ?? '') === r.id" class="badge act">Active</span>
+                    </div>
+                    <div class="tSub ellipsis" :title="r.contractTitle">{{ r.contractTitle }} • {{ r.dureeMois }} mois</div>
+                  </td>
+
+                  <td class="num">
+                    <div :class="['d2', signClass(r.d_pmv,'DOWN')]">
+                      <div class="dMain">{{ r.d_pmv >= 0 ? "+" : "" }}{{ fmtMoney(r.d_pmv,2) }}</div>
+                      <div class="dSub">{{ r.d_pmvPct>=0?"+":"" }}{{ fmtPct(r.d_pmvPct,1) }}</div>
+                    </div>
+                  </td>
+
+                  <td class="num">
+                    <div :class="['d2', signClass(r.d_ca,'UP')]">
+                      <div class="dMain">{{ r.d_ca >= 0 ? "+" : "" }}{{ fmtMoney(r.d_ca,0) }}</div>
+                      <div class="dSub">{{ r.d_caPct>=0?"+":"" }}{{ fmtPct(r.d_caPct,1) }}</div>
+                    </div>
+                  </td>
+
+                  <td class="num">
+                    <div :class="['d2', signClass(r.d_ebit,'UP')]">
+                      <div class="dMain">{{ r.d_ebit >= 0 ? "+" : "" }}{{ fmtMoney(r.d_ebit,0) }}</div>
+                      <div class="dSub">{{ r.d_ebitRelPct>=0?"+":"" }}{{ fmtPct(r.d_ebitRelPct,1) }}</div>
+                    </div>
+                  </td>
+
+                  <td class="num">
+                    <div :class="['d2', signClass(r.d_ebitPct,'UP')]">
+                      <div class="dMain">{{ r.d_ebitPct >= 0 ? "+" : "" }}{{ fmtPct(r.d_ebitPct,1) }}</div>
+                      <div class="dSub">&nbsp;</div>
+                    </div>
+                  </td>
+
+                  <td class="num">
+                    <div :class="['d2', signClass(r.d_prod,'DOWN')]">
+                      <div class="dMain">{{ r.d_prod >= 0 ? "+" : "" }}{{ fmtMoney(r.d_prod,0) }}</div>
+                      <div class="dSub">{{ r.d_prodPct>=0?"+":"" }}{{ fmtPct(r.d_prodPct,1) }}</div>
+                    </div>
+                  </td>
+
+                  <td class="num">
+                    <div :class="['d2', signClass(r.d_cmp,'DOWN')]">
+                      <div class="dMain">{{ r.d_cmp >= 0 ? "+" : "" }}{{ fmtMoney(r.d_cmp,2) }}</div>
+                      <div class="dSub">{{ r.d_cmpPct>=0?"+":"" }}{{ fmtPct(r.d_cmpPct,1) }}</div>
+                    </div>
+                  </td>
+
+                  <td class="act">
+                    <div class="actBtns">
+                      <button class="btn tiny" type="button" @click="activateVariant(r.id)">Activer</button>
+                      <button class="btn tiny ghost" type="button" @click="setBaseVariant(r.id)" :disabled="!!(baseRow && baseRow.id === r.id)">
+                        <BookmarkIcon class="icSm" /> Base
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="note">
+            <div class="mutedSmall">
+              ↓ mieux: <b>PMV</b>, <b>CMP</b>, <b>Prod</b> • ↑ mieux: <b>CA</b>, <b>EBIT</b>, <b>EBIT%</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: TABLE -->
+    <div v-else class="box">
+      <div class="boxBody">
         <div class="tableWrap">
-          <table class="tbl">
+          <table class="tbl mainTbl">
             <thead>
               <tr>
                 <th class="sticky" @click="setSort('variantTitle')">
                   Variante
-                  <span class="srt" v-if="ui.sortKey === 'variantTitle'">{{ ui.sortDir === 'asc' ? "▲" : "▼" }}</span>
+                  <span class="srt" v-if="ui.sortKey==='variantTitle'">{{ ui.sortDir==='asc'?'▲':'▼' }}</span>
                 </th>
 
-                <th class="num sticky" @click="setSort('dureeMois')">
-                  Durée
-                  <span class="srt" v-if="ui.sortKey === 'dureeMois'">{{ ui.sortDir === 'asc' ? "▲" : "▼" }}</span>
-                </th>
-
-                <th class="num sticky" @click="setSort('pmv')">
-                  PMV
-                  <span class="srt" v-if="ui.sortKey === 'pmv'">{{ ui.sortDir === 'asc' ? "▲" : "▼" }}</span>
-                </th>
-
-                <th class="num sticky" @click="setSort('ebit')">
-                  EBIT
-                  <span class="srt" v-if="ui.sortKey === 'ebit'">{{ ui.sortDir === 'asc' ? "▲" : "▼" }}</span>
-                </th>
-
-                <th class="num sticky" @click="setSort('ebitPct')">
-                  EBIT %
-                  <span class="srt" v-if="ui.sortKey === 'ebitPct'">{{ ui.sortDir === 'asc' ? "▲" : "▼" }}</span>
-                </th>
-
-                <th class="sticky" @click="setSort('feasible')">
-                  Faisable
-                  <span class="srt" v-if="ui.sortKey === 'feasible'">{{ ui.sortDir === 'asc' ? "▲" : "▼" }}</span>
-                </th>
-
-                <th class="sticky act">Action</th>
+                <th class="num sticky" @click="setSort('pmvM3')">PMV</th>
+                <th class="num sticky" @click="setSort('caTotal')">CA</th>
+                <th class="num sticky" @click="setSort('ebitTotal')">EBIT</th>
+                <th class="num sticky" @click="setSort('ebitPct')">EBIT%</th>
+                <th class="num sticky" @click="setSort('productionTotal')">Prod</th>
+                <th class="num sticky" @click="setSort('cmpM3')">CMP</th>
+                <th class="sticky" @click="setSort('feasible')">Faisable</th>
+                <th class="sticky act">Actions</th>
               </tr>
             </thead>
 
             <tbody>
-              <tr
-                v-for="r in rowsTable"
-                :key="r.id"
-                :class="{
-                  best: bestCompromise?.row && r.id === bestCompromise.row.id,
-                  max: maxEbitRow && r.id === maxEbitRow.id,
-                  min: minPmvRow && r.id === minPmvRow.id,
-                  bad: !r.feasible,
-                }"
-              >
+              <tr v-for="r in rowsSorted" :key="r.id" :class="{ bad: !r.feasible, base: baseRow && r.id===baseRow.id }">
                 <td class="tTitle">
                   <div class="tMain">
                     <span class="ellipsis" :title="r.variantTitle">{{ r.variantTitle }}</span>
-                    <span v-if="bestCompromise?.row && r.id === bestCompromise.row.id" class="badge rec">Compromis</span>
-                    <span v-if="maxEbitRow && r.id === maxEbitRow.id" class="badge max">Max EBIT</span>
-                    <span v-if="minPmvRow && r.id === minPmvRow.id" class="badge min">Min PMV</span>
+                    <span v-if="baseRow && r.id===baseRow.id" class="badge base">BASE</span>
                     <span v-if="String(activeVariantId ?? '') === r.id" class="badge act">Active</span>
                   </div>
-                  <div class="tSub ellipsis" :title="`Contrat: ${r.contractTitle}`">
-                    {{ r.contractTitle }} • {{ r.dureeMois }} mois
-                  </div>
+                  <div class="tSub ellipsis" :title="r.contractTitle">{{ r.contractTitle }} • {{ r.dureeMois }} mois</div>
                 </td>
 
-                <td class="num">{{ r.dureeMois }}</td>
-                <td class="num">{{ fmtMoney(r.pmv, 2) }}</td>
-                <td class="num">{{ fmtMoney(r.ebit, 0) }}</td>
-                <td class="num">{{ fmtPct(r.ebitPct, 1) }}</td>
+                <td class="num">{{ fmtMoney(r.kpi.pmvM3,2) }}</td>
+                <td class="num">{{ fmtMoney(r.kpi.caTotal,0) }}</td>
+                <td class="num">{{ fmtMoney(r.kpi.ebitTotal,0) }}</td>
+                <td class="num">{{ fmtPct(r.kpi.ebitPct,1) }}</td>
+                <td class="num">{{ fmtMoney(r.kpi.productionTotal,0) }}</td>
+                <td class="num">{{ fmtMoney(r.kpi.cmpM3,2) }}</td>
 
                 <td>
                   <span class="ok" v-if="r.feasible">OK</span>
@@ -861,7 +959,12 @@ const scatter = computed(() => {
                 </td>
 
                 <td class="act">
-                  <button class="btn small" type="button" @click="activateVariant(r.id)">Activer</button>
+                  <div class="actBtns">
+                    <button class="btn tiny" type="button" @click="activateVariant(r.id)">Activer</button>
+                    <button class="btn tiny ghost" type="button" @click="setBaseVariant(r.id)" :disabled="!!(baseRow && baseRow.id === r.id)">
+                      <BookmarkIcon class="icSm" /> Base
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -870,11 +973,9 @@ const scatter = computed(() => {
 
         <div class="note">
           <div class="mutedSmall">
-            Règle: faisable si <b>EBIT ≥ 0</b> et
-            <b v-if="ui.ebitTargetMode === 'total'">EBIT total ≥ cible (DH)</b>
-            <b v-else>EBIT % ≥ cible</b>.
+            Filtre actif: <b>{{ ui.contractIdFilter ? "Contrat" : "PNL complet" }}</b>
             <span class="sep">•</span>
-            Compromis = <b>PMV minimal</b> parmi faisables.
+            Utilise <b>Base</b> pour comparer dans Δ.
           </div>
         </div>
       </div>
@@ -883,244 +984,173 @@ const scatter = computed(() => {
 </template>
 
 <style scoped>
-/* =========================
-   LAYOUT
-========================= */
-.page { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.hLeft { min-width: 0; }
-.hTitle { font-size: 16px; font-weight: 900; letter-spacing: 0.1px; }
-.hSub { margin-top: 2px; font-size: 12px; color: rgba(0, 0, 0, 0.6); }
-.sep { margin: 0 6px; color: rgba(0, 0, 0, 0.35); }
-.min0 { min-width: 0; }
+.page { padding:12px; display:flex; flex-direction:column; gap:10px; }
+.head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.hLeft { min-width:0; }
+.hTitle { font-size:16px; font-weight:950; letter-spacing:.1px; }
+.hSub { margin-top:2px; font-size:12px; color:rgba(0,0,0,.6); }
+.sep { margin:0 6px; color:rgba(0,0,0,.35); }
+.min0 { min-width:0; }
+.ellipsis { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* =========================
-   BUTTONS
-========================= */
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 8px 10px; border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: #fff; cursor: pointer; font-size: 12px;
-}
-.btn.ghost { padding: 8px; }
-.btn.small { padding: 6px 8px; border-radius: 9px; }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.ic { width: 18px; height: 18px; }
+.btn{ display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 10px; border-radius:10px;
+  border:1px solid rgba(0,0,0,.12); background:#fff; cursor:pointer; font-size:12px; }
+.btn.ghost{ background:rgba(0,0,0,.02); }
+.btn.tiny{ padding:5px 8px; border-radius:9px; font-size:11px; }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.ic{ width:18px; height:18px; }
+.icSm{ width:14px; height:14px; }
 
-/* =========================
-   ALERTS
-========================= */
-.alert { padding: 10px 12px; border-radius: 12px; font-size: 12px; display: flex; align-items: flex-start; gap: 10px; }
-.alert.info { background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); }
-.alert.error { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); }
-.alert.warn { background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.25); }
-.aic { width: 18px; height: 18px; margin-top: 1px; }
+.alert{ padding:10px 12px; border-radius:12px; font-size:12px; display:flex; align-items:flex-start; gap:10px; }
+.alert.info{ background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.2); }
+.alert.error{ background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.25); }
+.alert.warn{ background:rgba(245,158,11,.10); border:1px solid rgba(245,158,11,.25); }
+.aic{ width:18px; height:18px; margin-top:1px; }
 
-/* =========================
-   CONTROLS (NO contract here)
-========================= */
-.controls {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 14px;
-  padding: 10px;
-}
-.ctlRow {
-  display: grid;
-  grid-template-columns: 1.2fr 260px;
-  gap: 10px;
-  align-items: start;
-}
-@media (max-width: 900px) { .ctlRow { grid-template-columns: 1fr; } }
-.ctlGroup { min-width: 0; }
-.ctlLabel { font-size: 11px; font-weight: 800; color: rgba(0, 0, 0, 0.72); margin-bottom: 6px; }
-.ctlHint { margin-top: 6px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
-.check { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.controls{ background:rgba(255,255,255,.92); border:1px solid rgba(0,0,0,.08); border-radius:14px; padding:10px; }
+.ctlGrid{ display:grid; grid-template-columns:1.2fr 1fr; gap:10px; }
+@media (max-width:900px){ .ctlGrid{ grid-template-columns:1fr; } }
+.ctlBlock{ min-width:0; }
+.ctlLabel{ font-size:11px; font-weight:950; color:rgba(0,0,0,.72); margin-bottom:6px; }
+.row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.hint{ margin-top:6px; font-size:11px; color:rgba(0,0,0,.55); }
+.check{ display:inline-flex; gap:8px; align-items:center; font-size:12px; }
 
-.targetWrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.targetMode { display: flex; gap: 8px; flex-wrap: wrap; }
-.pillTinyBtn {
-  padding: 5px 10px; border-radius: 999px;
-  border: 1px solid rgba(0,0,0,0.12);
-  background: rgba(0,0,0,0.03);
-  cursor: pointer; font-size: 11px; font-weight: 800;
-}
-.pillTinyBtn.on { border-color: rgba(37, 99, 235, 0.55); background: rgba(37, 99, 235, 0.10); }
+.seg{ display:inline-flex; border:1px solid rgba(0,0,0,.12); border-radius:999px; overflow:hidden; }
+.segBtn{ padding:6px 10px; font-size:11px; font-weight:950; background:rgba(0,0,0,.03); border:none; cursor:pointer; }
+.segBtn.on{ background:rgba(37,99,235,.12); }
 
-.sel, .num {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: #fff;
-  font-size: 12px;
-  min-width: 0;
-}
+.num{ padding:8px 10px; border-radius:10px; border:1px solid rgba(0,0,0,.12); background:#fff; font-size:12px; min-width:180px; }
+@media (max-width:700px){ .num{ min-width:0; width:100%; } }
 
-/* =========================
-   BOXES
-========================= */
-.box { border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px; overflow: hidden; background: #fff; }
-.boxHead { width: 100%; border: none; background: rgba(0, 0, 0, 0.02); padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
-.bhLeft { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
-.bhRight { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
-.chev { width: 18px; height: 18px; opacity: 0.8; }
-.bhIc { width: 18px; height: 18px; opacity: 0.85; }
-.bhTitle { font-size: 13px; font-weight: 950; }
-.pillTiny { padding: 2px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.06); font-size: 11px; font-weight: 900; }
-.boxBody { padding: 10px 12px; }
-.mutedSmall { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
+.tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+.tab{ display:inline-flex; align-items:center; gap:8px; padding:7px 10px; border-radius:10px; border:1px solid rgba(0,0,0,.12);
+  background:rgba(0,0,0,.02); font-weight:950; font-size:12px; cursor:pointer; }
+.tab.on{ border-color:rgba(37,99,235,.55); background:rgba(37,99,235,.10); }
 
-/* =========================
-   CONTRACTS CARDS (clickable)
-========================= */
-.contracts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-@media (max-width: 1200px) { .contracts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .contracts { grid-template-columns: 1fr; } }
+.box{ border:1px solid rgba(0,0,0,.08); border-radius:14px; overflow:hidden; background:#fff; }
+.boxHead{ width:100%; border:none; background:rgba(0,0,0,.02); padding:10px 12px; display:flex; align-items:center; justify-content:space-between; cursor:pointer; }
+.boxBody{ padding:10px 12px; }
+.bhLeft{ display:flex; align-items:center; gap:10px; min-width:0; flex-wrap:wrap; }
+.bhRight{ font-size:11px; color:rgba(0,0,0,.55); }
+.chev,.bhIc{ width:18px; height:18px; opacity:.85; }
+.bhTitle{ font-size:13px; font-weight:950; }
+.pillTiny{ padding:2px 8px; border-radius:999px; background:rgba(0,0,0,.06); font-size:11px; font-weight:950; }
+.mutedSmall{ font-size:11px; color:rgba(0,0,0,.55); }
 
-.cCard {
-  text-align: left;
-  border: 1px solid rgba(0, 0, 0, 0.10);
-  background: #fff;
-  border-radius: 14px;
-  padding: 10px;
-  cursor: pointer;
-  min-width: 0;
-}
-.cCard:hover { border-color: rgba(37, 99, 235, 0.35); background: rgba(37, 99, 235, 0.04); }
-.cCard.on { border-color: rgba(37, 99, 235, 0.55); background: rgba(37, 99, 235, 0.08); }
-.cCard.reset { border-style: dashed; }
-.cCard.reset.on { border-style: solid; }
+.contracts{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+@media (max-width:1200px){ .contracts{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:700px){ .contracts{ grid-template-columns:1fr; } }
+.cCard{ text-align:left; border:1px solid rgba(0,0,0,.10); background:#fff; border-radius:14px; padding:10px; cursor:pointer; min-width:0; }
+.cCard:hover{ border-color:rgba(37,99,235,.35); background:rgba(37,99,235,.04); }
+.cCard.on{ border-color:rgba(37,99,235,.55); background:rgba(37,99,235,.08); }
+.cCard.reset{ border-style:dashed; }
+.cCard.reset.on{ border-style:solid; }
+.cTop{ min-width:0; }
+.cName{ font-size:12px; font-weight:950; }
+.cMeta{ margin-top:2px; font-size:11px; color:rgba(0,0,0,.55); }
+.cInv{ color:rgba(245,158,11,.95); font-weight:950; }
+.cKpis{ margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; }
+.kv{ display:flex; gap:6px; align-items:baseline; }
+.kv .k{ font-size:11px; font-weight:950; color:rgba(0,0,0,.55); }
+.kv .v{ font-size:12px; font-weight:950; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.kv .muted{ color:rgba(0,0,0,.45); }
 
-.cTop { min-width: 0; }
-.cName { font-size: 12px; font-weight: 950; }
-.cMeta { margin-top: 2px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
-.cInv { color: rgba(245, 158, 11, 0.95); font-weight: 800; }
-.cLines { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.cLine { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.cLine .k { font-size: 11px; font-weight: 850; color: rgba(0,0,0,0.60); }
-.cLine .v { font-size: 12px; font-weight: 950; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cHint { margin-top: 10px; font-size: 11px; color: rgba(37, 99, 235, 0.95); font-weight: 900; }
+.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+@media (max-width:1100px){ .grid2{ grid-template-columns:1fr; } }
+.gCard{ border:1px solid rgba(0,0,0,.08); border-radius:14px; background:#fff; padding:10px; }
+.gHead{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:8px; min-width:0; }
+.gTitle{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:950; }
+.gSub{ font-size:11px; color:rgba(0,0,0,.55); }
+.gIc{ width:18px; height:18px; opacity:.85; }
+.segLine{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
 
-/* =========================
-   GRAPHS
-========================= */
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr; } }
+.bars{ display:flex; flex-direction:column; gap:8px; }
+.barRow{ display:grid; grid-template-columns:1fr 220px 110px; gap:10px; align-items:center; min-width:0; }
+@media (max-width:700px){ .barRow{ grid-template-columns:1fr; } }
+.bLab{ font-size:12px; font-weight:950; min-width:0; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.bTrack{ position:relative; height:10px; border-radius:999px; background:rgba(0,0,0,.06); overflow:hidden; }
+.bFill{ height:100%; background:rgba(37,99,235,.45); }
+.bVal{ text-align:right; font-variant-numeric:tabular-nums; font-size:12px; font-weight:950; }
+.tag{ padding:2px 8px; border-radius:999px; font-size:10px; font-weight:950; border:1px solid rgba(0,0,0,.12); background:rgba(0,0,0,.04); }
+.tag.base{ border-color:rgba(0,0,0,.25); background:rgba(0,0,0,.06); }
 
-.gCard { border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px; background: #fff; padding: 10px; }
-.gHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; min-width:0; }
-.gTitle { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 950; }
-.gSub { font-size: 11px; color: rgba(0, 0, 0, 0.55); }
-.gIc { width: 18px; height: 18px; opacity: 0.85; }
+.scatterWrap{ border:1px solid rgba(0,0,0,.08); border-radius:14px; padding:8px; }
+.svg{ width:100%; height:190px; }
+.frame{ fill:none; stroke:rgba(0,0,0,.25); stroke-width:.6; }
+.target{ stroke:rgba(239,68,68,.75); stroke-width:.8; stroke-dasharray:2 2; }
+.pt{ fill:rgba(148,163,184,.70); }
+.pt.ok{ fill:rgba(16,185,129,.80); }
+.pt.bad{ fill:rgba(239,68,68,.80); }
+.pt.base{ stroke:rgba(0,0,0,.65); stroke-width:.9; }
+.pt.active{ stroke:rgba(37,99,235,.85); stroke-width:.9; }
+.axisLabels{ margin-top:6px; display:flex; flex-direction:column; gap:2px; }
+.xLab,.yLab{ font-size:11px; color:rgba(0,0,0,.6); }
 
-.bars { display: flex; flex-direction: column; gap: 8px; }
-.barRow { display: grid; grid-template-columns: 1fr 220px 110px; gap: 10px; align-items: center; min-width: 0; }
-@media (max-width: 700px) { .barRow { grid-template-columns: 1fr; } }
-.bLab { font-size: 12px; font-weight: 850; min-width: 0; }
-.bTrack { position: relative; height: 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.06); overflow: hidden; }
-.bFill { height: 100%; background: rgba(37, 99, 235, 0.45); }
-.bDot { position: absolute; top: -2px; width: 6px; height: 14px; border-radius: 999px; background: rgba(16, 185, 129, 0.8); transform: translateX(-50%); }
-.bVal { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 950; }
+.tableWrap{ overflow:hidden; border-radius:12px; border:1px solid rgba(0,0,0,.08); }
+.tbl{ width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; }
+.tbl th,.tbl td{ padding:9px 8px; border-bottom:1px solid rgba(0,0,0,.06); vertical-align:middle; font-size:12px; }
+.tbl th{ background:rgba(0,0,0,.03); font-weight:950; text-align:left; cursor:pointer; user-select:none; }
+.tbl th.num,.tbl td.num{ text-align:right; font-variant-numeric:tabular-nums; }
+.tbl th.act,.tbl td.act{ text-align:center; width:165px; }
+.sticky{ position:sticky; top:0; z-index:2; }
+.srt{ margin-left:6px; font-size:10px; opacity:.7; }
 
-.scatterWrap { border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px; padding: 8px; }
-.svg { width: 100%; height: 180px; }
-.axis { stroke: rgba(0, 0, 0, 0.25); stroke-width: 0.6; }
-.target { stroke: rgba(239, 68, 68, 0.75); stroke-width: 0.8; stroke-dasharray: 2 2; }
-.pt { fill: rgba(148, 163, 184, 0.70); }
-.pt.ok { fill: rgba(16, 185, 129, 0.80); }
-.pt.bad { fill: rgba(239, 68, 68, 0.80); }
-.pt.active { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.7; }
-.legend { margin-top: 8px; font-size: 11px; color: rgba(0, 0, 0, 0.6); }
-.lg.ok { color: rgba(16, 185, 129, 0.95); }
-.lg.bad { color: rgba(239, 68, 68, 0.95); }
-.lg.active { color: rgba(0, 0, 0, 0.7); }
+.tTitle{ width:44%; }
+.tMain{ display:flex; align-items:center; gap:6px; min-width:0; }
+.tSub{ margin-top:2px; font-size:11px; color:rgba(0,0,0,.55); }
 
-/* =========================
-   TABLE FILTER (compact)
-========================= */
-.tableFilter{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-  min-width:0;
-}
-.tfLeft{ min-width:0; flex: 1; }
-.tfRight{ flex: 0 0 auto; }
-.tfLabel{ font-size: 11px; font-weight: 800; color: rgba(0,0,0,0.72); margin-bottom: 6px; }
-@media (max-width: 700px){
-  .tableFilter{ flex-direction: column; align-items: stretch; }
-  .tfRight .btn{ width: 100%; }
-}
+.badge{ padding:2px 8px; border-radius:999px; font-size:10px; font-weight:950; border:1px solid rgba(0,0,0,.12);
+  background:rgba(0,0,0,.04); flex:0 0 auto; }
+.badge.base{ border-color:rgba(0,0,0,.25); background:rgba(0,0,0,.06); }
+.badge.act{ border-color:rgba(37,99,235,.35); background:rgba(37,99,235,.10); }
 
-/* =========================
-   TABLE (no scroll horizontal)
-========================= */
-.tableWrap { overflow: hidden; border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.08); }
-.tbl {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
-}
-.tbl th, .tbl td {
-  padding: 9px 8px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  vertical-align: middle;
-  font-size: 12px;
-}
-.tbl th {
-  background: rgba(0, 0, 0, 0.03);
-  font-weight: 950;
-  text-align: left;
-  cursor: pointer;
-  user-select: none;
-}
-.tbl th.num, .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.tbl th.act, .tbl td.act { text-align: center; width: 88px; }
+.ok,.no{ display:inline-flex; align-items:center; justify-content:center; padding:2px 10px; border-radius:999px; font-weight:950; font-size:11px; }
+.ok{ background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.25); }
+.no{ background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.25); }
 
-.sticky { position: sticky; top: 0; z-index: 2; }
-.srt { margin-left: 6px; font-size: 10px; opacity: 0.7; }
+tr.bad{ opacity:.88; }
+tr.base{ background:rgba(0,0,0,.02); }
 
-.tTitle { width: 48%; }
-.tbl th:nth-child(2), .tbl td:nth-child(2) { width: 8%; }
-.tbl th:nth-child(3), .tbl td:nth-child(3) { width: 13%; }
-.tbl th:nth-child(4), .tbl td:nth-child(4) { width: 13%; }
-.tbl th:nth-child(5), .tbl td:nth-child(5) { width: 10%; }
-.tbl th:nth-child(6), .tbl td:nth-child(6) { width: 8%; }
+.note{ margin-top:8px; }
+.actBtns{ display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
 
-.tMain { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.tSub { margin-top: 2px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
+/* ✅ TABLEAU PRINCIPAL: + titre, - EBIT% et Faisable */
+.mainTbl .tTitle{ width: 50%; }
+.mainTbl th:nth-child(5), .mainTbl td:nth-child(5){ width: 7%; }  /* EBIT% */
+.mainTbl th:nth-child(8), .mainTbl td:nth-child(8){ width: 6%; }  /* Faisable */
+.mainTbl th.act, .mainTbl td.act{ width: 165px; }
 
-.badge {
-  padding: 2px 8px; border-radius: 999px;
-  font-size: 10px; font-weight: 950;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: rgba(0, 0, 0, 0.04);
-  flex: 0 0 auto;
-}
-.badge.rec { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.08); }
-.badge.max { border-color: rgba(37, 99, 235, 0.4); background: rgba(37, 99, 235, 0.08); }
-.badge.min { border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.10); }
-.badge.act { border-color: rgba(0, 0, 0, 0.25); background: rgba(0, 0, 0, 0.06); }
+/* Delta */
+.deltaSection{ display:flex; flex-direction:column; gap:10px; }
+.deltaHeader{ border:1px solid rgba(0,0,0,.08); border-radius:14px; background:#fff; padding:10px 12px;
+  display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+@media (max-width:900px){ .deltaHeader{ flex-direction:column; } }
+.dhTitle{ font-size:13px; font-weight:950; }
+.dhSub{ margin-top:2px; font-size:11.5px; color:rgba(0,0,0,.55); }
 
-.ok, .no {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 2px 10px; border-radius: 999px;
-  font-weight: 950; font-size: 11px;
-}
-.ok { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); }
-.no { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); }
+.baseKpis{ display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px; width:100%; }
+@media (max-width:900px){ .baseKpis{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-tr.best { background: rgba(16, 185, 129, 0.06); }
-tr.max { outline: 1px solid rgba(37, 99, 235, 0.20); }
-tr.min { outline: 1px solid rgba(245, 158, 11, 0.20); }
-tr.bad { opacity: 0.88; }
+.chip{ border:1px solid rgba(0,0,0,.08); border-radius:12px; padding:8px 10px; background:rgba(0,0,0,.02); min-width:0; }
+.chip .k{ font-size:11px; font-weight:950; color:rgba(0,0,0,.55); }
+.chip .v{ margin-top:2px; font-size:12px; font-weight:950; font-variant-numeric: tabular-nums;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-.note { margin-top: 8px; }
-.muted { color: rgba(0, 0, 0, 0.55); }
-.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deltaTbl .tTitle{ width: 38%; }
+.deltaTbl th:nth-child(2), .deltaTbl td:nth-child(2){ width: 10%; }
+.deltaTbl th:nth-child(3), .deltaTbl td:nth-child(3){ width: 12%; }
+.deltaTbl th:nth-child(4), .deltaTbl td:nth-child(4){ width: 12%; }
+.deltaTbl th:nth-child(5), .deltaTbl td:nth-child(5){ width: 8%; }
+.deltaTbl th:nth-child(6), .deltaTbl td:nth-child(6){ width: 10%; }
+.deltaTbl th:nth-child(7), .deltaTbl td:nth-child(7){ width: 10%; }
+.deltaTbl th.act, .deltaTbl td.act{ width: 165px; }
+
+.d2{ display:flex; flex-direction:column; align-items:flex-end; gap:2px; white-space:nowrap; }
+.dMain{ font-weight:950; }
+.dSub{ font-size:10.5px; color:rgba(0,0,0,.55); min-height:12px; }
+.d2.pos{ color: rgba(16,185,129,.95); }
+.d2.neg{ color: rgba(239,68,68,.95); }
+.d2.neu{ color: rgba(0,0,0,.70); }
+.muted{ color: rgba(0,0,0,.55); }
 </style>
