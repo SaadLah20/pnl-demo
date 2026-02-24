@@ -9,6 +9,7 @@ import {
   Header,
   HeightRule,
   ImageRun,
+  LineRuleType,
   Packer,
   Paragraph,
   Table,
@@ -31,6 +32,21 @@ type BuildOptions = {
 function n(x: any): number {
   const v = Number(x);
   return Number.isFinite(v) ? v : 0;
+}
+
+/* =========================
+   ✅ ARRONDIS TABLE (cohérence affichage)
+   - PU affiché = round2
+   - Volume affiché = round2
+   - Total affiché = round2(PU_affiché × Volume_affiché)
+========================= */
+function round2(x: any): number {
+  return Math.round((n(x) + Number.EPSILON) * 100) / 100;
+}
+function mul2(a: any, b: any): number {
+  const aa = round2(a);
+  const bb = round2(b);
+  return round2(aa * bb);
 }
 
 function fmtMoney2(x: number): string {
@@ -110,6 +126,7 @@ function getSurchargeM3(row: any, map: Record<string, number>): number {
 
 /* =========================
    DOC HELPERS (Tahoma 9)
+   ✅ Interligne global ~ 1,1
 ========================= */
 
 const FONT = "Tahoma";
@@ -120,9 +137,19 @@ const ROW_HEIGHT = 360;
 const TABLE_BODY_FONT = "Arial";
 const SIZE_10 = 20; // 10pt
 
+// ✅ 1,1 (approx) : single = 240, 1.1 ≈ 264
+const SPACING_1_1 = { line: 264, lineRule: LineRuleType.AUTO };
+
+// ✅ Largeurs colonnes table (pour donner + de place aux prix)
+const COL_DESIGNATION = 52; // %
+const COL_PU = 16; // %
+const COL_VOL = 16; // %
+const COL_MONTANT = 16; // %
+
 function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
   return new Paragraph({
     alignment: opts?.align,
+    spacing: SPACING_1_1,
     children: [
       new TextRun({
         text: text ?? "",
@@ -137,6 +164,7 @@ function pTxt(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
 function pTxtBody(text: string, opts?: { bold?: boolean; align?: DocxAlignment }) {
   return new Paragraph({
     alignment: opts?.align,
+    spacing: SPACING_1_1,
     children: [
       new TextRun({
         text: text ?? "",
@@ -152,6 +180,7 @@ function blank(lines = 1) {
   return Array.from({ length: Math.max(1, lines) }).map(
     () =>
       new Paragraph({
+        spacing: SPACING_1_1,
         children: [new TextRun({ text: "", font: FONT, size: SIZE_9 })],
       })
   );
@@ -159,6 +188,7 @@ function blank(lines = 1) {
 
 function sectionTitle(text: string) {
   return new Paragraph({
+    spacing: SPACING_1_1,
     children: [new TextRun({ text, bold: true, font: FONT, size: SIZE_9 })],
   });
 }
@@ -172,6 +202,7 @@ function bulletsFromStrings(lines: string[]) {
     .map(
       (t) =>
         new Paragraph({
+          spacing: SPACING_1_1,
           numbering: { reference: HOLLOW_BULLET_REF, level: 0 },
           children: [new TextRun({ text: String(t ?? ""), font: FONT, size: SIZE_9 })],
         })
@@ -263,6 +294,7 @@ function buildLogoHeader(): Header | null {
     return new Header({
       children: [
         new Paragraph({
+          spacing: SPACING_1_1,
           alignment: AlignmentType.CENTER,
           children: [
             new ImageRun({
@@ -280,13 +312,14 @@ function buildLogoHeader(): Header | null {
   }
 }
 
+// ✅ Bordures un peu + épaisses
 const TABLE_BORDERS = {
-  top: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-  bottom: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-  left: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-  right: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-  insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
-  insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "C0C0C0" },
+  top: { style: BorderStyle.SINGLE, size: 4, color: "9CA3AF" },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: "9CA3AF" },
+  left: { style: BorderStyle.SINGLE, size: 4, color: "9CA3AF" },
+  right: { style: BorderStyle.SINGLE, size: 4, color: "9CA3AF" },
+  insideHorizontal: { style: BorderStyle.SINGLE, size: 3, color: "C0C0C0" },
+  insideVertical: { style: BorderStyle.SINGLE, size: 3, color: "C0C0C0" },
 };
 
 // ✅ Bordures "OFF" (pour masquer la zone colonnes 1-2 sur TVA/TTC)
@@ -297,12 +330,13 @@ const NO_BORDERS = {
   right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
 };
 
-// ✅ helper cellule centrée verticalement
+// ✅ helper cellule centrée verticalement + largeur en %
 function cell(
   children: Paragraph[],
   opts?: {
     columnSpan?: number;
     borders?: any;
+    widthPct?: number;
   }
 ) {
   return new TableCell({
@@ -310,6 +344,7 @@ function cell(
     columnSpan: opts?.columnSpan,
     verticalAlign: VerticalAlign.CENTER,
     borders: opts?.borders,
+    width: opts?.widthPct ? { size: opts.widthPct, type: WidthType.PERCENTAGE } : undefined,
   });
 }
 
@@ -433,20 +468,31 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
   // =========================
   // LIGNES TABLE
-  // ✅ PV NON PONDÉRÉ: PV déf = PV base + surcharge (PAS d'arrondi au 5)
+  // ✅ COHÉRENCE AFFICHAGE:
+  //    - pu affiché: round2
+  //    - vol affiché: round2
+  //    - total: round2(pu_affiché × vol_affiché)
   // =========================
   const formuleLines: Array<{ label: string; pu: number; vol: number; total: number; isDash?: boolean }> = rows.map(
     (r: any) => {
       const label = String(r?.formule?.label ?? "—");
-      const vol = n(r?.volumeM3);
+      const volReal = n(r?.volumeM3);
       const momd = n(r?.momd ?? 0);
       const cmp = cmpFormuleM3(r?.formule);
 
       const pvBase = cmp + transportUsed + momd;
       const surcharge = useDevisSurcharges ? getSurchargeM3(r, surMap) : 0;
 
-      const pu = pvBase + surcharge;
-      return { label, pu, vol, total: pu * vol, isDash: false };
+      const puReal = pvBase + surcharge;
+
+      // ✅ valeurs affichées
+      const pu = round2(puReal);
+      const vol = round2(volReal);
+
+      // ✅ total cohérent avec affichage
+      const total = mul2(pu, vol);
+
+      return { label, pu, vol, total, isDash: false };
     }
   );
 
@@ -458,11 +504,14 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   // legacy hydrofuge (si gardé)
   if (hydroPu > 0) {
     const isDash = !(hydroQty > 0);
+    const pu2 = round2(hydroPu);
+    const vol2 = hydroQty > 0 ? round2(hydroQty) : 0;
+
     tableLines.push({
       label: "Plus value Hydrofuge",
-      pu: hydroPu,
-      vol: hydroQty > 0 ? hydroQty : 0,
-      total: hydroQty > 0 ? hydroPu * hydroQty : 0,
+      pu: pu2,
+      vol: vol2,
+      total: hydroQty > 0 ? mul2(pu2, vol2) : 0,
       isDash,
     });
   }
@@ -470,11 +519,14 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   // ✅ extras (hors formules)
   for (const x of extraArticles) {
     const isDash = !(x.qty > 0);
+    const pu2 = round2(x.pu);
+    const vol2 = x.qty > 0 ? round2(x.qty) : 0;
+
     tableLines.push({
       label: x.label,
-      pu: x.pu,
-      vol: x.qty > 0 ? x.qty : 0,
-      total: x.qty > 0 ? x.pu * x.qty : 0,
+      pu: pu2,
+      vol: vol2,
+      total: x.qty > 0 ? mul2(pu2, vol2) : 0,
       isDash,
     });
   }
@@ -488,14 +540,16 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
   // =========================
   // TABLE (4 colonnes)
+  // ✅ Colonnes prix centrées
+  // ✅ Largeur prix un peu + large, désignation un peu - large
   // =========================
   const headerRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      cell([pTxt("Désignation", { bold: true })]),
-      cell([pTxt("PU HT/m3", { bold: true, align: AlignmentType.RIGHT })]),
-      cell([pTxt("Volume", { bold: true, align: AlignmentType.RIGHT })]),
-      cell([pTxt("Montant HT", { bold: true, align: AlignmentType.RIGHT })]),
+      cell([pTxt("Désignation", { bold: true, align: AlignmentType.LEFT })], { widthPct: COL_DESIGNATION }),
+      cell([pTxt("PU HT/m3", { bold: true, align: AlignmentType.CENTER })], { widthPct: COL_PU }),
+      cell([pTxt("Volume", { bold: true, align: AlignmentType.CENTER })], { widthPct: COL_VOL }),
+      cell([pTxt("Montant HT", { bold: true, align: AlignmentType.CENTER })], { widthPct: COL_MONTANT }),
     ],
   });
 
@@ -506,10 +560,10 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
     return new TableRow({
       height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
       children: [
-        cell([pTxtBody(x.label)]),
-        cell([pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.RIGHT })]),
-        cell([pTxtBody(volTxt, { align: AlignmentType.RIGHT })]),
-        cell([pTxtBody(totTxt, { align: AlignmentType.RIGHT })]),
+        cell([pTxtBody(x.label, { align: AlignmentType.LEFT })], { widthPct: COL_DESIGNATION }),
+        cell([pTxtBody(fmtMoney2(x.pu), { align: AlignmentType.CENTER })], { widthPct: COL_PU }),
+        cell([pTxtBody(volTxt, { align: AlignmentType.CENTER })], { widthPct: COL_VOL }),
+        cell([pTxtBody(totTxt, { align: AlignmentType.CENTER })], { widthPct: COL_MONTANT }),
       ],
     });
   });
@@ -518,9 +572,9 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const totalRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      cell([pTxtBody("Total :", { bold: true, align: AlignmentType.CENTER })], { columnSpan: 2 }),
-      cell([pTxtBody(fmtMoney2(totalVolumeShown), { bold: false, align: AlignmentType.RIGHT })]),
-      cell([pTxtBody(fmtMoney2(totalHT), { bold: false, align: AlignmentType.RIGHT })]),
+      cell([pTxtBody("Total :", { bold: true, align: AlignmentType.CENTER })], { columnSpan: 2, widthPct: COL_DESIGNATION + COL_PU }),
+      cell([pTxtBody(fmtMoney2(totalVolumeShown), { bold: false, align: AlignmentType.CENTER })], { widthPct: COL_VOL }),
+      cell([pTxtBody(fmtMoney2(totalHT), { bold: false, align: AlignmentType.CENTER })], { widthPct: COL_MONTANT }),
     ],
   });
 
@@ -529,18 +583,18 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
   const tvaRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      cell([pTxtBody("")], { columnSpan: 2, borders: NO_BORDERS }),
-      cell([pTxtBody("Montant TVA", { bold: true, align: AlignmentType.LEFT })]),
-      cell([pTxtBody(fmtMoney2(tva), { bold: false, align: AlignmentType.RIGHT })]),
+      cell([pTxtBody("")], { columnSpan: 2, borders: NO_BORDERS, widthPct: COL_DESIGNATION + COL_PU }),
+      cell([pTxtBody("Montant TVA", { bold: true, align: AlignmentType.CENTER })], { widthPct: COL_VOL }),
+      cell([pTxtBody(fmtMoney2(tva), { bold: false, align: AlignmentType.CENTER })], { widthPct: COL_MONTANT }),
     ],
   });
 
   const ttcRow = new TableRow({
     height: { value: ROW_HEIGHT, rule: HeightRule.ATLEAST },
     children: [
-      cell([pTxtBody("")], { columnSpan: 2, borders: NO_BORDERS }),
-      cell([pTxtBody("Montant TTC", { bold: true, align: AlignmentType.LEFT })]),
-      cell([pTxtBody(fmtMoney2(totalTTC), { bold: false, align: AlignmentType.RIGHT })]),
+      cell([pTxtBody("")], { columnSpan: 2, borders: NO_BORDERS, widthPct: COL_DESIGNATION + COL_PU }),
+      cell([pTxtBody("Montant TTC", { bold: true, align: AlignmentType.CENTER })], { widthPct: COL_VOL }),
+      cell([pTxtBody(fmtMoney2(totalTTC), { bold: false, align: AlignmentType.CENTER })], { widthPct: COL_MONTANT }),
     ],
   });
 
@@ -567,6 +621,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
               style: {
                 paragraph: {
                   indent: { left: 360, hanging: 360 },
+                  spacing: SPACING_1_1,
                 },
               },
             },
@@ -587,6 +642,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
           default: new Footer({
             children: [
               new Paragraph({
+                spacing: SPACING_1_1,
                 alignment: AlignmentType.LEFT,
                 children: [new TextRun({ text: footerLine, font: FONT, size: SIZE_9 })],
               }),
@@ -595,6 +651,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
         },
         children: [
           new Paragraph({
+            spacing: SPACING_1_1,
             alignment: AlignmentType.RIGHT,
             children: [new TextRun({ text: `${ville}, le ${dateFr}`, font: FONT, size: SIZE_9 })],
           }),
@@ -602,6 +659,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
           ...blank(3),
 
           new Paragraph({
+            spacing: SPACING_1_1,
             alignment: AlignmentType.CENTER,
             children: [
               new TextRun({ text: "Offre de prix", bold: true, font: FONT, size: SIZE_9 }),
@@ -612,6 +670,7 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
           ...blank(2),
 
           new Paragraph({
+            spacing: SPACING_1_1,
             alignment: AlignmentType.LEFT,
             children: [
               new TextRun({
@@ -634,7 +693,11 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
             `Quantité : ${fmtMoney0(quantiteProjet)} m3`,
             `Délai : ${fmtMoney0(dureeMois)} mois`,
             ...(demarrage ? [`Démarrage : ${demarrage}`] : []),
-            ...(String(rappel?.lieu ?? "").trim() ? [`Lieu : ${String(rappel?.lieu).trim()}`] : ville ? [`Lieu : ${ville}`] : []),
+            ...(String(rappel?.lieu ?? "").trim()
+              ? [`Lieu : ${String(rappel?.lieu).trim()}`]
+              : ville
+              ? [`Lieu : ${ville}`]
+              : []),
           ]),
 
           ...blank(1),
@@ -671,14 +734,17 @@ export async function buildDevisWordBuffer(variantId: string, opts?: BuildOption
 
           ...blank(5),
           new Paragraph({
+            spacing: SPACING_1_1,
             alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigNom, bold: true, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
+            spacing: SPACING_1_1,
             alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigPoste, bold: true, font: FONT, size: SIZE_9 })],
           }),
           new Paragraph({
+            spacing: SPACING_1_1,
             alignment: AlignmentType.LEFT,
             children: [new TextRun({ text: sigTel, bold: true, font: FONT, size: SIZE_9 })],
           }),

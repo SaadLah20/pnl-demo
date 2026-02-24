@@ -2,10 +2,19 @@
      MAJ demandée :
      ✅ Enlever le fournisseur qui apparaît au dessus/sous le libellé MP dans la cellule MP (plus aucune sous-ligne)
      ✅ Afficher Qté totale en TONNES (T) au lieu de kg (conversion kg -> T /1000)
+     ✅ Ajouter boutons "Importer" + "Généraliser" (section MP = prix overrides MP)
+     ✅ Import/Generalize MP :
+        - Snapshot depuis variante source: mpId -> prixOverride (ou prix legacy)
+        - Appliquer sur la variante cible: match mpId -> variantMpId puis updateVariantMp(...)
+        - Fallback-safe si la cible n'a pas encore de mp.items : tentative syncVariantMpsFromFormules() si dispo, sinon reload deep
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
+
+// Modals
+import SectionImportModal from "@/components/SectionImportModal.vue";
+import SectionTargetsGeneralizeModal from "@/components/SectionTargetsGeneralizeModal.vue";
 
 // Heroicons
 import {
@@ -17,6 +26,8 @@ import {
   ExclamationTriangleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ArrowDownTrayIcon,
+  Squares2X2Icon,
 } from "@heroicons/vue/24/outline";
 
 const store = usePnlStore();
@@ -138,16 +149,21 @@ const mpQtyTotalKgByMpId = computed<Record<string, number>>(() => {
     }
   }
 
-  // TS strict: map[k] peut être number|undefined -> on sécurise
   for (const k of Object.keys(map)) {
     map[k] = round2(map[k] ?? 0);
   }
   return map;
 });
 
+function getVariantMpItems(vAny: any): any[] {
+  const v = vAny ?? null;
+  const items = v?.mp?.items ?? v?.variantMps ?? v?.variantMp ?? [];
+  return Array.isArray(items) ? items : [];
+}
+
 const mpRows = computed<MpRow[]>(() => {
   const v: any = variant.value as any;
-  const items = v?.mp?.items ?? [];
+  const items = getVariantMpItems(v);
   const qtyMap = mpQtyTotalKgByMpId.value;
   const maj = majorationsPersisted.value;
 
@@ -377,6 +393,202 @@ function prevPage() {
 function nextPage() {
   ui.page = Math.min(totalPages.value, ui.page + 1);
 }
+
+/* =========================
+   ✅ IMPORT / GENERALISER MP (prix overrides)
+========================= */
+type MpSnapshot = Record<string, number>; // mpId -> prix (tonne)
+
+function buildMpSnapshot(vAny: any): MpSnapshot {
+  const items = getVariantMpItems(vAny);
+  const snap: MpSnapshot = {};
+  for (const it of items) {
+    const mpId = String(it?.mpId ?? it?.mp?.id ?? "").trim();
+    if (!mpId) continue;
+
+    // ✅ prix "override": it.prixOverride (préféré) sinon it.prix (legacy)
+    const raw = it?.prixOverride ?? it?.prix ?? null;
+    const val = raw == null ? 0 : toNum(raw);
+    if (val > 0) snap[mpId] = val;
+  }
+  return snap;
+}
+
+async function ensureTargetHasMpItems(targetVariantId: string) {
+  // On recharge deep la cible (si dispo)
+  if ((store as any).loadVariantDeep) {
+    await (store as any).loadVariantDeep(targetVariantId);
+  }
+
+  const v: any = store.activeVariant;
+  const items = getVariantMpItems(v);
+  if (items.length > 0) return;
+
+  // Fallback: certains projets ont une action de sync
+  // (ex: syncVariantMpsFromFormules). On l'appelle si elle existe.
+  try {
+    if ((store as any).syncVariantMpsFromFormules) {
+      await (store as any).syncVariantMpsFromFormules(targetVariantId);
+    }
+  } catch {
+    // ignore
+  }
+
+  if ((store as any).loadVariantDeep) {
+    await (store as any).loadVariantDeep(targetVariantId);
+  }
+}
+
+function mapTargetVariantMpIdByMpId(vAny: any): Map<string, string> {
+  const items = getVariantMpItems(vAny);
+  const map = new Map<string, string>();
+  for (const it of items) {
+    const mpId = String(it?.mpId ?? it?.mp?.id ?? "").trim();
+    const variantMpId = String(it?.id ?? "").trim();
+    if (mpId && variantMpId) map.set(mpId, variantMpId);
+  }
+  return map;
+}
+
+async function applyMpSnapshotToActiveVariant(snapshot: MpSnapshot) {
+  const v: any = store.activeVariant;
+  const byMpId = mapTargetVariantMpIdByMpId(v);
+
+  for (const [mpId, prix] of Object.entries(snapshot)) {
+    const variantMpId = byMpId.get(String(mpId));
+    if (!variantMpId) continue;
+    const val = toNum(prix);
+    if (val <= 0) continue;
+    await store.updateVariantMp(variantMpId, { prix: val });
+  }
+}
+
+/* ---- Import UI ---- */
+const importUi = reactive({
+  open: false,
+});
+
+const importFlow = reactive<{
+  busy: boolean;
+  error: string | null;
+  confirmOpen: boolean;
+  sourceVariantId: string;
+  snapshot: MpSnapshot | null;
+}>({
+  busy: false,
+  error: null,
+  confirmOpen: false,
+  sourceVariantId: "",
+  snapshot: null,
+});
+
+function openImport() {
+  importFlow.error = null;
+  importUi.open = true;
+}
+
+function onPickImport(payload: any) {
+  // SectionImportModal émet généralement: { sourceVariantId, copy }
+  const srcId = String(payload?.sourceVariantId ?? "").trim();
+  if (!srcId) return;
+
+  importFlow.sourceVariantId = srcId;
+  importFlow.confirmOpen = true;
+  importUi.open = false;
+}
+
+function closeImportConfirm() {
+  importFlow.confirmOpen = false;
+}
+
+async function confirmImportMp() {
+  const targetId = String(store.activeVariantId ?? "").trim();
+  const srcId = String(importFlow.sourceVariantId ?? "").trim();
+  if (!targetId || !srcId) return;
+
+  importFlow.busy = true;
+  importFlow.error = null;
+
+  try {
+    // 1) charger source -> snapshot
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(srcId);
+    }
+    const srcVariant: any = store.activeVariant;
+    if (!srcVariant || String(srcVariant?.id ?? "") !== srcId) {
+      throw new Error("Impossible de charger la variante source (MP).");
+    }
+    const snap = buildMpSnapshot(srcVariant);
+
+    // 2) charger cible + s'assurer qu'elle a mp.items
+    await ensureTargetHasMpItems(targetId);
+
+    // 3) appliquer snapshot
+    await applyMpSnapshotToActiveVariant(snap);
+
+    // 4) reload cible final (pour recalcul CMP/affichage)
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(targetId);
+    }
+
+    importFlow.snapshot = null;
+    importFlow.confirmOpen = false;
+  } catch (e: any) {
+    importFlow.error = e?.message ?? String(e);
+  } finally {
+    importFlow.busy = false;
+  }
+}
+
+/* ---- Generalize UI ---- */
+const genPickOpen = ref(false);
+
+const genFlow = reactive<{
+  busy: boolean;
+  error: string | null;
+}>({
+  busy: false,
+  error: null,
+});
+
+function openGeneralize() {
+  genFlow.error = null;
+  genPickOpen.value = true;
+}
+
+async function onPickGeneralizeTargets(payload: { mode: "ALL" | "SELECT"; variantIds: string[] }) {
+  const ids = (payload?.variantIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  if (!ids.length) return;
+
+  const sourceId = String(store.activeVariantId ?? "").trim();
+  if (!sourceId) return;
+
+  genFlow.busy = true;
+  genFlow.error = null;
+
+  try {
+    // Snapshot from current active variant (source)
+    const sourceVariantAny: any = store.activeVariant;
+    const snap = buildMpSnapshot(sourceVariantAny);
+
+    for (const targetId of ids) {
+      const tid = String(targetId ?? "").trim();
+      if (!tid || tid === sourceId) continue;
+
+      await ensureTargetHasMpItems(tid);
+      await applyMpSnapshotToActiveVariant(snap);
+    }
+
+    // revenir sur la variante source pour ne pas perturber l'utilisateur
+    if ((store as any).loadVariantDeep) {
+      await (store as any).loadVariantDeep(sourceId);
+    }
+  } catch (e: any) {
+    genFlow.error = e?.message ?? String(e);
+  } finally {
+    genFlow.busy = false;
+  }
+}
 </script>
 
 <template>
@@ -399,11 +611,34 @@ function nextPage() {
       </div>
 
       <div class="subhdr__right">
-        <button class="btn" :disabled="store.loading" @click="reload" title="Recharger">
+        <button class="btn ghost" :disabled="!variant || importFlow.busy || genFlow.busy" @click="openImport()" title="Importer section MP">
+          <ArrowDownTrayIcon class="ic" />
+          <span>Importer</span>
+        </button>
+
+        <button class="btn ghost" :disabled="!variant || importFlow.busy || genFlow.busy" @click="openGeneralize()" title="Généraliser section MP">
+          <Squares2X2Icon class="ic" />
+          <span>Généraliser</span>
+        </button>
+
+        <button class="btn" :disabled="store.loading || importFlow.busy || genFlow.busy" @click="reload" title="Recharger">
           <ArrowPathIcon class="ic" />
           <span>Recharger</span>
         </button>
       </div>
+    </div>
+
+    <div v-if="importFlow.error" class="alert err">
+      <ExclamationTriangleIcon class="ic" />
+      <div><b>Import :</b> {{ importFlow.error }}</div>
+    </div>
+    <div v-if="genFlow.error" class="alert err">
+      <ExclamationTriangleIcon class="ic" />
+      <div><b>Généraliser :</b> {{ genFlow.error }}</div>
+    </div>
+    <div v-if="importFlow.busy || genFlow.busy" class="alert info">
+      <ArrowPathIcon class="ic spin" />
+      <div>Traitement…</div>
     </div>
 
     <div v-if="store.loading" class="alert info">
@@ -464,9 +699,6 @@ function nextPage() {
                       </div>
 
                       <!-- ✅ SUPPRIMÉ : aucune sous-ligne (donc plus de fournisseur/legacy sous le libellé) -->
-                      <!-- <div class="mpSub muted" v-if="r.comment">
-                        <span class="ell" :title="r.comment">{{ r.comment }}</span>
-                      </div> -->
                     </div>
                   </td>
 
@@ -556,6 +788,48 @@ function nextPage() {
           </div>
         </template>
       </div>
+
+      <!-- ✅ MODAL IMPORT (SectionImportModal) -->
+      <SectionImportModal
+        v-model="importUi.open"
+        section-label="MP"
+        section-key="mp"
+        :target-variant-id="String(store.activeVariantId ?? '') || null"
+        :enable-presets="false"
+        @apply="onPickImport"
+      />
+
+      <!-- ✅ CONFIRM IMPORT -->
+      <div v-if="importFlow.confirmOpen" class="overlay" @click.self="closeImportConfirm()">
+        <div class="modal">
+          <div class="mhead">
+            <div class="mtitle">Confirmer l’import MP</div>
+            <button class="x" @click="closeImportConfirm()" title="Fermer">×</button>
+          </div>
+
+          <div class="mbody">
+            <div class="note">
+              Cette action va copier les <b>prix MP modifiés</b> depuis la variante source vers la variante active
+              (match par <b>MP</b>). Les MP absentes côté cible seront ignorées.
+            </div>
+          </div>
+
+          <div class="mact">
+            <button class="btn ghost" :disabled="importFlow.busy" @click="closeImportConfirm()">Annuler</button>
+            <button class="btn primary" :disabled="importFlow.busy || !variant" @click="confirmImportMp()">
+              {{ importFlow.busy ? "…" : "Confirmer" }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ✅ MODAL GENERALISATION (SectionTargetsGeneralizeModal) -->
+      <SectionTargetsGeneralizeModal
+        v-model="genPickOpen"
+        section-label="MP"
+        :source-variant-id="String(store.activeVariantId ?? '') || null"
+        @apply="onPickGeneralizeTargets"
+      />
 
       <!-- MODAL RESTORE -->
       <div v-if="restoreModal.open" class="overlay" @click.self="closeRestoreModal()">
@@ -655,7 +929,7 @@ function nextPage() {
 .cmpDh{ font-weight: 950; color: rgba(15,23,42,0.70); }
 .cmpHint{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 72vw; }
 
-.subhdr__right{ display:flex; gap:8px; align-items:center; }
+.subhdr__right{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 .btn{
   height: 34px;
   border:1px solid var(--b);
@@ -673,6 +947,7 @@ function nextPage() {
 .btn.primary{ background: rgba(24,64,112,0.92); border-color: rgba(24,64,112,0.6); color:#fff; box-shadow:none; }
 .btn.primary:hover{ background: rgba(24,64,112,1); }
 .btn.ghost{ background: rgba(255,255,255,0.75); }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
 .ic{ width:16px; height:16px; }
 
 /* alerts */
@@ -727,6 +1002,9 @@ function nextPage() {
 .pi{ width: 16px; height: 16px; color: rgba(15,23,42,0.78); }
 .ptext{ font-size: 12px; font-weight: 900; color: rgba(15,23,42,0.75); white-space: nowrap; }
 
+.r{ text-align:right; }
+.ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
 /* table */
 .tableWrap{
   overflow:auto;
@@ -761,9 +1039,6 @@ function nextPage() {
 }
 .row:hover td{ background: rgba(15,23,42,0.02); }
 
-.r{ text-align:right; }
-.ell{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
 /* cols */
 .cMp   { width: 26%; }
 .cF    { width: 12%; }
@@ -787,12 +1062,6 @@ function nextPage() {
   font-weight: 900;
   color: rgba(15,23,42,0.55);
   flex: 0 0 auto;
-}
-/* mpSub gardé au cas où, mais plus utilisé */
-.mpSub{
-  margin-top: 2px;
-  font-size: 10.5px;
-  font-weight: 900;
 }
 
 /* category pill */

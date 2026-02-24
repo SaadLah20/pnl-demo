@@ -3,14 +3,13 @@
      - ✅ Duplication (création + copie composition via modal)
      - ✅ saveForm accepte items (FormuleSavePayload)
      - ✅ fallback ID après create (resp.id / resp.formule.id / reload + match payload)
+     - ✅ FIX tooltip commentaire: plus de clipping (overflow) + stacking OK
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
 import { MOROCCO_CITIES } from "@/constants/morocco.cities";
 import { MOROCCO_REGIONS } from "@/constants/morocco.regions";
-
-
 
 import {
   PlusIcon,
@@ -90,10 +89,15 @@ function toNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 function n(v: any, digits = 2) {
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNum(v));
 }
 function liters(v: number) {
-  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(
+    toNum(v)
+  );
 }
 function normKey(v: any) {
   return String(v ?? "")
@@ -201,7 +205,13 @@ function ensureDraft(row: any) {
 function catRank(catRaw: any) {
   const c = normKey(catRaw);
   if (c.includes("ciment")) return 0;
-  if (c.includes("granul") || c.includes("granula") || c.includes("granulas") || c.includes("sable")) return 1;
+  if (
+    c.includes("granul") ||
+    c.includes("granula") ||
+    c.includes("granulas") ||
+    c.includes("sable")
+  )
+    return 1;
   if (c.includes("adjuvant")) return 2;
   return 9;
 }
@@ -218,7 +228,9 @@ const mpSorted = computed<any[]>(() => {
 });
 
 function mpById(mpId: string): any | null {
-  const found = (mpOptions.value ?? []).find((x: any) => String(x?.id ?? "") === String(mpId));
+  const found = (mpOptions.value ?? []).find(
+    (x: any) => String(x?.id ?? "") === String(mpId)
+  );
   return found ?? null;
 }
 
@@ -319,7 +331,10 @@ function getCmpRow(row: any): number {
 }
 
 function fmtCmp(v: number) {
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(toNum(v));
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(toNum(v));
 }
 
 /* =========================
@@ -329,7 +344,13 @@ function getRhoForMp(mp: any): number | null {
   const cat = normKey(mp?.categorie);
   if (cat === "ciment") return 3.1;
 
-  if (cat === "granulats" || cat === "granulat" || cat === "granulas" || cat === "granula" || cat.includes("granul"))
+  if (
+    cat === "granulats" ||
+    cat === "granulat" ||
+    cat === "granulas" ||
+    cat === "granula" ||
+    cat.includes("granul")
+  )
     return 2.65;
 
   if (cat === "adjuvant") return 1.1;
@@ -347,7 +368,10 @@ function compositionStatsFor(formuleId: string) {
     const rho = getRhoForMp(mp);
 
     if (!rho) {
-      missing.push({ mpId: String(it.mpId), label: `${mp?.categorie ?? "—"} — ${mp?.label ?? "—"}` });
+      missing.push({
+        mpId: String(it.mpId),
+        label: `${mp?.categorie ?? "—"} — ${mp?.label ?? "—"}`,
+      });
       continue;
     }
 
@@ -372,7 +396,10 @@ function compositionStatsFor(formuleId: string) {
 
 function volumeLine(formuleId: string): string {
   const s = compositionStatsFor(formuleId);
-  if (s.isLow) return `⚠️ Volume ${liters(s.vTotal)} L < cible ${s.target} L (déficit ${liters(s.deficitPct)}%).`;
+  if (s.isLow)
+    return `⚠️ Volume ${liters(s.vTotal)} L < cible ${s.target} L (déficit ${liters(
+      s.deficitPct
+    )}%).`;
   return `✅ Volume OK (±3%) — ${liters(s.vTotal)} L.`;
 }
 
@@ -385,7 +412,9 @@ const filtered = computed(() => {
   return (formules.value ?? [])
     .filter((f) => {
       if (s) {
-        const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${f.region ?? ""} ${f.comment ?? ""}`.toLowerCase();
+        const blob = `${f.label ?? ""} ${f.resistance ?? ""} ${f.city ?? ""} ${
+          f.region ?? ""
+        } ${f.comment ?? ""}`.toLowerCase();
         if (!blob.includes(s)) return false;
       }
 
@@ -399,7 +428,11 @@ const filtered = computed(() => {
 
       return true;
     })
-    .sort((a, b) => String(a?.label ?? "").localeCompare(String(b?.label ?? ""), "fr", { sensitivity: "base" }));
+    .sort((a, b) =>
+      String(a?.label ?? "").localeCompare(String(b?.label ?? ""), "fr", {
+        sensitivity: "base",
+      })
+    );
 });
 
 /* =========================
@@ -408,7 +441,9 @@ const filtered = computed(() => {
 const pageSize = 10;
 const currentPage = ref(1);
 
-const totalPages = computed(() => Math.max(1, Math.ceil((filtered.value?.length ?? 0) / pageSize)));
+const totalPages = computed(() =>
+  Math.max(1, Math.ceil((filtered.value?.length ?? 0) / pageSize))
+);
 
 const paginated = computed(() => {
   const start = (currentPage.value - 1) * pageSize;
@@ -439,7 +474,13 @@ const mode = ref<"create" | "edit">("create");
 const activeEditId = ref<string | null>(null);
 
 const modalError = ref<string | null>(null);
-const formDraft = ref<FormuleDraft>({ label: "", resistance: "", city: "", region: "", comment: "" });
+const formDraft = ref<FormuleDraft>({
+  label: "",
+  resistance: "",
+  city: "",
+  region: "",
+  comment: "",
+});
 
 /** ✅ si non-null => on ouvre le modal en "duplication" (create + items) */
 const dupItems = ref<ItemDraft[] | null>(null);
@@ -489,7 +530,6 @@ function openDuplicate(row: any) {
 }
 function closeFormModal() {
   showFormModal.value = false;
-  // on garde dupItems? non, sinon le prochain create hérite par erreur
   dupItems.value = null;
 }
 
@@ -532,7 +572,12 @@ async function confirmDelete() {
    Replace MP (by same category)
 ========================= */
 const replaceOpen = ref(false);
-const replaceCtx = reactive<{ formuleId: string; idx: number; oldMpId: string; category: string }>({
+const replaceCtx = reactive<{
+  formuleId: string;
+  idx: number;
+  oldMpId: string;
+  category: string;
+}>({
   formuleId: "",
   idx: -1,
   oldMpId: "",
@@ -697,12 +742,13 @@ function findCreatedIdByPayload(d: FormuleSavePayload): string | null {
 async function saveForm(payload?: FormuleSavePayload) {
   modalError.value = null;
 
-  // payload vient du modal (peut contenir items), sinon formDraft
   const d = (payload ?? (formDraft.value as any)) as FormuleSavePayload;
 
-  // si le modal n’envoie pas items, on prend dupItems (si duplication)
-  const rawItems =
-    Array.isArray(d.items) ? d.items : Array.isArray(dupItems.value) ? dupItems.value : null;
+  const rawItems = Array.isArray(d.items)
+    ? d.items
+    : Array.isArray(dupItems.value)
+    ? dupItems.value
+    : null;
 
   const items = rawItems ? normalizeItems(rawItems) : null;
 
@@ -725,7 +771,6 @@ async function saveForm(payload?: FormuleSavePayload) {
 
       await store.loadFormulesCatalogue();
 
-      // ✅ si duplication: appliquer composition après création
       if (items && items.length) {
         let createdId = pickCreatedIdFromResp(resp);
         if (!createdId) createdId = findCreatedIdByPayload(d);
@@ -858,7 +903,13 @@ onMounted(reload);
         </div>
 
         <div class="actions">
-          <button class="icon filtersBtn" type="button" :class="{ on: filtersOpen }" @click="filtersOpen = !filtersOpen" title="Filtres">
+          <button
+            class="icon filtersBtn"
+            type="button"
+            :class="{ on: filtersOpen }"
+            @click="filtersOpen = !filtersOpen"
+            title="Filtres"
+          >
             <FunnelIcon class="ic" />
             <span v-if="activeFiltersCount" class="dot"></span>
           </button>
@@ -1086,9 +1137,7 @@ onMounted(reload);
               </table>
             </div>
 
-            <div class="note">
-              ⚠️ Interdit : <b>2 MP CIMENT</b> et <b>2 fois la même MP</b>.
-            </div>
+            <div class="note">⚠️ Interdit : <b>2 MP CIMENT</b> et <b>2 fois la même MP</b>.</div>
           </div>
         </div>
       </div>
@@ -1114,18 +1163,17 @@ onMounted(reload);
       </div>
     </div>
 
-<FormuleModal
-  :open="showFormModal"
-  :mode="mode"
-  :initial="formDraft"
-  :cities="MOROCCO_CITIES"
-  :regions="MOROCCO_REGIONS"
-  :busy="busy.create || busy.update"
-  :error="modalError"
-  @close="closeFormModal"
-  @save="saveForm"
-/>
-
+    <FormuleModal
+      :open="showFormModal"
+      :mode="mode"
+      :initial="formDraft"
+      :cities="MOROCCO_CITIES"
+      :regions="MOROCCO_REGIONS"
+      :busy="busy.create || busy.update"
+      :error="modalError"
+      @close="closeFormModal"
+      @save="saveForm"
+    />
 
     <!-- Toast -->
     <teleport to="body">
@@ -1211,7 +1259,8 @@ onMounted(reload);
 
 <style scoped>
 /* ⚠️ Styles identiques à ta version (je n’ai pas modifié la structure visuelle)
-   Ajout seulement: import + bouton dupliquer utilise iBtn existant.
+   ✅ FIX tooltip: enlever les overflow:hidden sur les parents de la tooltip (card/left/main/line1)
+   => ellipsis reste assuré par .name/.sub (eux gardent overflow hidden)
 */
 .page{ padding: 12px; display:flex; flex-direction:column; gap:10px; }
 
@@ -1219,7 +1268,7 @@ onMounted(reload);
 .subhdr{
   position: sticky;
   top: var(--hdrdash-h, -15px);
-  z-index: 50;
+  z-index: 1000;
   background: rgba(248,250,252,0.92);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(16,24,40,0.10);
@@ -1361,7 +1410,13 @@ onMounted(reload);
 
 /* cards */
 .cards{ display:flex; flex-direction:column; gap:8px; }
-.card{ border:1px solid rgba(16,24,40,0.12); border-radius: 16px; background:#fff; overflow:hidden; }
+.card{
+  border:1px solid rgba(16,24,40,0.12);
+  border-radius: 16px;
+  background:#fff;
+  overflow: visible; /* ✅ IMPORTANT: ne pas clipper la tooltip */
+  position: relative; /* ✅ base stacking */
+}
 
 .rowHead{
   width:100%;
@@ -1377,12 +1432,31 @@ onMounted(reload);
 }
 .rowHead:hover{ background: rgba(15,23,42,0.03); }
 
-.left{ display:flex; align-items:flex-start; gap:10px; min-width:0; flex:1 1 auto; overflow:hidden; }
+.left{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  min-width:0;
+  flex:1 1 auto;
+  overflow: visible; /* ✅ IMPORTANT: ne pas clipper la tooltip */
+}
 .chev{ width:18px; display:inline-flex; align-items:center; justify-content:center; color: rgba(107,114,128,1); flex:0 0 auto; margin-top: 2px; }
 .chIc{ width:18px; height:18px; }
 
-.main{ min-width:0; flex:1 1 auto; overflow:hidden; }
-.line1{ display:flex; align-items:center; gap:8px; min-width:0; }
+.main{
+  min-width:0;
+  flex:1 1 auto;
+  overflow: visible; /* ✅ IMPORTANT: ne pas clipper la tooltip */
+}
+.line1{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+  overflow: visible; /* ✅ IMPORTANT: la bulle sort sans être coupée */
+}
+
+/* ✅ ellipsis conservé ici (pas sur les parents) */
 .name{ font-weight:950; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .chip{
   font-size: 10.5px;
@@ -1434,7 +1508,12 @@ onMounted(reload);
 .aic2.sm{ width:15px; height:15px; }
 
 /* tooltip comment */
-.tipWrap{ position: relative; display:inline-flex; align-items:center; z-index: 5; }
+.tipWrap{
+  position: relative;
+  display:inline-flex;
+  align-items:center;
+  z-index: 200; /* ✅ plus haut que les éléments voisins */
+}
 .tipBtn{
   width: 26px; height: 26px;
   border-radius: 10px;
@@ -1442,13 +1521,14 @@ onMounted(reload);
   background:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   cursor: default;
+  z-index: 100;
 }
 .tipIc{ width: 16px; height: 16px; color: rgba(15,23,42,0.55); }
 .tip{
   position:absolute;
   left: 34px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(-50%) translateX(-4px);
   min-width: 220px;
   max-width: 360px;
   background: rgba(17,24,39,0.95);
@@ -1461,8 +1541,9 @@ onMounted(reload);
   opacity: 0;
   pointer-events: none;
   transition: opacity .12s ease, transform .12s ease;
-  transform: translateY(-50%) translateX(-4px);
-  z-index: 9999;
+  z-index: 10000; /* ✅ au-dessus */
+  white-space: normal;
+  word-break: break-word;
 }
 .tipWrap:hover .tip{ opacity:1; transform: translateY(-50%) translateX(0px); }
 

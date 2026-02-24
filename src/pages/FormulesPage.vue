@@ -5,6 +5,9 @@
      ✅ Remplace فقط l'UI “import inline” par le composant SectionImportModal (sans impacter logique)
      ✅ Généraliser = ✅ utilise SectionTargetsGeneralizeModal pour choisir les variantes
         + mini modal local pour choisir le preset copy + confirmer (logique inchangée)
+
+     ✅ FIX CMP: utilise le prix MP "variante" (MpPage) si disponible,
+        fallback sur prix catalogue de la formule (it.mp.prix)
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -117,6 +120,43 @@ const rows = computed<FormuleRow[]>(() => {
 
 function getItemsRaw(r: FormuleRow): any[] {
   return r?.raw?.formule?.items ?? [];
+}
+
+/* =========================
+   ✅ PRIX MP (VARIANTE) -> pour CMP + tableau
+   - MpPage modifie variant.mp.items[].prix (ou variantMps)
+   - Ici on utilise ce prix en priorité (fallback: it.mp.prix catalogue)
+========================= */
+const mpPrixTById = computed(() => {
+  const v: any = variant.value ?? null;
+
+  // selon ton modèle: v.mp.items (ou v.variantMps/variantMp)
+  const items =
+    v?.mp?.items ??
+    v?.variantMps ??
+    v?.variantMp ??
+    [];
+
+  const map = new Map<string, number>();
+
+  if (Array.isArray(items)) {
+    for (const x of items) {
+      const mpId = String(x?.mpId ?? x?.mp?.id ?? "").trim();
+      if (!mpId) continue;
+      // ✅ prix "utilisé" par la variante (celui modifié dans MpPage)
+      map.set(mpId, toNum(x?.prix ?? 0));
+    }
+  }
+  return map;
+});
+
+function prixTForItem(it: any): number {
+  const mpId = String(it?.mpId ?? it?.mp?.id ?? "").trim();
+  const fromVariant = mpId ? mpPrixTById.value.get(mpId) : undefined;
+  if (fromVariant != null) return toNum(fromVariant);
+
+  // fallback prix catalogue (lié à la formule)
+  return toNum(it?.mp?.prix ?? 0);
 }
 
 /* =========================
@@ -324,7 +364,7 @@ function cmpPerM3(r: FormuleRow): number {
   let total = 0;
   for (const it of getItemsRaw(r)) {
     const qtyKg = toNum(it?.qty ?? 0);
-    const prixT = toNum(it?.mp?.prix ?? 0);
+    const prixT = prixTForItem(it); // ✅ prix variante si dispo
     total += (qtyKg / 1000) * prixT;
   }
   return total;
@@ -953,10 +993,14 @@ async function confirmGeneralize() {
                         <span class="mpSub muted">{{ it?.mp?.resistance ?? "" }}</span>
                       </div>
                       <div class="r muted">{{ it?.mp?.categorie ?? "—" }}</div>
-                      <div class="r mono strong">{{ n(it?.qty ?? 0, 0) }}</div>
-                      <div class="r mono">{{ n(it?.mp?.prix ?? 0) }}</div>
+                      <div class="r mono strong">{{ n(it?.qty ?? 0, 2) }}</div>
+
+                      <!-- ✅ FIX: Prix/t = prix variante si dispo -->
+                      <div class="r mono">{{ n(prixTForItem(it)) }}</div>
+
+                      <!-- ✅ FIX: Total = qty * prix variante -->
                       <div class="r mono strong">
-                        {{ n(((toNum(it?.qty ?? 0) / 1000) * toNum(it?.mp?.prix ?? 0))) }}
+                        {{ n(((toNum(it?.qty ?? 0) / 1000) * prixTForItem(it))) }}
                       </div>
                     </div>
                   </div>

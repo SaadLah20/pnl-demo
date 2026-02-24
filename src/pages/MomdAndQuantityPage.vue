@@ -1,4 +1,10 @@
-<!-- ✅ src/pages/MomdAndQuantityPage.vue (COMPLET / dirty badge + apply preview + unsaved integration FIX) -->
+<!-- ✅ src/pages/MomdAndQuantityPage.vue (COMPLET / dirty badge + apply preview + unsaved integration FIX)
+     ✅ Refonte demandée (sans dégrader) :
+     - Garder EXACTEMENT le style/ratio/hauteur des blocs KPI (comme avant)
+     - Mettre les 3 outils (Arrondi / Remise / Surcharge) dans un tout petit espace à droite
+     - SANS augmenter la hauteur du header (subhdr)
+     - Option intelligente: un seul “PV Tools” compact (select action + input + apply), inline sur 1 ligne
+-->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { usePnlStore } from "@/stores/pnl.store";
@@ -254,10 +260,8 @@ function onMomdBlur(id: string) {
 }
 
 /* =========================
-   ✅ BULK TOOLS: ARRONDI + REMISE (DH)
+   ✅ BULK TOOLS (moteur) : ARRONDI + REMISE + SURCHARGE
 ========================= */
-const roundMode = ref<1 | 5>(1);
-const remiseDh = ref<number>(0); // ✅ DH/m³ soustrait sur tous les PV
 const bulkBusy = ref(false);
 
 function getDisplayedPv(id: string) {
@@ -300,23 +304,43 @@ function bulkApplyPvTransform(fn: (pv: number, rowId: string) => number, success
   }
 }
 
-function applyRounding() {
-  const step = roundMode.value === 5 ? 5 : 1;
-  bulkApplyPvTransform(
-    (pv) => roundUpToStep(pv, step),
-    step === 1 ? "PV arrondis au +1 DH (vers le haut)." : "PV arrondis au +5 DH (multiple de 5, vers le haut)."
-  );
-}
+/* =========================
+   ✅ PV TOOLS (compact UI)
+   - 1 seul bloc : [Action] [Valeur/Step] [Appliquer]
+   - SANS changer la hauteur du header : inline, même hauteur que les KPIs
+========================= */
+type PvToolMode = "ROUND" | "REMISE" | "SURCHARGE";
+const pvToolMode = ref<PvToolMode>("ROUND");
+const pvToolStep = ref<1 | 5>(5);
+const pvToolAmount = ref<number>(0);
 
-function applyRemise() {
-  const dh = round2(clamp(remiseDh.value, 0, 1e12));
-  remiseDh.value = dh;
+function applyPvTool() {
+  if (!variant.value) return;
 
-  if (dh <= 0) {
-    showToast("Remise = 0 DH (aucun changement).", "ok");
+  const mode = pvToolMode.value;
+
+  if (mode === "ROUND") {
+    const step = pvToolStep.value === 1 ? 1 : 5;
+    bulkApplyPvTransform(
+      (pv) => roundUpToStep(pv, step),
+      step === 1 ? "PV arrondis au +1 DH (vers le haut)." : "PV arrondis au +5 DH (multiple de 5, vers le haut)."
+    );
     return;
   }
-  bulkApplyPvTransform((pv) => round2(pv - dh), `Remise ${n(dh, 2)} DH appliquée sur tous les PV.`);
+
+  const dh = round2(clamp(pvToolAmount.value, 0, 1e12));
+  pvToolAmount.value = dh;
+
+  if (dh <= 0) {
+    showToast(`${mode === "REMISE" ? "Remise" : "Surcharge"} = 0 DH (aucun changement).`, "ok");
+    return;
+  }
+
+  if (mode === "REMISE") {
+    bulkApplyPvTransform((pv) => round2(pv - dh), `Remise ${n(dh, 2)} DH appliquée sur tous les PV.`);
+  } else {
+    bulkApplyPvTransform((pv) => round2(pv + dh), `Surcharge ${n(dh, 2)} DH appliquée sur tous les PV.`);
+  }
 }
 
 /* =========================
@@ -601,13 +625,12 @@ function applyPreviewToHeader() {
     const p = patchById.get(id);
     if (!p) return it;
     return {
-      ...it, // garde formule/label/formuleId/…
+      ...it,
       volumeM3: Number(p.volumeM3),
       momd: Number(p.momd),
     };
   });
 
-  // fallback: si items vides côté store (cas rare), on met au moins le patch
   if (!Array.isArray(next.formules.items) || next.formules.items.length === 0) {
     next.formules.items = patchItems;
   }
@@ -623,19 +646,16 @@ function restoreFromBaselineSnapshot() {
 
   const s: any = store as any;
   if (typeof s.replaceActiveVariantInState === "function") {
-    s.replaceActiveVariantInState(snap); // snap est COMPLET
+    s.replaceActiveVariantInState(snap);
   }
   previewApplied.value = false;
 }
 
 async function discardLocalChanges() {
-  // 1) restore header preview if applied
   if (previewApplied.value) restoreFromBaselineSnapshot();
 
-  // 2) restore local drafts from variant (DB values)
   loadDraftsFromVariant();
 
-  // reset pv UI states
   for (const r of rows.value) {
     const id = String(r.id);
     pvTouched[id] = false;
@@ -643,13 +663,10 @@ async function discardLocalChanges() {
     pvErr[id] = false;
   }
 
-  // also reset baseline (since we aligned to DB)
   baselineItemsJson.value = stableJson(buildItemsPayloadFromVariant());
-
   showToast("Modifications annulées.", "ok");
 }
 
-/* ✅ connect to unsaved.store.ts EXACT API: registerPage/unregisterPage */
 function syncUnsaved() {
   const u: any = unsaved as any;
   if (typeof u.setDirty === "function") u.setDirty(Boolean(dirty.value));
@@ -659,7 +676,7 @@ function syncUnsaved() {
       pageKey: PAGE_KEY,
       save: async () => {
         const ok = await save();
-        return ok; // ✅ boolean pour saveAndLeave()
+        return ok;
       },
       discard: async () => {
         await discardLocalChanges();
@@ -684,7 +701,6 @@ watch(
       didInitialSort.value = true;
     }
 
-    // ✅ baseline refresh when switching variant
     setBaselineFromVariant();
     syncUnsaved();
   },
@@ -704,7 +720,6 @@ onMounted(async () => {
   if (pnls.length === 0 && (store as any).loadPnls) {
     await (store as any).loadPnls();
   }
-  // baseline (safe even if variant null)
   setBaselineFromVariant();
   syncUnsaved();
 });
@@ -729,7 +744,6 @@ onMounted(async () => {
         </div>
 
         <div class="actions" v-if="variant">
-          <!-- ✅ Apply preview -->
           <button
             class="btn"
             :disabled="saving || genBusy || bulkBusy || !dirty || hasPvErrors()"
@@ -740,39 +754,6 @@ onMounted(async () => {
             Appliquer
           </button>
 
-          <!-- ✅ mini tools -->
-          <div class="miniTools">
-            <div class="miniGroup">
-              <div class="miniLbl">Arrondi PV</div>
-              <select class="miniSel" v-model.number="roundMode" :disabled="saving || genBusy || bulkBusy">
-                <option :value="1">+1 DH</option>
-                <option :value="5">+5 DH</option>
-              </select>
-              <button class="btn sm" :disabled="saving || genBusy || bulkBusy" @click="applyRounding()">
-                Arrondir
-              </button>
-            </div>
-
-            <div class="miniGroup">
-              <div class="miniLbl">Remise</div>
-              <div class="miniIn">
-                <input
-                  class="miniInp num"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  v-model.number="remiseDh"
-                  :disabled="saving || genBusy || bulkBusy"
-                />
-                <span class="miniUnit">DH</span>
-              </div>
-              <button class="btn sm" :disabled="saving || genBusy || bulkBusy" @click="applyRemise()">
-                Appliquer
-              </button>
-            </div>
-          </div>
-
-          <!-- actions -->
           <button class="btn" :disabled="saving || genBusy || bulkBusy" @click="askReset()">
             <ArrowPathIcon class="ic" />
             Reset
@@ -790,22 +771,69 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="kpis" v-if="variant">
-        <div class="kpi kpiTint">
-          <div class="kLbl">PV moyen</div>
-          <div class="kVal num">{{ n(pvMoy, 2) }} <span>DH/m³</span></div>
+      <!-- ✅ KPIs inchangés (mêmes blocs/ratio/visuel)
+           ✅ Espace à droite RESERVE (sans changer hauteur) + PV Tools en overlay inline
+      -->
+      <div class="kpisWrap" v-if="variant">
+        <div class="kpis">
+          <div class="kpi kpiTint">
+            <div class="kLbl">PV moyen</div>
+            <div class="kVal num">{{ n(pvMoy, 2) }} <span>DH/m³</span></div>
+          </div>
+          <div class="kpi">
+            <div class="kLbl">CMP moyen</div>
+            <div class="kVal num">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div>
+          </div>
+          <div class="kpi">
+            <div class="kLbl">MOMD moyenne</div>
+            <div class="kVal num">{{ n(momdMoy, 2) }} <span>DH/m³</span></div>
+          </div>
+          <div class="kpi">
+            <div class="kLbl">Volume</div>
+            <div class="kVal num">{{ n(volumeTotal, 2) }} <span>m³</span></div>
+          </div>
         </div>
-        <div class="kpi">
-          <div class="kLbl">CMP moyen</div>
-          <div class="kVal num">{{ n(cmpMoy, 2) }} <span>DH/m³</span></div>
-        </div>
-        <div class="kpi">
-          <div class="kLbl">MOMD moyenne</div>
-          <div class="kVal num">{{ n(momdMoy, 2) }} <span>DH/m³</span></div>
-        </div>
-        <div class="kpi">
-          <div class="kLbl">Volume</div>
-          <div class="kVal num">{{ n(volumeTotal, 2) }} <span>m³</span></div>
+
+        <!-- ✅ PV Tools COMPACT: 1 seule ligne, pas de hauteur ajoutée -->
+        <div class="pvTools" :class="{ disabled: saving || genBusy || bulkBusy }">
+          <div class="pvToolsInner" title="Outils PV (appliqués sur toutes les lignes)">
+            <div class="pvLbl">PV</div>
+
+            <select class="pvSel" v-model="pvToolMode" :disabled="saving || genBusy || bulkBusy">
+              <option value="ROUND">Arrondi</option>
+              <option value="REMISE">Remise</option>
+              <option value="SURCHARGE">Surcharge</option>
+            </select>
+
+            <template v-if="pvToolMode === 'ROUND'">
+              <select class="pvSel2" v-model.number="pvToolStep" :disabled="saving || genBusy || bulkBusy">
+                <option :value="1">+1</option>
+                <option :value="5">+5</option>
+              </select>
+              <span class="pvUnit">DH</span>
+            </template>
+
+            <template v-else>
+              <input
+                class="pvInp num"
+                type="number"
+                step="0.01"
+                min="0"
+                v-model.number="pvToolAmount"
+                :disabled="saving || genBusy || bulkBusy"
+              />
+              <span class="pvUnit">DH</span>
+            </template>
+
+            <button
+              class="pvBtn"
+              type="button"
+              :disabled="saving || genBusy || bulkBusy || hasPvErrors()"
+              @click="applyPvTool()"
+            >
+              Appliquer
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1066,62 +1094,6 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-/* ✅ mini tools (arrondi/remise) */
-.miniTools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-right: 4px;
-}
-.miniGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.02);
-}
-.miniLbl {
-  font-size: 10px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.6);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.miniSel {
-  height: 28px;
-  border-radius: 10px;
-  border: 1px solid rgba(2, 132, 199, 0.22);
-  background: rgba(2, 132, 199, 0.06);
-  padding: 0 8px;
-  font-weight: 900;
-  font-size: 12px;
-  outline: none;
-}
-.miniIn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.miniInp {
-  height: 28px;
-  width: 92px;
-  border-radius: 10px;
-  border: 1px solid rgba(2, 132, 199, 0.22);
-  background: rgba(2, 132, 199, 0.06);
-  padding: 0 8px;
-  font-weight: 950;
-  font-size: 12px;
-  outline: none;
-}
-.miniUnit {
-  font-size: 11px;
-  font-weight: 950;
-  color: rgba(15, 23, 42, 0.6);
-}
-
 /* base btn */
 .btn {
   height: 30px;
@@ -1136,12 +1108,6 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-}
-.btn.sm {
-  height: 28px;
-  border-radius: 10px;
-  padding: 0 10px;
-  font-size: 12px;
 }
 .btn:hover {
   background: rgba(2, 132, 199, 0.06);
@@ -1163,9 +1129,23 @@ onMounted(async () => {
   height: 16px;
 }
 
-/* KPIs */
-.kpis {
+/* =========================
+   ✅ KPIs - INCHANGÉS visuellement
+   + réserve à droite SANS changer hauteur
+========================= */
+.kpisWrap {
   margin-top: 8px;
+  position: relative;
+  /* ✅ on réserve un espace à droite pour les PV tools, sans toucher aux KPIs */
+  padding-right: 280px; /* ajustable: espace à droite */
+}
+@media (max-width: 980px) {
+  .kpisWrap {
+    padding-right: 0; /* mobile: tools passent dessous automatiquement */
+  }
+}
+
+.kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
@@ -1175,6 +1155,8 @@ onMounted(async () => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* KPI cards (inchangés) */
 .kpi {
   background: #fff;
   border: 1px solid rgba(16, 24, 40, 0.1);
@@ -1209,6 +1191,110 @@ onMounted(async () => {
   color: rgba(15, 23, 42, 0.55);
   margin-left: 6px;
   font-size: 10px;
+}
+
+/* ✅ PV Tools : overlay à droite, 1 seule ligne, hauteur contrôlée */
+.pvTools {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0; /* ✅ s’aligne à la hauteur du bloc KPI (sans l’augmenter) */
+  display: flex;
+  align-items: stretch;
+}
+@media (max-width: 980px) {
+  .pvTools {
+    position: static;
+    margin-top: 8px;
+    align-items: center;
+  }
+}
+
+.pvTools.disabled {
+  opacity: 0.8;
+}
+
+.pvToolsInner {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  /* ✅ IMPORTANT: ne pas dépasser la hauteur KPI -> on “clamp” */
+  max-height: 100%;
+  overflow: hidden;
+}
+@media (max-width: 980px) {
+  .pvToolsInner {
+    height: 34px; /* mobile: ligne compacte */
+  }
+}
+
+.pvLbl {
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0 2px;
+}
+
+.pvSel,
+.pvSel2 {
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(2, 132, 199, 0.22);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 8px;
+  font-weight: 900;
+  font-size: 12px;
+  outline: none;
+}
+.pvSel2 {
+  width: 66px;
+}
+
+.pvInp {
+  height: 28px;
+  width: 92px;
+  border-radius: 10px;
+  border: 1px solid rgba(2, 132, 199, 0.22);
+  background: rgba(2, 132, 199, 0.06);
+  padding: 0 8px;
+  font-weight: 950;
+  font-size: 12px;
+  outline: none;
+}
+
+.pvUnit {
+  font-size: 11px;
+  font-weight: 950;
+  color: rgba(15, 23, 42, 0.6);
+  margin-left: -2px;
+}
+
+.pvBtn {
+  height: 28px;
+  border-radius: 10px;
+  padding: 0 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  color: #0f172a;
+  font-weight: 950;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pvBtn:hover {
+  background: rgba(2, 132, 199, 0.06);
+  border-color: rgba(2, 132, 199, 0.18);
+}
+.pvBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* alerts */

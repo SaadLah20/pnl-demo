@@ -1,14 +1,10 @@
 <!-- ✅ src/pages/DevisPage.vue (FICHIER COMPLET / UI-UX refonte + ✅ PV non pondéré)
      Ajustements demandés :
-     ✅ Améliorer style + taille du "Total" par formule (aligné style app)
-     ✅ Champ "Surcharge" plus petit + BG bleu (comme autres pages)
-     ✅ Supprimer la ligne sous le titre (Variante • Vol • PMV)
-     ✅ Libellés colonnes EXACTEMENT au-dessus des champs (grid alignée)
-     ✅ IMPORTANT: Suppression notion "PV pondéré" (arrondi au 5) => PV déf = PV base + surcharge
-
-     ✅ Refonte demandée (sans toucher logique/design) :
-     ✅ Supprimer l’ancienne logique d’alerte d’enregistrement (dirtyBar + export guard modal)
-     ✅ Traiter "appliquer" et "quitter" via useUnsavedStore comme les autres pages (registerPage + setDirty)
+     ✅ Remise/Surcharge/Arrondir appliqués sur le champ "Surcharge" (pas sur PV définitif)
+     ✅ Remise = surcharge négative / Surcharge = positive + indication visuelle (BG input)
+     ✅ Arrondir : ajuste la surcharge pour que PV déf. finisse toujours en ",00" (plus de ",01")
+     ✅ Sans augmenter la taille du header : actions regroupées en un mini-bloc compact
+     ✅ Repositionner/reformuler l’indication majorations pour libérer de la place
 -->
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from "vue";
@@ -36,9 +32,22 @@ function n(x: any): number {
   const v = Number(x);
   return Number.isFinite(v) ? v : 0;
 }
+
+/* =========================
+   ✅ CENTS helpers (anti ",01")
+========================= */
+function toCents(x: any): number {
+  // arrondi en centimes (int)
+  return Math.round(n(x) * 100);
+}
+function fromCents(c: any): number {
+  const v = Number(c);
+  return (Number.isFinite(v) ? v : 0) / 100;
+}
 function money2(v: any) {
-  const x = n(v);
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+  const c = toCents(v);
+  const dh = Number((c / 100).toFixed(2)); // ✅ force un float propre en 2 décimales
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(dh);
 }
 function int(v: any) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n(v));
@@ -109,7 +118,8 @@ function getSurcharge(r: any): number {
 }
 function setSurcharge(r: any, v: any) {
   const k = rowKey(r);
-  draft.surcharges[k] = n(v);
+  // ✅ stocker en DH, mais "snap" en centimes pour éviter dérives
+  draft.surcharges[k] = fromCents(toCents(v));
 }
 function isRowTouched(r: any): boolean {
   return Math.abs(getSurcharge(r)) > 0;
@@ -378,7 +388,7 @@ function buildWordDefaultsEditable() {
     autorisationsES:
       "Prise en charge des autorisations d’entrée et de sortie au site pour le personnel, les camions malaxeurs et les pompes ;",
     entretienVoies:
-      "Entretien des voies d’accès des camions malaxeurs et camions de la matière première ;",
+      "Entretien des voies d’accès des camions-malaxeurs et camions de la matière première ;",
     autorisationsCoulage: "Prise en charge des autorisations pour le coulage des bétons.",
     labo: "Prestations de laboratoire externe pour la convenance et les contrôles courants du béton et d’agrégats selon CCTP.",
   };
@@ -487,6 +497,7 @@ const isDirty = computed(() => {
 /* =========================
    BASE CALCS (/m3)
    ✅ PV NON PONDÉRÉ: PV déf = PV base + surcharge
+   ✅ Tout en centimes (anti ",01")
 ========================= */
 function mpPrixUsed(mpId: string): number {
   const mpItems = variant.value?.mp?.items ?? [];
@@ -508,17 +519,28 @@ function cmpFormuleBaseM3(formule: any): number {
 
 const transportBaseM3 = computed(() => n(variant.value?.transport?.prixMoyen ?? 0));
 
-function pvBaseM3(r: any): number {
-  const cmp = cmpFormuleBaseM3(r?.formule);
-  const momd = n(r?.momd);
-  return cmp + transportBaseM3.value + momd;
+function pvBaseM3Cents(r: any): number {
+  const cmpC = toCents(cmpFormuleBaseM3(r?.formule));
+  const tC = toCents(transportBaseM3.value);
+  const momdC = toCents(r?.momd);
+  return cmpC + tC + momdC;
 }
 
+function surchargeCents(r: any): number {
+  return toCents(getSurcharge(r));
+}
+function savedSurchargeCents(r: any): number {
+  return toCents(getSavedSurcharge(r));
+}
+
+function pvBaseM3(r: any): number {
+  return fromCents(pvBaseM3Cents(r));
+}
 function pvDefinitifM3(r: any): number {
-  return pvBaseM3(r) + getSurcharge(r);
+  return fromCents(pvBaseM3Cents(r) + surchargeCents(r));
 }
 function pvSavedDefinitifM3(r: any): number {
-  return pvBaseM3(r) + getSavedSurcharge(r);
+  return fromCents(pvBaseM3Cents(r) + savedSurchargeCents(r));
 }
 
 /* =========================
@@ -548,6 +570,80 @@ const prixMoyenDefinitif = computed(() => {
 
 const caDevisTotal = computed(() => rows.value.reduce((s, r) => s + pvDefinitifM3(r) * n(r?.volumeM3), 0));
 const touchedCount = computed(() => rows.value.filter((r) => isRowTouched(r)).length);
+
+/* =========================
+   ✅ BULK ACTIONS (Remise / Surcharge / Arrondir)
+   - Appliquées sur "Surcharge"
+========================= */
+const adjAmount = ref<number>(0);
+const roundMode = ref<1 | 5>(1);
+const bulkBusy = ref(false);
+
+function clampAdj(v: any) {
+  const c = toCents(v);
+  return fromCents(Math.max(-1e12 * 100, Math.min(1e12 * 100, c)));
+}
+
+/** Remise => surcharge devient plus négative (soustrait |amount|) */
+function applyRemiseAll() {
+  if (!variant.value) return;
+  const amt = Math.abs(clampAdj(adjAmount.value));
+  if (!amt || amt <= 0) return;
+
+  bulkBusy.value = true;
+  try {
+    for (const r of rows.value) {
+      const curC = surchargeCents(r);
+      const nextC = curC - toCents(amt); // ✅ remise = négatif
+      setSurcharge(r, fromCents(nextC));
+    }
+  } finally {
+    bulkBusy.value = false;
+  }
+}
+
+/** Surcharge => ajoute |amount| */
+function applySurchargeAll() {
+  if (!variant.value) return;
+  const amt = Math.abs(clampAdj(adjAmount.value));
+  if (!amt || amt <= 0) return;
+
+  bulkBusy.value = true;
+  try {
+    for (const r of rows.value) {
+      const curC = surchargeCents(r);
+      const nextC = curC + toCents(amt); // ✅ surcharge = positif
+      setSurcharge(r, fromCents(nextC));
+    }
+  } finally {
+    bulkBusy.value = false;
+  }
+}
+
+/** Arrondir : ajuste surcharge pour que PV déf soit multiple de step (1DH/5DH) et finisse en ",00" */
+function applyRoundingAll() {
+  if (!variant.value) return;
+  const stepDh = roundMode.value === 5 ? 5 : 1;
+  const stepC = stepDh * 100;
+
+  bulkBusy.value = true;
+  try {
+    for (const r of rows.value) {
+      const baseC = pvBaseM3Cents(r);
+      const curDefC = baseC + surchargeCents(r);
+
+      // ✅ "vers le haut" au multiple de step (987,50 -> 988,00 si step=1)
+      const roundedDefC = Math.ceil(curDefC / stepC) * stepC;
+
+      // ✅ nouvelle surcharge = PV arrondi - PV base (peut être +0,50 etc)
+      const nextSurchargeC = roundedDefC - baseC;
+
+      setSurcharge(r, fromCents(nextSurchargeC));
+    }
+  } finally {
+    bulkBusy.value = false;
+  }
+}
 
 /* =========================
    Extra articles (hors formules)
@@ -630,7 +726,7 @@ function loadPersistedAll() {
       if (map && typeof map === "object") {
         for (const [k, val] of Object.entries(map)) {
           const nk = String(k);
-          const nv = n(val);
+          const nv = fromCents(toCents(val)); // ✅ snap centimes
           draft.surcharges[nk] = nv;
           savedSurcharges.value[nk] = nv;
         }
@@ -1081,10 +1177,6 @@ function onContentScrollSpy() {
             Modifié
           </div>
         </div>
-
-        <!-- ✅ SUPPRIMÉ (comme demandé)
-        <div class="subline"> ... </div>
-        -->
       </div>
 
       <div class="tright">
@@ -1144,9 +1236,12 @@ function onContentScrollSpy() {
     <template v-if="activeTab === 'SURCHARGES'">
       <div class="card controls">
         <div class="controlsLeft">
+          <!-- ✅ plus compact : une ligne "Majorations" + tooltip -->
           <span class="hintLine">
             <span class="hintDot">•</span>
-            <span>Les <b>majorations</b> ne sont pas simulées ici (elles doivent être appliquées dans la variante).</span>
+            <span>
+              <b>Majorations</b> : à appliquer au niveau de la <b>variante</b> (pas simulées ici).
+            </span>
 
             <span class="tipWrap">
               <button class="tipBtn" type="button" aria-label="Détails majorations">
@@ -1161,6 +1256,38 @@ function onContentScrollSpy() {
         </div>
 
         <div class="controlsRight">
+          <!-- ✅ mini bloc compact (ne change pas la hauteur du header global) -->
+          <div class="adjBox" :class="{ busy: bulkBusy }" title="Actions rapides sur Surcharge (toutes les lignes)">
+            <div class="adjTop">
+              <div class="adjLbl">Surcharge</div>
+
+              <select class="adjSel" v-model.number="roundMode" :disabled="bulkBusy || busy.save">
+                <option :value="1">Arrondi +1</option>
+                <option :value="5">Arrondi +5</option>
+              </select>
+            </div>
+
+            <div class="adjRow">
+              <input
+                class="adjInp mono"
+                type="number"
+                step="0.01"
+                v-model.number="adjAmount"
+                :disabled="bulkBusy || busy.save"
+                placeholder="0.00"
+              />
+              <button class="adjBtn neg" type="button" @click="applyRemiseAll" :disabled="bulkBusy || busy.save">
+                Remise
+              </button>
+              <button class="adjBtn pos" type="button" @click="applySurchargeAll" :disabled="bulkBusy || busy.save">
+                +Surch.
+              </button>
+              <button class="adjBtn" type="button" @click="applyRoundingAll" :disabled="bulkBusy || busy.save">
+                Arrondir
+              </button>
+            </div>
+          </div>
+
           <label class="chk">
             <input type="checkbox" v-model="withDevisSurcharge" />
             <span>Dashboard : surcharge devis</span>
@@ -1227,8 +1354,9 @@ function onContentScrollSpy() {
               <div class="cellMini" data-label="Surcharge">
                 <input
                   class="inputSurcharge mono"
+                  :class="{ pos: getSurcharge(r) > 0, neg: getSurcharge(r) < 0 }"
                   type="number"
-                  step="1"
+                  step="0.01"
                   :value="getSurcharge(r)"
                   @input="setSurcharge(r, ($event.target as HTMLInputElement).value)"
                 />
@@ -1239,7 +1367,6 @@ function onContentScrollSpy() {
               </div>
 
               <div class="cellMini" data-label="Total">
-                <!-- ✅ Total plus "app-like" (pill), taille cohérente -->
                 <span class="pillTotal mono">{{ money2(pvDefinitifM3(r) * n(r?.volumeM3)) }}</span>
               </div>
             </div>
@@ -1698,6 +1825,80 @@ function onContentScrollSpy() {
 .tipWrap:hover .tip{ opacity: 1; transform: translateY(-50%) translateX(0px); }
 .mutedLine{ display:block; margin-top: 5px; opacity: .85; }
 
+/* ✅ Compact bulk actions box */
+.adjBox{
+  border: 1px solid rgba(16,24,40,0.12);
+  background: rgba(15,23,42,0.02);
+  border-radius: 14px;
+  padding: 6px 8px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.adjBox.busy{ opacity: .7; }
+.adjTop{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.adjLbl{
+  font-size: 10px;
+  font-weight: 950;
+  color: rgba(15,23,42,0.60);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.adjSel{
+  height: 26px;
+  border-radius: 10px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: #fff;
+  padding: 0 8px;
+  font-weight: 950;
+  font-size: 11px;
+  outline: none;
+}
+.adjRow{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.adjInp{
+  height: 28px;
+  width: 92px;
+  border-radius: 12px;
+  border: 1px solid rgba(2,132,199,0.22);
+  background: rgba(2,132,199,0.06);
+  padding: 0 9px;
+  font-weight: 950;
+  font-size: 12px;
+  outline: none;
+  text-align: right;
+  color: var(--text);
+}
+.adjBtn{
+  height: 28px;
+  border-radius: 12px;
+  border: 1px solid rgba(16,24,40,0.12);
+  background: #fff;
+  padding: 0 10px;
+  font-weight: 950;
+  font-size: 11.5px;
+  cursor:pointer;
+  color: var(--text);
+}
+.adjBtn:hover{ background: rgba(15,23,42,0.03); }
+.adjBtn:disabled{ opacity:.55; cursor:not-allowed; }
+.adjBtn.neg{
+  border-color: rgba(239,68,68,0.22);
+  background: rgba(239,68,68,0.06);
+}
+.adjBtn.pos{
+  border-color: rgba(34,197,94,0.22);
+  background: rgba(34,197,94,0.06);
+}
+
 /* List style */
 .listCard{ padding: 0; overflow:hidden; }
 .listHead{
@@ -1773,7 +1974,7 @@ function onContentScrollSpy() {
 }
 .cellMini{ text-align:right; min-width:0; }
 
-/* ✅ Surcharge input: smaller + blue bg (like other pages) */
+/* ✅ Surcharge input: smaller + blue bg + sign BG */
 .inputSurcharge{
   width: 92px;
   height: 30px;
@@ -1789,6 +1990,14 @@ function onContentScrollSpy() {
 .inputSurcharge:focus{
   border-color: rgba(2,132,199,0.55);
   box-shadow: 0 0 0 3px rgba(2,132,199,0.12);
+}
+.inputSurcharge.pos{
+  border-color: rgba(34,197,94,0.28);
+  background: rgba(34,197,94,0.07);
+}
+.inputSurcharge.neg{
+  border-color: rgba(239,68,68,0.28);
+  background: rgba(239,68,68,0.07);
 }
 
 /* PV */
@@ -1807,7 +2016,7 @@ function onContentScrollSpy() {
   font-size: 12px;
 }
 
-/* ✅ Total pill: smaller, consistent with app */
+/* ✅ Total pill */
 .pillTotal{
   display:inline-flex;
   align-items:center;
@@ -2030,5 +2239,9 @@ function onContentScrollSpy() {
   }
   .inputSurcharge{ width: 100%; }
   .pillFinal, .pillTotal{ width: 100%; justify-content: flex-start; }
+
+  .adjBox{ width: 100%; }
+  .adjRow{ flex-wrap: wrap; justify-content: flex-end; }
+  .adjInp{ flex: 1 1 auto; min-width: 120px; }
 }
 </style>
